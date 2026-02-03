@@ -11,13 +11,13 @@ const apiBase = apiBaseProp ?? '';
 <div 
   id="monitor-root"
   data-api-base={apiBase}
-  class="mx-auto mt-2 sm:mt-3 max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
+  class="mx-auto max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
   style="--first-col-width: 160px;"
 >
   <SystemTableHeader />
 
   <!-- 表格容器 - 独立边框 -->
-  <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#181818] dark:bg-[#181818] bg-[#fafafa] overflow-x-auto" style="scrollbar-width: none; -ms-overflow-style: none;">
+  <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#181818] dark:bg-[#181818] bg-[#fafafa] overflow-x-auto" style="scrollbar-width: none; -ms-overflow-style: none;">
     <style>
       #monitor-root .overflow-x-auto::-webkit-scrollbar {
         display: none;
@@ -685,7 +685,7 @@ const apiBase = apiBaseProp ?? '';
   };
 
   const progress = (value, warn = false, isOffline = false) => `
-    <div class="flex items-center gap-1 pr-2 sm:pr-3 min-w-0 w-full">
+    <div class="flex items-center gap-0.5 pr-2 sm:pr-3 min-w-0 w-full">
       <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] w-8 sm:w-10 shrink-0">${value.toFixed(1)}%</span>
       <div class="relative h-2.5 sm:h-3 flex-1 min-w-[60px] max-w-[100px] sm:max-w-[120px] overflow-hidden rounded-full bg-[#111] dark:bg-[#111] bg-[#e5e5e5]">
         <div class="absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getProgressColor(value, isOffline)}" style="width:${pct(value)}%"></div>
@@ -762,8 +762,8 @@ const apiBase = apiBaseProp ?? '';
     const safeNameAttr = escapeHtmlAttr(item.name || 'unknown');
     return `
     <div class="system-row" data-system-id="${safeId}">
-      <div class="group grid items-center gap-1 px-3 sm:px-4 md:px-6 py-2 sm:py-3 hover:bg-[#222]/50 dark:hover:bg-[#222]/50 hover:bg-[#f5f5f5] cursor-pointer transition-colors" data-system-id="${safeId}" style="grid-template-columns: var(--first-col-width, 100px) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(95px,1fr) minmax(90px,1fr);">
-        <div class="flex items-center gap-1.5 min-h-[20px]">
+      <div class="group grid items-center gap-1.5 px-3 sm:px-4 md:px-6 py-2 sm:py-3 hover:bg-[#222]/50 dark:hover:bg-[#222]/50 hover:bg-[#f5f5f5] cursor-pointer transition-colors" data-system-id="${safeId}" style="grid-template-columns: var(--first-col-width, 100px) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.8fr) minmax(130px,1.8fr) minmax(130px,1.8fr) minmax(70px,0.9fr) minmax(70px,0.9fr);">
+        <div class="flex items-center gap-1 min-h-[20px]">
           <span class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${isOffline ? 'bg-red-400' : 'bg-emerald-400'} shrink-0"></span>
           <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] whitespace-nowrap">${safeName}</span>
           <button class="copy-btn text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#d4d4d4] dark:hover:text-[#d4d4d4] hover:text-[#151515] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" data-system-name="${safeNameAttr}" title="Copy system name">
@@ -792,7 +792,7 @@ const apiBase = apiBaseProp ?? '';
     </div>
     </div>
       <!-- Expandable details section -->
-      <div class="system-details hidden border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1a1a1a] dark:bg-[#1a1a1a] bg-[#fafafa] overflow-hidden" data-details-id="${safeId}" style="width: 100%;">
+      <div class="system-details hidden border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#e5e5e5] bg-[#1a1a1a] dark:bg-[#1a1a1a] bg-[#f8f8f8] overflow-hidden" data-details-id="${safeId}" style="width: 100%;">
         <div class="details-content px-3 sm:px-4 md:px-6 py-2 sm:py-3">
           <div class="flex flex-col gap-1.5 sm:gap-2 items-start">
             <!-- Tags (first row) -->
@@ -885,8 +885,8 @@ const apiBase = apiBaseProp ?? '';
           </div>
         </div>
       ${showTCPing ? `<!-- TCPing Chart Section -->
-      <div class="border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 px-3 sm:px-4 md:px-6 py-2 sm:py-3" data-tcping-chart-container="${safeId}" style="width: 100%;">
-        <div class="rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#151515] dark:bg-[#151515] bg-white p-2 sm:p-3">
+      <div class="border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#e5e5e5] px-3 sm:px-4 md:px-6 py-2 sm:py-3" data-tcping-chart-container="${safeId}" style="width: 100%;">
+        <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#151515] dark:bg-[#151515] bg-white p-2 sm:p-3">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2">
             <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]" data-translate-detail="tcpingLatency">TCPing Latency (24h)</div>
             <!-- Statistics display -->
@@ -908,7 +908,7 @@ const apiBase = apiBaseProp ?? '';
             <!-- Loading state -->
             <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded" data-tcping-loading="${item.id}" style="height: 200px; min-height: 200px;">
               <div class="flex flex-col items-center gap-2">
-                <div class="w-6 h-6 border-2 border-[#404040] dark:border-[#404040] border-[#a3a3a3] border-t-transparent dark:border-t-transparent rounded-full animate-spin"></div>
+                <div class="w-6 h-6 border-2 border-[#404040] dark:border-[#404040] border-[#d4d4d4] border-t-transparent dark:border-t-transparent rounded-full animate-spin"></div>
                 <span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="loading">Loading...</span>
         </div>
       </div>
@@ -997,7 +997,7 @@ const apiBase = apiBaseProp ?? '';
     const isDarkMode = theme === 'dark';
     const tooltipBg = isDarkMode ? 'rgba(21, 21, 21, 0.95)' : 'rgba(250, 250, 250, 0.95)';
     const tooltipTextColor = isDarkMode ? '#f5f5f5' : '#262626';
-    const tooltipBorderColor = isDarkMode ? '#404040' : '#a3a3a3';
+    const tooltipBorderColor = isDarkMode ? '#404040' : '#d4d4d4';
     
     // Update all existing charts
     tcpingCharts.forEach((chartData, key) => {

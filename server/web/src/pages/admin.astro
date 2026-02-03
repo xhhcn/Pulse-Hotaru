@@ -13,6 +13,41 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Admin - Pulse Monitor</title>
+    <!-- View Transitions API styling for smooth theme switching -->
+    <style>
+      /* View Transitions API support for smooth cross-fade */
+      ::view-transition-old(root),
+      ::view-transition-new(root) {
+        animation-duration: 0.15s;
+        animation-timing-function: ease-in-out;
+      }
+      
+      ::view-transition-old(root) {
+        animation-name: fade-out;
+      }
+      
+      ::view-transition-new(root) {
+        animation-name: fade-in;
+      }
+      
+      @keyframes fade-out {
+        from { opacity: 1; }
+        to { opacity: 0; }
+      }
+      
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      
+      /* Disable all transitions when theme-switching class is present */
+      html.theme-switching *,
+      html.theme-switching *::before,
+      html.theme-switching *::after {
+        transition: none !important;
+        animation-duration: 0s !important;
+      }
+    </style>
     <!-- Initialize language and theme before page render to prevent FOUC -->
     <script is:inline>
       (function() {
@@ -185,14 +220,14 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       <div class="px-2 sm:px-4 md:px-6 animate-navbar">
         <NavBar isAdmin={true} />
       </div>
-      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-3 pb-4 sm:pb-6 animate-content">
+      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-3 sm:pt-4 pb-4 sm:pb-6 animate-content">
         <AdminDashboard apiBase={apiBase} />
       </main>
       <Footer />
     </div>
     <div id="login-redirect" class="min-h-screen flex items-center justify-center">
       <div class="text-center animate-page-in">
-        <div class="w-8 h-8 border-2 border-[#404040] dark:border-[#404040] border-[#a3a3a3] border-t-transparent dark:border-t-transparent rounded-full animate-spin-smooth mx-auto mb-4"></div>
+        <div class="w-8 h-8 border-2 border-[#404040] dark:border-[#404040] border-[#d4d4d4] border-t-transparent dark:border-t-transparent rounded-full animate-spin-smooth mx-auto mb-4"></div>
         <p class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">Checking authentication...</p>
       </div>
     </div>

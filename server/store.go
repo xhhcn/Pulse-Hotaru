@@ -602,6 +602,8 @@ type NavbarConfig struct {
 	SharedSecret string `json:"shared_secret"` // Shared secret for all clients
 	CustomCSS    string `json:"custom_css"`    // Custom CSS styles for all pages
 	CustomJS     string `json:"custom_js"`     // Custom JavaScript for all pages
+	ShowTraffic  bool   `json:"show_traffic"`  // Show real-time and total traffic in detail dropdown
+	ShowGlass    bool   `json:"show_glass"`    // Enable glassmorphism (frosted glass) visual effect
 }
 
 // GetNavbarConfig retrieves the navbar configuration

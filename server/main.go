@@ -483,40 +483,22 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		// CRITICAL: Always preserve WorkingURL if it's still valid
 		// WorkingURL represents a known working connection, so we should preserve it whenever possible
 		if existingClient.WorkingURL != "" {
-			// CRITICAL: Always preserve WorkingURL if URLs haven't changed
-			// This is the most important case - if URLs are unchanged, preserve WorkingURL
-			// This ensures that once IPv6 works, we keep using it even after re-registration
+			// Preserve WorkingURL if URLs haven't changed or WorkingURL still matches a current URL
+			// This ensures that once a connection (especially IPv6) works, we keep using it
 			if existingClient.URL == url && existingClient.URL6 == url6 {
-				// URLs haven't changed at all, always preserve working URL
+				// URLs unchanged, always preserve working URL
 				workingURL = existingClient.WorkingURL
 			} else if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
-				// Working URL still matches one of the current URLs, preserve it
+				// URLs changed but WorkingURL still matches one of them, preserve it
 				workingURL = existingClient.WorkingURL
-			} else {
-				// URLs have changed, but if WorkingURL is still reachable (matches new URLs), preserve it
-				// This handles cases where IPs change but the working connection is still valid
-				// Double-check: maybe WorkingURL matches one of the new URLs (redundant but safe)
-				if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
-					workingURL = existingClient.WorkingURL
-				}
 			}
+			// Otherwise: URLs changed and WorkingURL no longer matches any — reset to empty
+			// pollClient will discover and set a new WorkingURL on next successful connection
 		}
 	}
 
-	// CRITICAL: Before creating new object, double-check existingClient.WorkingURL
-	// This handles the case where pollClient updated WorkingURL after we first checked
-	// Since we're still holding the lock, we can safely check again
-	if exists && existingClient != nil && workingURL == "" && existingClient.WorkingURL != "" {
-		// WorkingURL was set by pollClient after our initial check
-		// Check if it matches one of the current URLs
-		if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
-			workingURL = existingClient.WorkingURL
-		} else if existingClient.URL == url && existingClient.URL6 == url6 {
-			// URLs haven't changed, preserve WorkingURL even if it doesn't match current URLs
-			// This is important for IPv6 connections
-			workingURL = existingClient.WorkingURL
-		}
-	}
+	// Note: No need to double-check WorkingURL here - we're holding the write lock,
+	// so no other goroutine can modify existingClient between our check above and now.
 
 	r.clients[id] = &ClientInfo{
 		ID:         id,
@@ -594,17 +576,10 @@ func getSharedHTTPClient() *http.Client {
 			KeepAlive: 60 * time.Second, // CRITICAL for Windows: prevent firewall from dropping idle connections (Windows timeout: 60-120s)
 		}
 
-		// Create custom DialContext that supports IPv6
-		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// Try IPv6 first if address contains IPv6 format, otherwise use default
-			// Go's net.Dial will automatically try both IPv4 and IPv6
-			return dialer.DialContext(ctx, network, addr)
-		}
-
 		sharedHTTPClient = &http.Client{
 			Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia ~300ms RTT)
 			Transport: &http.Transport{
-				DialContext:           dialContext,
+				DialContext:           dialer.DialContext, // Go's net.Dialer natively supports both IPv4 and IPv6
 				MaxIdleConns:          200,               // More connections for stability
 				MaxIdleConnsPerHost:   20,                // More per-host connections
 				IdleConnTimeout:       180 * time.Second, // Longer idle timeout for stable connection
@@ -1367,6 +1342,10 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 	}
 
 	// Verify that the server ID exists in the database
+	// NOTE: We always read from DB (not registry cache) to ensure:
+	// 1. System existence is always verified against the authoritative source
+	// 2. Secret changes by admin take effect immediately on next registration
+	// BoltDB reads are very fast (in-memory B-tree index), so this is acceptable
 	existing, err := store.Get(payload.ID)
 	if err != nil || existing == nil {
 		log.Printf("❌ Client registration failed: server ID '%s' not found in database", payload.ID)
@@ -1656,10 +1635,13 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 		// This ensures broadcasts happen at consistent intervals regardless of polling completion time
 		go func() {
 			// Wait for polling to complete or timeout
+			// Use time.NewTimer instead of time.After to allow proper cleanup and avoid timer leak
+			pollTimeout := time.NewTimer(2800 * time.Millisecond)
 			select {
 			case <-done:
-				// All clients responded in time
-			case <-time.After(2800 * time.Millisecond):
+				// All clients responded in time - stop timer to release resources immediately
+				pollTimeout.Stop()
+			case <-pollTimeout.C:
 				// Timeout - proceed with whatever updates we have
 				// Slow clients will complete in background and update DB
 				// Their data will be included in next broadcast
@@ -2712,10 +2694,12 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 	if !isAuthenticated(r) {
 		// Create a copy without the secret for public access
 		publicConfig := NavbarConfig{
-			Text:      config.Text,
-			Logo:      config.Logo,
-			CustomCSS: config.CustomCSS, // Public: used for page styling
-			CustomJS:  config.CustomJS,  // Public: used for page functionality
+			Text:        config.Text,
+			Logo:        config.Logo,
+			CustomCSS:   config.CustomCSS,   // Public: used for page styling
+			CustomJS:    config.CustomJS,     // Public: used for page functionality
+			ShowTraffic: config.ShowTraffic,  // Public: controls traffic display in detail section
+			ShowGlass:   config.ShowGlass,    // Public: controls glassmorphism effect
 			// SharedSecret is intentionally omitted for security
 		}
 		writeJSON(w, http.StatusOK, publicConfig)

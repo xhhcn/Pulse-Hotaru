@@ -385,3 +385,469 @@ body.dark {
   z-index: 9999 !important;
 }
 
+/* ========================================
+   Glassmorphism (Frosted Glass) Effect
+   Activated by .glass-enabled on <html>
+   Each layer has distinct glass treatment.
+   ======================================== */
+
+/* --- Layer 0: Body gradient backdrop ---
+   Vivid colored orbs give the glass something to refract.
+   These MUST be bright enough to show through semi-opaque layers. */
+html.glass-enabled.dark body,
+html.dark.glass-enabled body {
+  background-color: #0a0a0f !important;
+  background-image:
+    radial-gradient(ellipse 70% 55% at 5% 5%, rgba(124, 58, 237, 0.28) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 65% at 95% 85%, rgba(59, 130, 246, 0.22) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 50% at 50% 50%, rgba(236, 72, 153, 0.14) 0%, transparent 70%),
+    radial-gradient(ellipse 45% 40% at 70% 20%, rgba(16, 185, 129, 0.10) 0%, transparent 70%) !important;
+}
+
+html.glass-enabled.light body,
+html.light.glass-enabled body {
+  background-color: #f8f7fb !important;
+  background-image:
+    radial-gradient(ellipse 70% 55% at 5% 5%, rgba(124, 58, 237, 0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 65% at 95% 85%, rgba(59, 130, 246, 0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 50% at 50% 50%, rgba(236, 72, 153, 0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 45% 40% at 70% 20%, rgba(16, 185, 129, 0.04) 0%, transparent 70%) !important;
+}
+
+/* --- Layer 1: NavBar glass --- */
+html.glass-enabled.dark .glass-nav,
+html.dark.glass-enabled .glass-nav {
+  background: rgba(16, 16, 22, 0.62) !important;
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light .glass-nav,
+html.light.glass-enabled .glass-nav {
+  background: rgba(255, 255, 255, 0.82) !important;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- Layer 1: Main content card glass --- */
+html.glass-enabled.dark .glass-card,
+html.dark.glass-enabled .glass-card {
+  background: rgba(16, 16, 22, 0.48) !important;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light .glass-card,
+html.light.glass-enabled .glass-card {
+  background: rgba(255, 255, 255, 0.80) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- Layer 2: Inner table glass --- */
+html.glass-enabled.dark .glass-inner,
+html.dark.glass-enabled .glass-inner {
+  background: rgba(20, 20, 28, 0.20) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border-color: rgba(255, 255, 255, 0.03) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light .glass-inner,
+html.light.glass-enabled .glass-inner {
+  background: rgba(255, 255, 255, 0.70) !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- Layer 2.5: Table header row glass ---
+   Header should be subtle, not a standout glass element.
+   Just a slight tint to separate from table body. */
+html.glass-enabled.dark #system-table-header-row,
+html.dark.glass-enabled #system-table-header-row {
+  background: transparent !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+}
+
+html.glass-enabled.light #system-table-header-row,
+html.light.glass-enabled #system-table-header-row {
+  background: transparent !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Layer 2.5: Expandable detail section glass --- */
+html.glass-enabled.dark .system-details,
+html.dark.glass-enabled .system-details {
+  background: rgba(18, 18, 26, 0.50) !important;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border-top: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+html.glass-enabled.light .system-details,
+html.light.glass-enabled .system-details {
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Row hover glass --- */
+html.glass-enabled.dark .system-row .group:hover,
+html.dark.glass-enabled .system-row .group:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+html.glass-enabled.light .system-row .group:hover,
+html.light.glass-enabled .system-row .group:hover {
+  background: rgba(0, 0, 0, 0.025) !important;
+}
+
+/* --- Dropdown menu glass --- */
+html.glass-enabled.dark #columns-dropdown,
+html.dark.glass-enabled #columns-dropdown {
+  background: rgba(16, 16, 22, 0.78) !important;
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light #columns-dropdown,
+html.light.glass-enabled #columns-dropdown {
+  background: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- Search / filter input glass --- */
+html.glass-enabled.dark #system-filter-input,
+html.dark.glass-enabled #system-filter-input {
+  background: rgba(20, 20, 28, 0.50) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+}
+html.glass-enabled.dark #system-filter-input:focus,
+html.dark.glass-enabled #system-filter-input:focus {
+  background: rgba(25, 25, 32, 0.60) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+html.glass-enabled.light #system-filter-input,
+html.light.glass-enabled #system-filter-input {
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(0, 0, 0, 0.05) !important;
+}
+html.glass-enabled.light #system-filter-input:focus,
+html.light.glass-enabled #system-filter-input:focus {
+  background: rgba(255, 255, 255, 0.80) !important;
+  border-color: rgba(0, 0, 0, 0.10) !important;
+}
+
+/* --- Columns button glass --- */
+html.glass-enabled.dark #columns-btn,
+html.dark.glass-enabled #columns-btn {
+  background: rgba(20, 20, 28, 0.50) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+html.glass-enabled.light #columns-btn,
+html.light.glass-enabled #columns-btn {
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(0, 0, 0, 0.04) !important;
+}
+html.glass-enabled.dark #columns-btn:hover,
+html.dark.glass-enabled #columns-btn:hover {
+  background: rgba(30, 30, 38, 0.60) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+html.glass-enabled.light #columns-btn:hover,
+html.light.glass-enabled #columns-btn:hover {
+  background: rgba(255, 255, 255, 0.80) !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+/* --- Admin system rows glass --- */
+html.glass-enabled.dark .draggable-item,
+html.dark.glass-enabled .draggable-item {
+  background: rgba(22, 22, 30, 0.45) !important;
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border-color: rgba(255, 255, 255, 0.03) !important;
+  box-shadow: none !important;
+}
+html.glass-enabled.dark .draggable-item:hover,
+html.dark.glass-enabled .draggable-item:hover {
+  background: rgba(28, 28, 36, 0.55) !important;
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+html.glass-enabled.light .draggable-item,
+html.light.glass-enabled .draggable-item {
+  background: rgba(255, 255, 255, 0.60) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+html.glass-enabled.light .draggable-item:hover,
+html.light.glass-enabled .draggable-item:hover {
+  background: rgba(255, 255, 255, 0.72) !important;
+  border-color: rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Modal content glass --- */
+html.glass-enabled.dark [data-modal-content],
+html.dark.glass-enabled [data-modal-content] {
+  background: rgba(16, 16, 22, 0.80) !important;
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light [data-modal-content],
+html.light.glass-enabled [data-modal-content] {
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- Modal note/info boxes glass (rounded-lg without border, e.g. bg-[#f5f5f5]) --- */
+html.glass-enabled.dark [data-modal-content] div.rounded-lg:not(.border),
+html.dark.glass-enabled [data-modal-content] div.rounded-lg:not(.border) {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+
+html.glass-enabled.light [data-modal-content] div.rounded-lg:not(.border),
+html.light.glass-enabled [data-modal-content] div.rounded-lg:not(.border) {
+  background: rgba(0, 0, 0, 0.02) !important;
+}
+
+/* --- Modal inner panels glass (toggle cards, cancel buttons, etc.) ---
+   These are .rounded-lg.border elements inside the modal with flat bg-[#222] */
+html.glass-enabled.dark [data-modal-content] div.rounded-lg.border,
+html.dark.glass-enabled [data-modal-content] div.rounded-lg.border,
+html.glass-enabled.dark [data-modal-content] button.rounded-lg.border,
+html.dark.glass-enabled [data-modal-content] button.rounded-lg.border {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+html.glass-enabled.dark [data-modal-content] button.rounded-lg.border:hover,
+html.dark.glass-enabled [data-modal-content] button.rounded-lg.border:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+html.glass-enabled.light [data-modal-content] div.rounded-lg.border,
+html.light.glass-enabled [data-modal-content] div.rounded-lg.border,
+html.glass-enabled.light [data-modal-content] button.rounded-lg.border,
+html.light.glass-enabled [data-modal-content] button.rounded-lg.border {
+  background: transparent !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+html.glass-enabled.light [data-modal-content] button.rounded-lg.border:hover,
+html.light.glass-enabled [data-modal-content] button.rounded-lg.border:hover {
+  background: rgba(0, 0, 0, 0.03) !important;
+}
+
+/* --- Modal close/icon buttons hover (p-1 targets the small X buttons only) --- */
+html.glass-enabled.dark [data-modal-content] button.rounded-lg.p-1:hover,
+html.dark.glass-enabled [data-modal-content] button.rounded-lg.p-1:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+html.glass-enabled.light [data-modal-content] button.rounded-lg.p-1:hover,
+html.light.glass-enabled [data-modal-content] button.rounded-lg.p-1:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Modal form inputs glass --- */
+html.glass-enabled.dark [data-modal-content] input:not([type="checkbox"]),
+html.glass-enabled.dark [data-modal-content] textarea,
+html.dark.glass-enabled [data-modal-content] input:not([type="checkbox"]),
+html.dark.glass-enabled [data-modal-content] textarea {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Light mode: inputs blend with modal bg for clean consistency */
+html.glass-enabled.light [data-modal-content] input:not([type="checkbox"]),
+html.glass-enabled.light [data-modal-content] textarea,
+html.light.glass-enabled [data-modal-content] input:not([type="checkbox"]),
+html.light.glass-enabled [data-modal-content] textarea {
+  background: transparent !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* --- Login card glass --- */
+html.glass-enabled.dark .glass-login,
+html.dark.glass-enabled .glass-login {
+  background: rgba(16, 16, 22, 0.62) !important;
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light .glass-login,
+html.light.glass-enabled .glass-login {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* Make login page wrapper transparent so body gradient shows */
+html.glass-enabled .glass-login-wrapper {
+  background: transparent !important;
+}
+
+/* --- TCPing chart card glass --- */
+html.glass-enabled.dark [data-tcping-chart-container] > div:first-child,
+html.dark.glass-enabled [data-tcping-chart-container] > div:first-child {
+  background: rgba(16, 16, 22, 0.42) !important;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border-color: rgba(255, 255, 255, 0.03) !important;
+  box-shadow: none !important;
+}
+
+html.glass-enabled.light [data-tcping-chart-container] > div:first-child,
+html.light.glass-enabled [data-tcping-chart-container] > div:first-child {
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(0, 0, 0, 0.03) !important;
+  box-shadow: none !important;
+}
+
+/* --- TCPing loading/no-data state glass --- */
+html.glass-enabled.dark [data-tcping-loading],
+html.glass-enabled.dark [data-tcping-no-data],
+html.dark.glass-enabled [data-tcping-loading],
+html.dark.glass-enabled [data-tcping-no-data] {
+  background: rgba(14, 14, 20, 0.50) !important;
+}
+
+html.glass-enabled.light [data-tcping-loading],
+html.glass-enabled.light [data-tcping-no-data],
+html.light.glass-enabled [data-tcping-loading],
+html.light.glass-enabled [data-tcping-no-data] {
+  background: rgba(255, 255, 255, 0.55) !important;
+}
+
+/* --- TCPing tab buttons glass --- */
+html.glass-enabled.dark [data-tcping-tabs] button,
+html.dark.glass-enabled [data-tcping-tabs] button {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+html.glass-enabled.light [data-tcping-tabs] button,
+html.light.glass-enabled [data-tcping-tabs] button {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* --- System row borders in glass mode (softer) --- */
+html.glass-enabled.dark .system-row,
+html.dark.glass-enabled .system-row {
+  border-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+html.glass-enabled.light .system-row,
+html.light.glass-enabled .system-row {
+  border-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+/* --- Login form inputs glass --- */
+html.glass-enabled.dark .glass-login input:not([type="checkbox"]),
+html.dark.glass-enabled .glass-login input:not([type="checkbox"]) {
+  background: rgba(20, 20, 28, 0.60) !important;
+  border-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+html.glass-enabled.light .glass-login input:not([type="checkbox"]),
+html.light.glass-enabled .glass-login input:not([type="checkbox"]) {
+  background: rgba(255, 255, 255, 0.50) !important;
+  border-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* --- Progress bar track glass ---
+   The track background should be translucent so glass layers show through */
+html.glass-enabled.dark .progress-track,
+html.dark.glass-enabled .progress-track {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html.glass-enabled.light .progress-track,
+html.light.glass-enabled .progress-track {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* --- Tags in detail section glass --- */
+html.glass-enabled.dark .system-details .inline-flex,
+html.dark.glass-enabled .system-details .inline-flex {
+  background: rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+html.glass-enabled.light .system-details .inline-flex,
+html.light.glass-enabled .system-details .inline-flex {
+  background: rgba(0, 0, 0, 0.05) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* --- Sort option buttons in dropdown --- */
+html.glass-enabled.dark .sort-option:hover,
+html.dark.glass-enabled .sort-option:hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+html.glass-enabled.light .sort-option:hover,
+html.light.glass-enabled .sort-option:hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Dropdown checkbox/column toggle items --- */
+html.glass-enabled.dark #columns-dropdown label:hover,
+html.dark.glass-enabled #columns-dropdown label:hover {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+html.glass-enabled.light #columns-dropdown label:hover,
+html.light.glass-enabled #columns-dropdown label:hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}

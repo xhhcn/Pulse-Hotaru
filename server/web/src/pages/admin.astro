@@ -139,6 +139,10 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
                   }
                 }
               }
+              // Apply glassmorphism effect if enabled
+              if (config.show_glass) {
+                document.documentElement.classList.add('glass-enabled');
+              }
               // Dispatch event when config is ready
               window.dispatchEvent(new CustomEvent('navbarconfigready', { detail: config }));
             }
@@ -160,6 +164,11 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
           
           if (xhr.status === 200) {
             var config = JSON.parse(xhr.responseText);
+            
+            // Apply glassmorphism effect immediately (before render)
+            if (config.show_glass) {
+              document.documentElement.classList.add('glass-enabled');
+            }
             
             // Inject CSS if exists
             if (config.custom_css && config.custom_css.trim()) {
@@ -220,7 +229,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       <div class="px-2 sm:px-4 md:px-6 animate-navbar">
         <NavBar isAdmin={true} />
       </div>
-      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-3 sm:pt-4 pb-4 sm:pb-6 animate-content">
+      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 pb-2 sm:pb-4 animate-content">
         <AdminDashboard apiBase={apiBase} />
       </main>
       <Footer />

@@ -11,13 +11,13 @@ const apiBase = apiBaseProp ?? '';
 <div 
   id="monitor-root"
   data-api-base={apiBase}
-  class="mx-auto max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
+  class="glass-card mx-auto max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
   style="--first-col-width: 160px;"
 >
   <SystemTableHeader />
 
   <!-- 表格容器 - 独立边框 -->
-  <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#181818] dark:bg-[#181818] bg-[#fafafa] overflow-x-auto" style="scrollbar-width: none; -ms-overflow-style: none;">
+  <div class="glass-inner rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#181818] dark:bg-[#181818] bg-[#fafafa] overflow-x-auto" style="scrollbar-width: none; -ms-overflow-style: none;">
     <style>
       #monitor-root .overflow-x-auto::-webkit-scrollbar {
         display: none;
@@ -71,6 +71,28 @@ const apiBase = apiBaseProp ?? '';
     
     return { url: requestUrl, headers };
   };
+
+  // Global flag to control traffic display in detail section
+  let showTrafficInfo = false;
+
+  // Fetch show_traffic setting from navbar config
+  async function loadTrafficSetting() {
+    try {
+      // Use preloaded config if available
+      if (window.__navbarConfig) {
+        showTrafficInfo = window.__navbarConfig.show_traffic || false;
+        return;
+      }
+      const apiBase = getApiBase(document.getElementById('monitor-root'));
+      const res = await fetch(`${apiBase}/api/navbar/config`);
+      if (res.ok) {
+        const config = await res.json();
+        showTrafficInfo = config.show_traffic || false;
+      }
+    } catch (err) {
+      // Silently fail, default to false
+    }
+  }
 
   const fetchSystemMetrics = async (apiBase) => {
     // Build request URL with token if available
@@ -687,7 +709,7 @@ const apiBase = apiBaseProp ?? '';
   const progress = (value, warn = false, isOffline = false) => `
     <div class="flex items-center gap-0.5 pr-2 sm:pr-3 min-w-0 w-full">
       <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] w-8 sm:w-10 shrink-0">${value.toFixed(1)}%</span>
-      <div class="relative h-2.5 sm:h-3 flex-1 min-w-[60px] max-w-[100px] sm:max-w-[120px] overflow-hidden rounded-full bg-[#111] dark:bg-[#111] bg-[#e5e5e5]">
+      <div class="progress-track relative h-2.5 sm:h-3 flex-1 min-w-[60px] max-w-[100px] sm:max-w-[120px] overflow-hidden rounded-full bg-[#111] dark:bg-[#111] bg-[#e5e5e5]">
         <div class="absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getProgressColor(value, isOffline)}" style="width:${pct(value)}%"></div>
     </div>
     </div>
@@ -882,10 +904,50 @@ const apiBase = apiBaseProp ?? '';
               <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="diskInformation">Disk:</div>
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="disk_info">${escapeHtml(item.disk_info || '-')}</div>
             </div>
+            ${showTrafficInfo ? `
+            <!-- Real-time Traffic -->
+            <div class="flex items-center gap-1.5 sm:gap-2" data-traffic-row="speed">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="realtimeTraffic">Traffic:</div>
+              ${(!item.cpu_model && !item.memory_info) ? `
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="speed">-</div>
+              ` : `
+              <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="speed">
+                <span class="flex items-center gap-0.5" data-detail-speed="in">
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                  <span>${formatTrafficSpeed(item.net_in_mb_s || 0)}</span>
+                </span>
+                <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
+                <span class="flex items-center gap-0.5" data-detail-speed="out">
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                  <span>${formatTrafficSpeed(item.net_out_mb_s || 0)}</span>
+                </span>
+              </div>
+              `}
+            </div>
+            <!-- Total Traffic -->
+            <div class="flex items-center gap-1.5 sm:gap-2" data-traffic-row="total">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="totalTraffic">Total:</div>
+              ${(!item.cpu_model && !item.memory_info) ? `
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="total">-</div>
+              ` : `
+              <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="total">
+                <span class="flex items-center gap-0.5" data-detail-total="in">
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                  <span>${formatTotalTraffic(item.total_net_in_bytes || 0)}</span>
+                </span>
+                <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
+                <span class="flex items-center gap-0.5" data-detail-total="out">
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                  <span>${formatTotalTraffic(item.total_net_out_bytes || 0)}</span>
+                </span>
+              </div>
+              `}
+            </div>
+            ` : ''}
           </div>
         </div>
       ${showTCPing ? `<!-- TCPing Chart Section -->
-      <div class="border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#e5e5e5] px-3 sm:px-4 md:px-6 py-2 sm:py-3" data-tcping-chart-container="${safeId}" style="width: 100%;">
+      <div class="px-3 sm:px-4 md:px-6 pb-2 sm:pb-3" data-tcping-chart-container="${safeId}" style="width: 100%;">
         <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#151515] dark:bg-[#151515] bg-white p-2 sm:p-3">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2">
             <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]" data-translate-detail="tcpingLatency">TCPing Latency (24h)</div>
@@ -937,6 +999,8 @@ const apiBase = apiBaseProp ?? '';
     'memoryInfo': { en: 'Memory:', zh: '内存:' },
     'swapPartition': { en: 'Swap:', zh: '交换:' },
     'diskInformation': { en: 'Disk:', zh: '磁盘:' },
+    'realtimeTraffic': { en: 'Traffic:', zh: '流量:' },
+    'totalTraffic': { en: 'Total:', zh: '总量:' },
     'tcpingLatency': { en: 'TCPing Latency (24h)', zh: 'TCPing 延迟 (24小时)' },
     'avgLatency': { en: 'Avg:', zh: '平均:' },
     'packetLoss': { en: 'Loss:', zh: '丢包:' },
@@ -1398,6 +1462,93 @@ const apiBase = apiBaseProp ?? '';
           const newDiskInfo = String(item.disk_info || '-');
           if (diskInfoEl.textContent !== newDiskInfo) {
             diskInfoEl.textContent = newDiskInfo;
+          }
+        }
+        
+        // Update traffic rows if show_traffic is enabled
+        if (showTrafficInfo) {
+          const hasData = !!(item.cpu_model || item.memory_info);
+          
+          // Handle speed row transition between placeholder and values
+          const speedPlaceholder = detailsSection.querySelector('[data-traffic-placeholder="speed"]');
+          const speedValues = detailsSection.querySelector('[data-traffic-values="speed"]');
+          const speedRow = detailsSection.querySelector('[data-traffic-row="speed"]');
+          
+          if (speedRow) {
+            if (hasData && speedPlaceholder) {
+              // Transition from placeholder to values
+              const valuesHtml = `
+                <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="speed">
+                  <span class="flex items-center gap-0.5" data-detail-speed="in">
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                    <span>${formatTrafficSpeed(item.net_in_mb_s || 0)}</span>
+                  </span>
+                  <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
+                  <span class="flex items-center gap-0.5" data-detail-speed="out">
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                    <span>${formatTrafficSpeed(item.net_out_mb_s || 0)}</span>
+                  </span>
+                </div>`;
+              speedPlaceholder.remove();
+              speedRow.insertAdjacentHTML('beforeend', valuesHtml);
+            } else if (!hasData && speedValues) {
+              // Transition from values to placeholder
+              speedValues.remove();
+              speedRow.insertAdjacentHTML('beforeend', '<div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="speed">-</div>');
+            } else if (hasData && speedValues) {
+              // Update existing values
+              const speedInEl = speedValues.querySelector('[data-detail-speed="in"] span:last-child');
+              const speedOutEl = speedValues.querySelector('[data-detail-speed="out"] span:last-child');
+              if (speedInEl) {
+                const newSpeedIn = formatTrafficSpeed(item.net_in_mb_s || 0);
+                if (speedInEl.textContent !== newSpeedIn) speedInEl.textContent = newSpeedIn;
+              }
+              if (speedOutEl) {
+                const newSpeedOut = formatTrafficSpeed(item.net_out_mb_s || 0);
+                if (speedOutEl.textContent !== newSpeedOut) speedOutEl.textContent = newSpeedOut;
+              }
+            }
+          }
+          
+          // Handle total row transition between placeholder and values
+          const totalPlaceholder = detailsSection.querySelector('[data-traffic-placeholder="total"]');
+          const totalValues = detailsSection.querySelector('[data-traffic-values="total"]');
+          const totalRow = detailsSection.querySelector('[data-traffic-row="total"]');
+          
+          if (totalRow) {
+            if (hasData && totalPlaceholder) {
+              // Transition from placeholder to values
+              const valuesHtml = `
+                <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="total">
+                  <span class="flex items-center gap-0.5" data-detail-total="in">
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                    <span>${formatTotalTraffic(item.total_net_in_bytes || 0)}</span>
+                  </span>
+                  <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
+                  <span class="flex items-center gap-0.5" data-detail-total="out">
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                    <span>${formatTotalTraffic(item.total_net_out_bytes || 0)}</span>
+                  </span>
+                </div>`;
+              totalPlaceholder.remove();
+              totalRow.insertAdjacentHTML('beforeend', valuesHtml);
+            } else if (!hasData && totalValues) {
+              // Transition from values to placeholder
+              totalValues.remove();
+              totalRow.insertAdjacentHTML('beforeend', '<div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="total">-</div>');
+            } else if (hasData && totalValues) {
+              // Update existing values
+              const totalInEl = totalValues.querySelector('[data-detail-total="in"] span:last-child');
+              const totalOutEl = totalValues.querySelector('[data-detail-total="out"] span:last-child');
+              if (totalInEl) {
+                const newTotalIn = formatTotalTraffic(item.total_net_in_bytes || 0);
+                if (totalInEl.textContent !== newTotalIn) totalInEl.textContent = newTotalIn;
+              }
+              if (totalOutEl) {
+                const newTotalOut = formatTotalTraffic(item.total_net_out_bytes || 0);
+                if (totalOutEl.textContent !== newTotalOut) totalOutEl.textContent = newTotalOut;
+              }
+            }
           }
         }
       }
@@ -3364,8 +3515,10 @@ const apiBase = apiBaseProp ?? '';
 
   // Initial load - wait for DOM to be ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       setupFilterInput();
+      // Load traffic setting before rendering rows
+      await loadTrafficSetting();
       loadData();
       connectSSE();
       // Initial translation update
@@ -3374,13 +3527,17 @@ const apiBase = apiBaseProp ?? '';
       preloadTCPingConfig();
     });
   } else {
-    setupFilterInput();
-    loadData();
-    connectSSE();
-    // Initial translation update
-    updateTranslations();
-    // Preload TCPing config for faster tab display
-    preloadTCPingConfig();
+    (async () => {
+      setupFilterInput();
+      // Load traffic setting before rendering rows
+      await loadTrafficSetting();
+      loadData();
+      connectSSE();
+      // Initial translation update
+      updateTranslations();
+      // Preload TCPing config for faster tab display
+      preloadTCPingConfig();
+    })();
   }
 
   // Recalculate column width on window resize (with debounce)

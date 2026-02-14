@@ -155,6 +155,11 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
           if (xhr.status === 200) {
             var config = JSON.parse(xhr.responseText);
             
+            // Apply glassmorphism effect immediately (before render)
+            if (config.show_glass) {
+              document.documentElement.classList.add('glass-enabled');
+            }
+            
             // Inject CSS if exists
             if (config.custom_css && config.custom_css.trim()) {
               var style = document.createElement('style');

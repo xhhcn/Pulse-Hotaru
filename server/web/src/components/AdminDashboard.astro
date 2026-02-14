@@ -5,9 +5,9 @@ const { apiBase: apiBaseProp } = Astro.props ?? {};
 const apiBase = apiBaseProp ?? '';
 ---
 
-<div class="mx-auto mt-2 sm:mt-3 max-w-7xl">
+<div class="mx-auto max-w-7xl">
   <!-- System List -->
-  <div class="mb-4 sm:mb-6 rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-3 sm:p-4 md:p-6">
+  <div class="glass-card mb-4 sm:mb-6 rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-3 sm:p-4 md:p-6">
     <div class="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <h2 id="system-list-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="systemList">Service List</h2>
       <div class="flex items-center gap-1.5 sm:gap-2">
@@ -394,6 +394,31 @@ const apiBase = apiBaseProp ?? '';
           <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="sharedSecretHint">This secret is shared by all clients for authentication</p>
         </div>
 
+        <!-- Show Traffic Toggle -->
+        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showTrafficLabel">Show Traffic Info</label>
+            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="showTrafficDesc">Display real-time and total traffic in the detail dropdown section</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer ml-3">
+            <input type="checkbox" id="show-traffic-toggle" name="show_traffic" class="sr-only peer">
+            <div class="w-11 h-6 bg-[#404040] dark:bg-[#404040] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+          </label>
+        </div>
+
+        <!-- Glassmorphism Toggle -->
+        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showGlassLabel">Glassmorphism Effect</label>
+            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="showGlassDesc">Enable frosted glass visual effect on navbar and cards</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer ml-3">
+            <input type="checkbox" id="show-glass-toggle" name="show_glass" class="sr-only peer">
+            <div class="w-11 h-6 bg-[#404040] dark:bg-[#404040] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+          </label>
+        </div>
+
+        <!-- Custom CSS & JavaScript -->
         <div>
           <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
           <textarea
@@ -3077,6 +3102,16 @@ const apiBase = apiBaseProp ?? '';
           }
           customCodeInput.value = customCode;
         }
+        // Load show_traffic toggle state
+        const showTrafficToggle = document.getElementById('show-traffic-toggle');
+        if (showTrafficToggle) {
+          showTrafficToggle.checked = config.show_traffic || false;
+        }
+        // Load show_glass toggle state
+        const showGlassToggle = document.getElementById('show-glass-toggle');
+        if (showGlassToggle) {
+          showGlassToggle.checked = config.show_glass || false;
+        }
       }
     } catch (err) {
       // Config load failed silently
@@ -3597,12 +3632,16 @@ const apiBase = apiBaseProp ?? '';
       }
     }
     
+    const showTrafficToggle = document.getElementById('show-traffic-toggle');
+    const showGlassToggle = document.getElementById('show-glass-toggle');
     const data = {
       text: formData.get('text')?.trim() || 'Pulse',
       logo: formData.get('logo')?.trim() || '',
       shared_secret: sharedSecretInput?.value || '',
       custom_css: customCSS.trim(),
       custom_js: customJS.trim(),
+      show_traffic: showTrafficToggle?.checked || false,
+      show_glass: showGlassToggle?.checked || false,
     };
 
     // Set button to saving state
@@ -3857,6 +3896,10 @@ const apiBase = apiBaseProp ?? '';
     'copy': { en: 'Copy', zh: '复制' },
     'customCodeHint': { en: 'Custom CSS and JavaScript will be applied to all pages. Use <style> for CSS or <script> for JS', zh: '自定义 CSS 和 JavaScript 将应用于所有页面。使用 <style> 标签添加 CSS，使用 <script> 标签添加 JS' },
     'customCodeSecurityWarning': { en: '⚠️ Security Warning: Do NOT include sensitive information (API keys, passwords, tokens).', zh: '⚠️ 安全提示：请勿包含敏感信息（API密钥、密码、令牌等）' },
+    'showTrafficLabel': { en: 'Show Traffic Info', zh: '显示流量信息' },
+    'showTrafficDesc': { en: 'Display real-time and total traffic in the detail dropdown section', zh: '在下拉详情部分显示实时流量和总流量' },
+    'showGlassLabel': { en: 'Glassmorphism Effect', zh: '毛玻璃特效' },
+    'showGlassDesc': { en: 'Enable frosted glass visual effect on navbar and cards', zh: '为导航栏和卡片启用毛玻璃视觉效果' },
   };
 
   function updateAdminTranslations() {

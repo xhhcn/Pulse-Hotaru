@@ -84,6 +84,19 @@ var (
 	cacheMutex             sync.RWMutex
 	cacheTTL               = 5 * time.Minute // Cache for 5 minutes
 	
+	// Cache for static system info (computed once, never changes)
+	osInfoCache     *OSInfo
+	osInfoOnce      sync.Once
+	locationCache   string
+	locationOnce    sync.Once
+	
+	// Cache for IP addresses (changes rarely, refresh every 60 seconds)
+	ipv4Cache          string
+	ipv6Cache          string
+	ipCacheTime        time.Time
+	ipCacheMutex       sync.RWMutex
+	ipCacheTTL         = 60 * time.Second // Refresh IP every 60 seconds (IP rarely changes)
+	
 	// Shared HTTP client for connection reuse (important for cross-continent networks)
 	sharedHTTPClient     *http.Client
 	sharedHTTPClientOnce sync.Once
@@ -597,25 +610,29 @@ type OSInfo struct {
 }
 
 func getOSInfo() OSInfo {
-	osName := runtime.GOOS
-	var name, icon string
-	
-	switch osName {
-	case "linux":
-		name = detectLinuxDistro()
-		icon = getOSIcon(name)
-	case "darwin":
-		name = "macOS"
-		icon = "devicon:apple"
-	case "windows":
-		name = "Windows"
-		icon = "logos:microsoft-windows-icon"
-	default:
-		name = strings.Title(osName)
-		icon = "devicon:linux"
-	}
-	
-	return OSInfo{Name: name, Icon: icon}
+	// OS info never changes at runtime, compute once and cache forever
+	osInfoOnce.Do(func() {
+		osName := runtime.GOOS
+		var name, icon string
+		
+		switch osName {
+		case "linux":
+			name = detectLinuxDistro()
+			icon = getOSIcon(name)
+		case "darwin":
+			name = "macOS"
+			icon = "devicon:apple"
+		case "windows":
+			name = "Windows"
+			icon = "logos:microsoft-windows-icon"
+		default:
+			name = strings.Title(osName)
+			icon = "devicon:linux"
+		}
+		
+		osInfoCache = &OSInfo{Name: name, Icon: icon}
+	})
+	return *osInfoCache
 }
 
 func detectLinuxDistro() string {
@@ -840,6 +857,30 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 func getIPAddresses() (ipv4, ipv6 string) {
+	// Check cache first (IP addresses rarely change, refresh every 60 seconds)
+	ipCacheMutex.RLock()
+	if !ipCacheTime.IsZero() && time.Since(ipCacheTime) < ipCacheTTL {
+		v4, v6 := ipv4Cache, ipv6Cache
+		ipCacheMutex.RUnlock()
+		return v4, v6
+	}
+	ipCacheMutex.RUnlock()
+	
+	// Cache miss or expired, re-detect
+	ipv4, ipv6 = detectIPAddresses()
+	
+	// Update cache
+	ipCacheMutex.Lock()
+	ipv4Cache = ipv4
+	ipv6Cache = ipv6
+	ipCacheTime = time.Now()
+	ipCacheMutex.Unlock()
+	
+	return ipv4, ipv6
+}
+
+// detectIPAddresses performs the actual IP address detection from network interfaces
+func detectIPAddresses() (ipv4, ipv6 string) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", ""
@@ -977,26 +1018,33 @@ func getPublicIPv4() string {
 }
 
 func getLocation() string {
-	// Get location (country only)
-	location := envOr("LOCATION", "")
-	if location != "" {
-		// Extract only country part
-		parts := strings.Split(location, ",")
-		if len(parts) > 0 {
-			country := strings.TrimSpace(parts[len(parts)-1])
-			// Remove any extra details, keep only country name
-			countryParts := strings.Fields(country)
-			if len(countryParts) > 0 {
-				return countryParts[0]
+	// Location never changes at runtime, compute once and cache forever
+	locationOnce.Do(func() {
+		// Get location (country only)
+		location := envOr("LOCATION", "")
+		if location != "" {
+			// Extract only country part
+			parts := strings.Split(location, ",")
+			if len(parts) > 0 {
+				country := strings.TrimSpace(parts[len(parts)-1])
+				// Remove any extra details, keep only country name
+				countryParts := strings.Fields(country)
+				if len(countryParts) > 0 {
+					locationCache = countryParts[0]
+					return
+				}
+				locationCache = country
+				return
 			}
-			return country
+			locationCache = strings.TrimSpace(location)
+			return
 		}
-		return strings.TrimSpace(location)
-	}
-	
-	// Try to detect from system timezone or IP (simplified)
-	// In production, use proper geolocation service
-	return ""
+		
+		// Try to detect from system timezone or IP (simplified)
+		// In production, use proper geolocation service
+		locationCache = ""
+	})
+	return locationCache
 }
 
 // CPU stats tracking for accurate calculation
@@ -1048,28 +1096,27 @@ func getCPUUsage() float64 {
 			}
 			
 			// Parse CPU stats: user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
-			var user, nice, system, idle, iowait, irq, softirq, steal, guest, guestNice uint64
-			fmt.Sscanf(fields[1], "%d", &user)
-			fmt.Sscanf(fields[2], "%d", &nice)
-			fmt.Sscanf(fields[3], "%d", &system)
-			fmt.Sscanf(fields[4], "%d", &idle)
+			// Use strconv.ParseUint instead of fmt.Sscanf for ~10x faster integer parsing
+			parseField := func(s string) uint64 {
+				v, _ := strconv.ParseUint(s, 10, 64)
+				return v
+			}
+			var user, nice, system, idle, iowait, irq, softirq, steal uint64
+			user = parseField(fields[1])
+			nice = parseField(fields[2])
+			system = parseField(fields[3])
+			idle = parseField(fields[4])
 			if len(fields) > 5 {
-				fmt.Sscanf(fields[5], "%d", &iowait)
+				iowait = parseField(fields[5])
 			}
 			if len(fields) > 6 {
-				fmt.Sscanf(fields[6], "%d", &irq)
+				irq = parseField(fields[6])
 			}
 			if len(fields) > 7 {
-				fmt.Sscanf(fields[7], "%d", &softirq)
+				softirq = parseField(fields[7])
 			}
 			if len(fields) > 8 {
-				fmt.Sscanf(fields[8], "%d", &steal)
-			}
-			if len(fields) > 9 {
-				fmt.Sscanf(fields[9], "%d", &guest)
-			}
-			if len(fields) > 10 {
-				fmt.Sscanf(fields[10], "%d", &guestNice)
+				steal = parseField(fields[8])
 			}
 			
 			// Calculate total CPU time (excluding guest time to avoid double counting)
@@ -1437,9 +1484,9 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 			continue
 		}
 		
-		var rxBytes, txBytes uint64
-		fmt.Sscanf(fields[0], "%d", &rxBytes)  // Receive bytes
-		fmt.Sscanf(fields[8], "%d", &txBytes)  // Transmit bytes
+		// Use strconv.ParseUint for faster integer parsing (avoids fmt.Sscanf overhead)
+		rxBytes, _ := strconv.ParseUint(fields[0], 10, 64)  // Receive bytes
+		txBytes, _ := strconv.ParseUint(fields[8], 10, 64)  // Transmit bytes
 		
 		currentStats[interfaceName] = netInterfaceStats{
 			RxBytes: rxBytes,

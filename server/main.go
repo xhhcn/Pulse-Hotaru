@@ -1673,14 +1673,12 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		return
 	}
 
-	// Broadcast immediately so the frontend updates the moment the push is processed,
-	// rather than waiting up to 3 s for the next polling-loop tick.
-	// This makes push clients as responsive as pull clients.
-	// The polling loop will also broadcast on its next tick, which is harmless
-	// (the frontend re-fetches the same data — no visual flicker).
-	if globalBroker != nil {
-		broadcastJSON(globalBroker, "metric_updated", map[string]interface{}{"count": 1})
-	}
+	// NOTE: Do NOT broadcast immediately here.
+	// The polling loop broadcasts every 3 s for all clients (including push-mode ones).
+	// Adding a second broadcast here causes the frontend to receive two rapid-fire
+	// metric_updated events per push cycle, resulting in double refreshes.
+	// The data is already saved to the DB above; the polling loop will pick it up
+	// within ≤3 s — identical latency to pull-mode clients.
 
 	// Process any TCPing results included in the push payload
 	for _, tr := range payload.TCPingResults {
@@ -1736,11 +1734,9 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 // Global references set once at startup so handlers called from the HTTP mux
 // (which don't receive these as parameters) can still reach them.
 var globalClientRegistry *ClientRegistry
-var globalBroker *SSEBroker // used by handleClientPush for immediate SSE broadcast
 
 func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistry, ipCache *IPCountryCache) {
 	globalClientRegistry = registry
-	globalBroker = broker
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 

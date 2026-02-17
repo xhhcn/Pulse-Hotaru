@@ -316,6 +316,23 @@ type ClientInfo struct {
 	// Secret is cached from database to avoid repeated lookups during polling
 	// Updated when client registers or when system data is modified
 	Secret string `json:"-"` // Not exposed in JSON (security)
+	// Push mode: client actively pushes metrics (used for NAT/outbound-only servers)
+	// When PushMode is true, server skips polling and instead tracks LastPushAt for offline detection
+	PushMode   bool      `json:"-"` // in-memory only, not persisted
+	LastPushAt time.Time `json:"-"` // time of last successful push (in-memory only)
+}
+
+// ClientTCPingResult is a single TCPing measurement sent by the client in push mode
+type ClientTCPingResult struct {
+	Target  string  `json:"target"`            // e.g. "8.8.8.8:53"
+	Latency float64 `json:"latency"`           // milliseconds; 0 if failed
+	Success bool    `json:"success"`
+}
+
+// ClientPushResponse is returned to push-mode clients with updated TCPing config
+type ClientPushResponse struct {
+	TCPingTargets     []string `json:"tcping_targets"`
+	TCPingIntervalSecs int     `json:"tcping_interval_secs"`
 }
 
 type ClientRegistry struct {
@@ -475,30 +492,40 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	// Note: It's OK if both URLs are empty - client might be behind NAT
 	// The client will still be tracked, but polling will fail (which is expected)
 
-	// Preserve WorkingURL if client already exists
-	// Always preserve WorkingURL unless URLs actually changed, as it represents a working connection
+	// Preserve in-memory-only fields from the existing entry (if any).
+	// We hold the write lock, so reading existingClient here is race-free.
 	existingClient, exists := r.clients[id]
-	workingURL := ""
-	if exists && existingClient != nil {
-		// CRITICAL: Always preserve WorkingURL if it's still valid
-		// WorkingURL represents a known working connection, so we should preserve it whenever possible
-		if existingClient.WorkingURL != "" {
-			// Preserve WorkingURL if URLs haven't changed or WorkingURL still matches a current URL
-			// This ensures that once a connection (especially IPv6) works, we keep using it
-			if existingClient.URL == url && existingClient.URL6 == url6 {
-				// URLs unchanged, always preserve working URL
-				workingURL = existingClient.WorkingURL
-			} else if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
-				// URLs changed but WorkingURL still matches one of them, preserve it
-				workingURL = existingClient.WorkingURL
-			}
-			// Otherwise: URLs changed and WorkingURL no longer matches any — reset to empty
-			// pollClient will discover and set a new WorkingURL on next successful connection
-		}
-	}
 
-	// Note: No need to double-check WorkingURL here - we're holding the write lock,
-	// so no other goroutine can modify existingClient between our check above and now.
+	var workingURL string
+	var pushMode bool
+	var lastPushAt time.Time
+	var cachedSecret string
+
+	if exists && existingClient != nil {
+		// --- WorkingURL: keep if it still matches a valid URL ---
+		if existingClient.WorkingURL != "" {
+			if existingClient.URL == url && existingClient.URL6 == url6 {
+				workingURL = existingClient.WorkingURL // URLs unchanged
+			} else if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
+				workingURL = existingClient.WorkingURL // WorkingURL still valid
+			}
+			// Otherwise reset — pollClient will rediscover on next success.
+		}
+
+		// --- Push-mode state: MUST be preserved ---
+		// If we zero these out, the polling loop briefly sees PushMode=false for a
+		// NAT client, tries to poll, fails twice, and calls markSystemAsOffline.
+		// Resetting them on re-registration is always wrong: the client is still
+		// actively pushing; only UpdatePushState or explicit removal should change them.
+		pushMode   = existingClient.PushMode
+		lastPushAt = existingClient.LastPushAt
+
+		// --- Secret: preserve to avoid a race window ---
+		// handleClientRegister sets client.Secret right after calling Register, but
+		// between Register returning and that assignment, a concurrent pollClient
+		// could run with an empty secret, causing spurious 401 errors.
+		cachedSecret = existingClient.Secret
+	}
 
 	r.clients[id] = &ClientInfo{
 		ID:         id,
@@ -509,6 +536,9 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		URL:        url,
 		URL6:       url6,
 		WorkingURL: workingURL,
+		PushMode:   pushMode,
+		LastPushAt: lastPushAt,
+		Secret:     cachedSecret, // caller (handleClientRegister) will overwrite with DB value
 	}
 
 	// Log registration details
@@ -552,13 +582,32 @@ func (r *ClientRegistry) UpdateWorkingURL(id, workingURL string) {
 	}
 }
 
-func (r *ClientRegistry) GetAll() []*ClientInfo {
+// UpdatePushState marks a client as using push mode and records the push timestamp
+// Called by handleClientPush each time a push payload is successfully received
+func (r *ClientRegistry) UpdatePushState(id string, lastPushAt time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if client, exists := r.clients[id]; exists && client != nil {
+		client.PushMode = true
+		client.LastPushAt = lastPushAt
+	}
+}
+
+// GetAll returns a snapshot of all registered clients.
+// Each element is a COPY of the ClientInfo struct captured while the read lock
+// is held, so callers can safely read fields (including PushMode, LastPushAt)
+// without data races against concurrent Register / UpdatePushState calls.
+// Mutations to the returned structs do NOT affect the registry; use the
+// dedicated Update* methods (UpdateWorkingURL, UpdatePushState) for that.
+func (r *ClientRegistry) GetAll() []ClientInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	clients := make([]*ClientInfo, 0, len(r.clients))
+	clients := make([]ClientInfo, 0, len(r.clients))
 	for _, client := range r.clients {
-		clients = append(clients, client)
+		if client != nil {
+			clients = append(clients, *client) // copy — safe to read without a lock
+		}
 	}
 	return clients
 }
@@ -670,6 +719,14 @@ func main() {
 	mux.HandleFunc("/api/clients/register", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handleClientRegister(store, clientRegistry, w, r)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	// Push mode: NAT/outbound-only clients send metrics here instead of serving /metrics
+	mux.HandleFunc("/api/clients/push", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			handleClientPush(store, clientRegistry, ipCache, w, r)
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -1367,100 +1424,33 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 		}
 	}
 
-	// Check if there's already a client registered with this ID
-	// If yes, verify it's the same client (same IP/port) or reject the new registration
-	existingRegisteredClient := registry.Get(payload.ID)
-	if existingRegisteredClient != nil {
-		// There's already a client registered with this ID
-		// Check if it's the same client (same IP and port) or a different one
-		isSameClient := false
+	// No IP/port conflict check here.
+	// ID + secret is the complete identity of a client.  A client's IP may change
+	// at any time (dynamic IP, NAT rotation, VPN, restart) so comparing IPs would
+	// falsely reject legitimate re-registrations.  The secret has already been
+	// validated above; if it passed, this is the authorised owner of this ID.
 
-		// Normalize IPs for comparison (handle IPv4/IPv6)
-		newIPv4 := payload.IP
-		newIPv6 := payload.IPv6
-		existingIPv4 := existingRegisteredClient.IP
-		existingIPv6 := existingRegisteredClient.IPv6
+	// Resolve the client's public IPv4.
+	// Priority:
+	//   1. Use the client-reported IP if it is a valid public IPv4.
+	//   2. Fall back to the connection source IP (r.RemoteAddr / X-Forwarded-For).
+	//      For NAT/outbound-only clients the HTTP connection comes from the NAT
+	//      gateway's public IP even when the client only has private interfaces.
+	//
+	// We intentionally reject private IPs from the payload so that NAT machines
+	// that fail external-API detection don't store a useless 192.168.x.x in the DB.
 
-		// Check if it's the same client by comparing IPs and port
-		if payload.Port == existingRegisteredClient.Port {
-			// Port matches, check IPs
-			if newIPv4 != "" && existingIPv4 != "" && newIPv4 == existingIPv4 {
-				isSameClient = true
-			} else if newIPv6 != "" && existingIPv6 != "" && newIPv6 == existingIPv6 {
-				isSameClient = true
-			} else if newIPv4 != "" && existingIPv6 != "" && newIPv4 == existingIPv6 {
-				// IPv4 matches existing IPv6 (same client, different IP version)
-				isSameClient = true
-			} else if newIPv6 != "" && existingIPv4 != "" && newIPv6 == existingIPv4 {
-				// IPv6 matches existing IPv4 (same client, different IP version)
-				isSameClient = true
-			}
-		}
-
-		if !isSameClient {
-			// Different client trying to register with the same ID
-			log.Printf("❌ Client registration failed: ID '%s' is already registered by another client (existing: IPv4=%s, IPv6=%s, Port=%s; new: IPv4=%s, IPv6=%s, Port=%s)",
-				payload.ID, existingIPv4, existingIPv6, existingRegisteredClient.Port, newIPv4, newIPv6, payload.Port)
-			http.Error(w, fmt.Sprintf("client ID '%s' is already registered by another client. Please use a different ID or disconnect the existing client first", payload.ID), http.StatusConflict)
-			return
-		}
-
-		// Same client re-registering (e.g., after restart or IP change)
-		// Silent re-registration - no log needed for normal operation
-	}
-
-	// IMPORTANT: For client registration, we should trust the client's reported IP addresses
-	// The client knows its own public IPs better than we can detect from the connection
-	// This is especially important when:
-	// 1. Client is behind NAT (connection IP is not the client's public IP)
-	// 2. Client connects through proxy/load balancer (RemoteAddr is proxy IP)
-	// 3. Client has both IPv4 and IPv6 (we need both for proper fallback)
-
-	// Use IPv4 and IPv6 directly from payload (client reports its own IPs)
 	ip := payload.IP
 	ipv6 := payload.IPv6
 
-	// Only use connection IP as fallback if payload IP is missing or invalid
-	// This handles edge cases where client doesn't report its IP
-	if ip == "" || ip == "127.0.0.1" || ip == "localhost" {
-		// Try to get from HTTP headers (for proxies/load balancers)
-		ip = r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.Header.Get("X-Real-IP")
-		}
-
-		// If not in headers, get from connection
-		if ip == "" {
-			// Parse RemoteAddr (format: "IP:PORT" or "[IP]:PORT" for IPv6)
-			host, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err == nil && host != "" {
-				ip = host
-			} else {
-				// Fallback: try to parse directly
-				// Handle IPv6 format [::1]:port
-				if strings.HasPrefix(r.RemoteAddr, "[") {
-					end := strings.Index(r.RemoteAddr, "]")
-					if end > 0 {
-						ip = r.RemoteAddr[1:end]
-					}
-				} else {
-					parts := strings.Split(r.RemoteAddr, ":")
-					if len(parts) > 0 {
-						ip = parts[0]
-					}
-				}
+	// Apply NAT IP fixup: if the reported IPv4 is absent or private, derive it
+	// from the connection source IP (same logic as handleClientPush).
+	// getClientIP handles X-Forwarded-For, X-Real-IP and raw RemoteAddr in one call.
+	if isPrivateIPStr(ip) {
+		if srcIP := getClientIP(r); srcIP != "" {
+			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
+				ip = srcIP
 			}
-		}
-
-		// Clean up IP (take first if comma-separated, remove whitespace)
-		if idx := strings.Index(ip, ","); idx > 0 {
-			ip = strings.TrimSpace(ip[:idx])
-		}
-		ip = strings.TrimSpace(ip)
-
-		// If connection IP is still localhost, clear it
-		if ip == "127.0.0.1" || ip == "localhost" || ip == "::1" {
-			ip = ""
 		}
 	}
 
@@ -1498,17 +1488,259 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 		client.Secret = existing.Secret
 	}
 
+	// Return TCPing config in registration response so push-mode clients can start
+	// monitoring targets immediately without an extra round-trip.
+	tcpingCfg, _ := store.GetTCPingConfig()
+	tcpingTargets := []string{}
+	tcpingInterval := 60
+	if tcpingCfg != nil {
+		tcpingInterval = tcpingCfg.IntervalSecs
+		for _, t := range tcpingCfg.Targets {
+			if t.Address != "" {
+				tcpingTargets = append(tcpingTargets, t.Address)
+			}
+		}
+	}
 	// CDN-friendly: ensure registration response is not cached
-	// This is critical for client registration which happens frequently
-	writeJSON(w, http.StatusOK, map[string]string{"message": "registered", "id": payload.ID})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":             "registered",
+		"id":                  payload.ID,
+		"tcping_targets":      tcpingTargets,
+		"tcping_interval_secs": tcpingInterval,
+	})
 }
 
-// Global registry reference for pollClient to update WorkingURL
+// handleClientPush processes metrics pushed by client agents operating in push mode.
+// Push mode is used by clients behind NAT or with outbound-only connectivity.
+// The client sends all metrics + optional TCPing results in one POST; the server
+// responds with the current TCPing configuration so the client can run TCPing locally.
+func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountryCache, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+
+	// Decode the push payload (metric fields + optional secret + optional TCPing results)
+	var payload struct {
+		metricPayload
+		TCPingResults []ClientTCPingResult `json:"tcping_results,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	clientID := strings.TrimSpace(payload.ID)
+	if clientID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify system exists in database (must be pre-added by admin)
+	existing, err := store.Get(clientID)
+	if err != nil || existing == nil {
+		http.Error(w, fmt.Sprintf("server id '%s' not found", clientID), http.StatusNotFound)
+		return
+	}
+
+	// Authenticate using secret from DB (same logic as pollClient)
+	if existing.Secret != "" {
+		providedSecret := ""
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			providedSecret = strings.TrimPrefix(auth, "Bearer ")
+		}
+		// Also accept secret embedded in payload as fallback
+		if providedSecret == "" {
+			providedSecret = payload.Secret
+		}
+		if providedSecret != existing.Secret {
+			http.Error(w, "invalid secret", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// --- NAT/outbound-only IP fixup ---
+	// For machines behind NAT the client's network interfaces only expose private IPs.
+	// The client tries external IP-echo APIs as a fallback, but those can fail
+	// (timeouts, firewall, etc.).  However, the HTTP push request always arrives from
+	// the real public IP (the NAT gateway's egress IP), so we can use r.RemoteAddr
+	// (via getClientIP) as a reliable fallback when the client-reported IPv4 is empty
+	// or still private.  This also works correctly when the server is behind a reverse
+	// proxy because getClientIP reads X-Forwarded-For / X-Real-IP headers.
+	if payload.IPv4 == "" || isPrivateIPStr(payload.IPv4) {
+		if srcIP := getClientIP(r); srcIP != "" {
+			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
+				payload.IPv4 = srcIP
+			}
+		}
+	}
+
+	// Mark client as push-mode in registry (creates entry if not yet registered)
+	now := time.Now()
+
+	// Ensure client is in registry (may not be if server restarted after client registered)
+	if registry.Get(clientID) == nil {
+		// Push-mode clients have no inbound port; pass empty IP/port so the registry
+		// stores no URL (URL="" means server will never attempt to poll this client).
+		// The client's IP is already preserved in the metric written to the DB.
+		registry.Register(clientID, payload.Name, "", "", "")
+		if c := registry.Get(clientID); c != nil {
+			c.Secret = existing.Secret
+		}
+	}
+	registry.UpdatePushState(clientID, now)
+
+	// Resolve location from IP if client didn't provide one
+	if payload.Location == "" {
+		for _, ip := range []string{payload.IPv4, payload.IPv6} {
+			if ip == "" {
+				continue
+			}
+			if country, found := ipCache.Get(ip); found {
+				if country != "" {
+					payload.Location = country
+				}
+			} else {
+				country = getCountryFromIP(ip)
+				if country != "" {
+					ipCache.Set(ip, country)
+					payload.Location = country
+				} else {
+					ipCache.SetFailed(ip)
+				}
+			}
+			if payload.Location != "" {
+				break
+			}
+		}
+	} else {
+		payload.Location = extractCountry(payload.Location)
+	}
+
+	timeDisplay := formatUptime(payload.Uptime)
+
+	// Preserve server-side fields (order, name, tags, secret, tcping data)
+	order := 0
+	name := payload.Name
+	var tcpingData map[string]TCPingTargetData
+	var tags []string
+	dbSecret := existing.Secret
+	if existing != nil {
+		order = existing.Order
+		name = existing.Name // Always use admin-set name
+		tags = existing.Tags
+		if existing.TCPingData != nil {
+			tcpingData = make(map[string]TCPingTargetData, len(existing.TCPingData))
+			for k, v := range existing.TCPingData {
+				tcpingData[k] = v
+			}
+		}
+	}
+
+	metric := SystemMetric{
+		ID:                 clientID,
+		Name:               name,
+		IPv4:               payload.IPv4,
+		IPv6:               payload.IPv6,
+		Time:               timeDisplay,
+		Location:           payload.Location,
+		VirtualizationType: payload.VirtualizationType,
+		OS:                 payload.OS,
+		OSIcon:             payload.OSIcon,
+		CPU:                payload.CPU,
+		CPUModel:           payload.CPUModel,
+		Memory:             payload.Memory,
+		MemoryInfo:         payload.MemoryInfo,
+		SwapInfo:           payload.SwapInfo,
+		Disk:               payload.Disk,
+		DiskInfo:           payload.DiskInfo,
+		NetInMBps:          payload.NetInMBps,
+		NetOutMBps:         payload.NetOutMBps,
+		TotalNetInBytes:    payload.TotalNetInBytes,
+		TotalNetOutBytes:   payload.TotalNetOutBytes,
+		AgentVersion:       payload.AgentVersion,
+		Order:              order,
+		Alert:              false, // actively pushing = online
+		UpdatedAt:          time.Now().UTC(),
+		TCPingData:         tcpingData,
+		Tags:               tags,
+		Secret:             dbSecret,
+	}
+
+	if err := store.Upsert(metric); err != nil {
+		http.Error(w, "failed to save metrics", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast immediately so the frontend updates the moment the push is processed,
+	// rather than waiting up to 3 s for the next polling-loop tick.
+	// This makes push clients as responsive as pull clients.
+	// The polling loop will also broadcast on its next tick, which is harmless
+	// (the frontend re-fetches the same data — no visual flicker).
+	if globalBroker != nil {
+		broadcastJSON(globalBroker, "metric_updated", map[string]interface{}{"count": 1})
+	}
+
+	// Process any TCPing results included in the push payload
+	for _, tr := range payload.TCPingResults {
+		if tr.Target == "" {
+			continue
+		}
+		var latencyPtr *float64
+		if tr.Success {
+			l := tr.Latency
+			latencyPtr = &l
+		}
+		result := TCPingResult{
+			ClientID:  clientID,
+			Target:    tr.Target,
+			Latency:   latencyPtr,
+			Timestamp: time.Now().UTC(),
+		}
+		if saveErr := store.SaveTCPingResult(result); saveErr == nil {
+			invalidateTCPingCache(clientID)
+		}
+		// Update latest tcping snapshot on SystemMetric
+		if tr.Success {
+			if m, getErr := store.Get(clientID); getErr == nil && m != nil {
+				if m.TCPingData == nil {
+					m.TCPingData = make(map[string]TCPingTargetData)
+				}
+				m.TCPingData[tr.Target] = TCPingTargetData{
+					Latency:   tr.Latency,
+					Timestamp: time.Now().UTC(),
+				}
+				store.Upsert(*m) // best-effort, ignore error
+			}
+		}
+	}
+
+	// Return current TCPing config so client can run TCPing locally
+	tcpingConfig, configErr := store.GetTCPingConfig()
+	if configErr != nil || tcpingConfig == nil {
+		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
+	}
+	targets := make([]string, 0, len(tcpingConfig.Targets))
+	for _, t := range tcpingConfig.Targets {
+		if t.Address != "" {
+			targets = append(targets, t.Address)
+		}
+	}
+	writeJSON(w, http.StatusOK, ClientPushResponse{
+		TCPingTargets:      targets,
+		TCPingIntervalSecs: tcpingConfig.IntervalSecs,
+	})
+}
+
+// Global references set once at startup so handlers called from the HTTP mux
+// (which don't receive these as parameters) can still reach them.
 var globalClientRegistry *ClientRegistry
+var globalBroker *SSEBroker // used by handleClientPush for immediate SSE broadcast
 
 func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistry, ipCache *IPCountryCache) {
-	// Store global reference for pollClient to use
 	globalClientRegistry = registry
+	globalBroker = broker
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
@@ -1556,12 +1788,59 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 		var mu sync.Mutex
 		var updatedClientIDs []string
 
-		// Poll all clients in parallel - skip health check to avoid blocking
-		// Health checks can be slow and cause false negatives, so we poll directly
-		// This ensures we always try to get data, even if health check would fail
+		// Poll all clients in parallel.
+		// GetAll() returns value COPIES (not pointers) so all reads of PushMode,
+		// LastPushAt, URL, etc. below are race-free — they snapshot a consistent
+		// state at the time GetAll held the read lock.
 		for _, client := range clients {
-			// Safety check: skip nil clients or clients with empty ID/URL
-			if client == nil || client.ID == "" || (client.URL == "" && client.URL6 == "") {
+			if client.ID == "" { // values are never nil; zero-ID means empty slot
+				continue
+			}
+
+			// Push-mode clients have no inbound URL; handle offline detection here
+			// instead of polling.  A client is considered alive if it pushed within
+			// the last 30 seconds (10× the 3-second push interval).
+			// 30 s gives comfortable headroom over the 8-second push HTTP timeout:
+			// even if every push takes the maximum 8 s, we still see 3+ pushes before
+			// the threshold triggers, preventing false "offline" flaps on slow networks.
+			if client.PushMode && client.URL == "" && client.URL6 == "" {
+				if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
+					// Recent push received — count as a successful update
+					failureCountMu.Lock()
+					if failureCount[client.ID] > 0 {
+						delete(failureCount, client.ID)
+					}
+					failureCountMu.Unlock()
+					mu.Lock()
+					updatedClientIDs = append(updatedClientIDs, client.ID)
+					mu.Unlock()
+				} else if !client.LastPushAt.IsZero() {
+					// Push is stale — apply the same offline / removal logic as pull failures
+					failureCountMu.Lock()
+					failureCount[client.ID]++
+					currentCount := failureCount[client.ID]
+					failureCountMu.Unlock()
+					if currentCount >= 2 {
+						if currentCount == 2 {
+							go markSystemAsOffline(store, broker, client.ID)
+						}
+						if currentCount >= maxFailures {
+							registry.Remove(client.ID)
+							failureCountMu.Lock()
+							delete(failureCount, client.ID)
+							failureCountMu.Unlock()
+						}
+					}
+				}
+				// LastPushAt.IsZero() → client registered but no push received yet.
+				// Do NOT count as a failure: the client may simply be starting up.
+				// It will be included in broadcasts as soon as the first push arrives
+				// (handleClientPush broadcasts immediately on success).
+				continue
+			}
+
+			// Safety check: skip clients with no URL (non-push, non-connected)
+			if client.URL == "" && client.URL6 == "" {
 				continue
 			}
 
@@ -1572,18 +1851,19 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			// Note: If a client somehow gets out of sync, it will be removed after maxFailures
 
 			wg.Add(1)
-			go func(c *ClientInfo) {
+			// Pass 'client' by VALUE into the goroutine so each goroutine owns its
+			// own copy (avoids the classic "loop variable captured by closure" race).
+			// pollClient receives a pointer to that goroutine-local copy; any writes
+			// it makes (e.g. WorkingURL clear) now go through globalClientRegistry
+			// methods, so the registry is always the source of truth.
+			go func(c ClientInfo) {
 				defer wg.Done()
 
-				// Additional safety check inside goroutine
-				// Must have at least one URL (IPv4 or IPv6)
-				if c == nil || c.ID == "" || (c.URL == "" && c.URL6 == "") {
+				if c.ID == "" || (c.URL == "" && c.URL6 == "") {
 					return
 				}
 
-				// Try to poll client directly - this is faster and more reliable than health check
-				// pollClient has its own timeout (8s) which is sufficient for cross-continent networks
-				updated := pollClient(store, c, ipCache)
+				updated := pollClient(store, &c, ipCache)
 
 				if updated {
 					// Polling succeeded, reset failure count
@@ -1916,8 +2196,14 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 				}
 			}
 			if workingURLTried {
-				// Only clear if WorkingURL was actually tried and failed
-				client.WorkingURL = ""
+				// Use the registry method to clear WorkingURL atomically.
+				// Direct assignment (client.WorkingURL = "") is unsafe here: if Register
+				// has already replaced the registry pointer with a new ClientInfo,
+				// we would write to a stale struct and the registry entry would keep
+				// the (wrongly preserved) WorkingURL.
+				if globalClientRegistry != nil {
+					globalClientRegistry.UpdateWorkingURL(client.ID, "")
+				}
 				log.Printf("⚠️  Client %s: all URLs failed (including working URL), cleared working URL", client.ID)
 			}
 		}
@@ -2085,6 +2371,19 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 
 	// Return true to indicate this client was successfully updated
 	return true
+}
+
+// isPrivateIPStr is a string-based wrapper around isPrivateIP.
+// Returns true for invalid, empty, or private addresses.
+func isPrivateIPStr(ipStr string) bool {
+	if ipStr == "" {
+		return true
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return true
+	}
+	return isPrivateIP(ip)
 }
 
 // isPrivateIP checks if an IP address is a private/local address
@@ -3145,9 +3444,14 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 		}
 
 		for _, client := range clients {
-			// Safety check: skip nil clients or clients with empty ID
-			// Must have at least one URL (IPv4 or IPv6)
-			if client == nil || client.ID == "" || (client.URL == "" && client.URL6 == "") {
+			// Skip clients with empty ID (zero value) or no reachable URL.
+			if client.ID == "" || (client.URL == "" && client.URL6 == "") {
+				continue
+			}
+
+			// Push-mode clients run TCPing locally and include results in their push payload.
+			// The server must NOT send TCPing requests to these clients.
+			if client.PushMode {
 				continue
 			}
 

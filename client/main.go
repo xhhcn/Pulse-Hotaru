@@ -100,11 +100,41 @@ var (
 	// Shared HTTP client for connection reuse (important for cross-continent networks)
 	sharedHTTPClient     *http.Client
 	sharedHTTPClientOnce sync.Once
-	
+
 	// Security warning log throttling
 	lastSecurityWarningTime time.Time
 	securityWarningMutex    sync.Mutex
+
+	// Push mode: TCPing targets received from server (refreshed on every push response)
+	pushTCPingTargets      []string
+	pushTCPingIntervalSec  int = 60
+	pushTCPingMu           sync.RWMutex
+
+	// Pending TCPing results collected by startPushTCPingLoop, consumed by startPushLoop
+	pendingTCPingResults   []ClientTCPingResult
+	pendingTCPingResultsMu sync.Mutex
 )
+
+// ClientTCPingResult is one TCPing measurement to be sent to the server in push mode
+type ClientTCPingResult struct {
+	Target  string  `json:"target"`
+	Latency float64 `json:"latency"` // milliseconds; 0 if failed
+	Success bool    `json:"success"`
+}
+
+// ClientPushResponse is the server's reply to a push request
+type ClientPushResponse struct {
+	TCPingTargets      []string `json:"tcping_targets"`
+	TCPingIntervalSecs int      `json:"tcping_interval_secs"`
+}
+
+// RegisterResponse is the server's reply to a registration request
+type RegisterResponse struct {
+	Message            string   `json:"message"`
+	ID                 string   `json:"id"`
+	TCPingTargets      []string `json:"tcping_targets"`
+	TCPingIntervalSecs int      `json:"tcping_interval_secs"`
+}
 
 func main() {
 	agentID = envOr("AGENT_ID", "localhost")
@@ -120,10 +150,17 @@ func main() {
 
 	// Initial registration with server
 	go registerWithServer()
-	
+
 	// Start periodic re-registration to maintain connection
 	// This ensures the client auto-recovers if removed from server registry
 	go startPeriodicRegistration()
+
+	// Push mode: always push metrics to server every 3 seconds.
+	// This makes the client work behind NAT or with outbound-only connectivity
+	// because the server never needs to initiate a connection to the client.
+	// For clients with a public IP the server can still pull; push is additive.
+	go startPushLoop()
+	go startPushTCPingLoop()
 
 	// Start HTTP server to receive requests from backend
 	mux := http.NewServeMux()
@@ -264,6 +301,18 @@ func registerWithServer() {
 		}
 		
 		if resp.StatusCode == http.StatusOK {
+			// Parse registration response to get initial TCPing targets for push mode
+			var regResp RegisterResponse
+			if body, readErr := ioutil.ReadAll(resp.Body); readErr == nil {
+				if jsonErr := json.Unmarshal(body, &regResp); jsonErr == nil {
+					pushTCPingMu.Lock()
+					pushTCPingTargets = regResp.TCPingTargets
+					if regResp.TCPingIntervalSecs > 0 {
+						pushTCPingIntervalSec = regResp.TCPingIntervalSecs
+					}
+					pushTCPingMu.Unlock()
+				}
+			}
 			resp.Body.Close()
 			log.Printf("✅ Successfully registered with server (ID: %s, IPv4: %s, IPv6: %s)", agentID, ipv4, ipv6)
 			return
@@ -293,80 +342,71 @@ func getLocalIP() string {
 	return udpAddr.IP.String()
 }
 
-// startPeriodicRegistration maintains connection with server by periodically re-registering
-// This handles: 1) Server restart, 2) Client removed from registry due to failures, 3) Network recovery
+// startPeriodicRegistration maintains connection with server by periodically re-registering.
+// For push-mode clients the push itself proves liveness, so this only needs to run
+// infrequently (60 s) as a recovery mechanism for server restarts or config changes.
 func startPeriodicRegistration() {
-	// Wait for initial registration to complete
-	time.Sleep(5 * time.Second) // Reduced from 10s to 5s for faster recovery
-	
-	ticker := time.NewTicker(5 * time.Second) // More frequent heartbeat (5s) for faster recovery and stability
+	// Wait for initial registration to complete before starting the loop.
+	time.Sleep(10 * time.Second)
+
+	ticker := time.NewTicker(60 * time.Second) // 60 s — push already keeps client alive
 	defer ticker.Stop()
-	
-	// Use shared HTTP client for connection reuse (critical for cross-continent networks)
+
 	httpClient := getSharedHTTPClient()
-	
-	consecutiveFailures := 0
-	
+
 	for range ticker.C {
-		// Create context with timeout for registration request
-		// Use 10-second timeout (shorter than HTTP client's 30s timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		
-		// Get public IP addresses (both IPv4 and IPv6)
-		// This ensures consistency and uses the real public IP, not private IP
+
 		ipv4, ipv6 := getIPAddresses()
-		// Fallback to local IP only if no public IP found (should rarely happen)
 		if ipv4 == "" {
 			ipv4 = getLocalIP()
 		}
-		
+
 		payload := map[string]interface{}{
 			"id":   agentID,
 			"name": agentName,
 			"port": envOr("CLIENT_PORT", "9090"),
 			"ip":   ipv4,
 		}
-		// Include IPv6 if available
 		if ipv6 != "" {
 			payload["ipv6"] = ipv6
 		}
-		
-		// Add secret if provided via environment variable (CRITICAL: must include secret in periodic registration)
-		if secret := envOr("SECRET", ""); secret != "" {
-			payload["secret"] = secret
+		if s := envOr("SECRET", ""); s != "" {
+			payload["secret"] = s
 		}
-		
+
 		data, _ := json.Marshal(payload)
-		
+
 		req, err := http.NewRequestWithContext(ctx, "POST", serverBase+"/api/clients/register", strings.NewReader(string(data)))
 		if err != nil {
 			cancel()
-			consecutiveFailures++
 			continue
 		}
-		
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "PulseClient/1.0")
-		req.Header.Set("Connection", "keep-alive")
-		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
-		
+
 		resp, err := httpClient.Do(req)
-		cancel() // ✅ Always cancel context after request completes
+		cancel()
 		if err != nil {
-			consecutiveFailures++
 			continue
 		}
-		resp.Body.Close()
-		
+
+		// ✅ Read body BEFORE closing — fixes the silent bug where body was
+		// closed first, making ioutil.ReadAll always return an error.
 		if resp.StatusCode == http.StatusOK {
-			consecutiveFailures = 0
-		} else if resp.StatusCode == http.StatusNotFound {
-			// Server ID not found in database - this is expected if admin hasn't added this system yet
-			// Just silently continue trying
-			consecutiveFailures++
-		} else {
-			consecutiveFailures++
+			var regResp RegisterResponse
+			if body, readErr := ioutil.ReadAll(resp.Body); readErr == nil {
+				if jsonErr := json.Unmarshal(body, &regResp); jsonErr == nil {
+					pushTCPingMu.Lock()
+					pushTCPingTargets = regResp.TCPingTargets
+					if regResp.TCPingIntervalSecs > 0 {
+						pushTCPingIntervalSec = regResp.TCPingIntervalSecs
+					}
+					pushTCPingMu.Unlock()
+				}
+			}
 		}
+		resp.Body.Close()
 	}
 }
 
@@ -552,9 +592,194 @@ func executeTCPing(target string) (float64, error) {
 		return 0, fmt.Errorf("connection failed: %v", err)
 	}
 	defer conn.Close()
-	
+
 	latency := time.Since(start).Seconds() * 1000 // Convert to milliseconds
 	return latency, nil
+}
+
+// pushHTTPClient is a dedicated HTTP client for push requests.
+// It uses a shorter timeout than the shared client so that a slow server
+// response does not delay the next push cycle beyond the 3-second ticker interval.
+var (
+	pushHTTPClient     *http.Client
+	pushHTTPClientOnce sync.Once
+)
+
+func getPushHTTPClient() *http.Client {
+	pushHTTPClientOnce.Do(func() {
+		pushHTTPClient = &http.Client{
+			Timeout: 8 * time.Second, // Must be < push interval × offline_threshold / push_interval
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   6 * time.Second,
+					KeepAlive: 120 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   6 * time.Second,
+				ResponseHeaderTimeout: 6 * time.Second,
+				MaxIdleConns:          10,
+				MaxIdleConnsPerHost:   5,
+				IdleConnTimeout:       90 * time.Second,
+			},
+		}
+	})
+	return pushHTTPClient
+}
+
+// startPushLoop pushes collected system metrics to the server every 3 seconds.
+// This enables NAT and outbound-only clients to work without the server needing
+// to make inbound connections.  Push is always active; pull (HTTP server) remains
+// available as a parallel path for directly reachable clients.
+func startPushLoop() {
+	// Short initial delay so the first registration can complete before we push.
+	time.Sleep(4 * time.Second)
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	httpClient := getPushHTTPClient()
+
+	for range ticker.C {
+		// Collect current system metrics (uses the same caching as pull mode)
+		metrics := collectSystemMetrics()
+
+		// Drain any pending TCPing results accumulated by startPushTCPingLoop.
+		// We drain into a local variable but put them back if the push fails so
+		// no results are silently discarded on transient network errors.
+		pendingTCPingResultsMu.Lock()
+		tcpingResults := pendingTCPingResults
+		pendingTCPingResults = nil
+		pendingTCPingResultsMu.Unlock()
+
+		// Build push payload (metric fields are inlined via embedding)
+		pushPayload := struct {
+			metricPayload
+			Secret        string               `json:"secret,omitempty"`
+			TCPingResults []ClientTCPingResult `json:"tcping_results,omitempty"`
+		}{
+			metricPayload: metrics,
+			TCPingResults: tcpingResults,
+		}
+		if secret != "" {
+			pushPayload.Secret = secret
+		}
+
+		data, err := json.Marshal(pushPayload)
+		if err != nil {
+			// Put TCPing results back so they are not lost
+			if len(tcpingResults) > 0 {
+				pendingTCPingResultsMu.Lock()
+				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				pendingTCPingResultsMu.Unlock()
+			}
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		req, reqErr := http.NewRequestWithContext(ctx, "POST", serverBase+"/api/clients/push", strings.NewReader(string(data)))
+		if reqErr != nil {
+			cancel()
+			// Put TCPing results back
+			if len(tcpingResults) > 0 {
+				pendingTCPingResultsMu.Lock()
+				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				pendingTCPingResultsMu.Unlock()
+			}
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "PulseClient/1.0")
+		if secret != "" {
+			req.Header.Set("Authorization", "Bearer "+secret)
+		}
+
+		resp, doErr := httpClient.Do(req)
+		cancel()
+		if doErr != nil {
+			// Push failed — put TCPing results back so they are included in the next push
+			if len(tcpingResults) > 0 {
+				pendingTCPingResultsMu.Lock()
+				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				pendingTCPingResultsMu.Unlock()
+			}
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			// Parse updated TCPing config from server response
+			var pushResp ClientPushResponse
+			if decErr := json.NewDecoder(resp.Body).Decode(&pushResp); decErr == nil {
+				pushTCPingMu.Lock()
+				pushTCPingTargets = pushResp.TCPingTargets
+				if pushResp.TCPingIntervalSecs > 0 {
+					pushTCPingIntervalSec = pushResp.TCPingIntervalSecs
+				}
+				pushTCPingMu.Unlock()
+			}
+		} else if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
+			// Server doesn't know this client ID or secret is wrong.
+			// TCPing results are genuinely not needed if the server rejects us.
+			// Don't put them back to avoid infinite accumulation.
+		} else {
+			// Transient server error — preserve TCPing results for next cycle
+			if len(tcpingResults) > 0 {
+				pendingTCPingResultsMu.Lock()
+				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				pendingTCPingResultsMu.Unlock()
+			}
+		}
+		resp.Body.Close()
+	}
+}
+
+// startPushTCPingLoop runs TCPing for the targets received from the server and
+// queues the results for the next startPushLoop iteration.
+// Runs at the interval specified by the server (default 60 s).
+func startPushTCPingLoop() {
+	// Wait longer than startPushLoop so registration response is processed first
+	time.Sleep(15 * time.Second)
+
+	for {
+		// Read current configuration
+		pushTCPingMu.RLock()
+		targets := make([]string, len(pushTCPingTargets))
+		copy(targets, pushTCPingTargets)
+		interval := pushTCPingIntervalSec
+		pushTCPingMu.RUnlock()
+
+		if interval <= 0 {
+			interval = 60
+		}
+
+		if len(targets) > 0 {
+			// Measure all targets concurrently (each has its own 3-second timeout)
+			var wg sync.WaitGroup
+			for _, target := range targets {
+				wg.Add(1)
+				go func(tgt string) {
+					defer wg.Done()
+					latency, err := executeTCPing(tgt)
+					result := ClientTCPingResult{
+						Target:  tgt,
+						Latency: latency,
+						Success: err == nil,
+					}
+					pendingTCPingResultsMu.Lock()
+					pendingTCPingResults = append(pendingTCPingResults, result)
+					pendingTCPingResultsMu.Unlock()
+				}(target)
+			}
+			wg.Wait()
+		}
+
+		// Re-read interval in case it changed while we were measuring
+		pushTCPingMu.RLock()
+		interval = pushTCPingIntervalSec
+		pushTCPingMu.RUnlock()
+		if interval <= 0 {
+			interval = 60
+		}
+		time.Sleep(time.Duration(interval) * time.Second)
+	}
 }
 
 // Collect system metrics
@@ -599,7 +824,7 @@ func collectSystemMetrics() metricPayload {
 		NetOutMBps:         netOut,
 		TotalNetInBytes:    totalNetInBytes,
 		TotalNetOutBytes:   totalNetOutBytes,
-		AgentVersion:       "1.2.3",
+		AgentVersion:       "1.3.3",
 		Alert:              false, // Can be enhanced with actual alert logic
 	}
 }
@@ -879,56 +1104,95 @@ func getIPAddresses() (ipv4, ipv6 string) {
 	return ipv4, ipv6
 }
 
-// detectIPAddresses performs the actual IP address detection from network interfaces
+// detectIPAddresses detects the machine's public IPv4 and IPv6 addresses.
+//
+// Strategy (priority order):
+//  1. External IP-echo APIs  — authoritative egress/public IP, works for both
+//     NAT machines and direct-IP machines, always reflects what the internet sees.
+//  2. Network interface scan — fallback when all external APIs are unreachable
+//     (air-gapped, strict firewall, etc.).  Only public (non-private) addresses
+//     from real interfaces are considered.
+//
+// Both API queries run in parallel so the total wait is max(v4_time, v6_time).
 func detectIPAddresses() (ipv4, ipv6 string) {
+	// --- Step 1: parallel external API queries (highest priority) ---
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if ip := getPublicIPv4(); ip != "" {
+			mu.Lock()
+			ipv4 = ip
+			mu.Unlock()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if ip := getPublicIPv6(); ip != "" {
+			mu.Lock()
+			ipv6 = ip
+			mu.Unlock()
+		}
+	}()
+	wg.Wait()
+
+	// --- Step 2: interface scan fallback (only for IPs still missing) ---
+	if ipv4 != "" && ipv6 != "" {
+		return // both IPs found via API, no need to scan interfaces
+	}
+
+	v4iface, v6iface := scanInterfaceIPs()
+	if ipv4 == "" {
+		ipv4 = v4iface
+	}
+	if ipv6 == "" {
+		ipv6 = v6iface
+	}
+
+	return ipv4, ipv6
+}
+
+// scanInterfaceIPs returns the first public IPv4 and IPv6 found on local network
+// interfaces, skipping loopback, private ranges, and virtual/container interfaces.
+// This is the fallback when external IP-echo APIs are unreachable.
+func scanInterfaceIPs() (ipv4, ipv6 string) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", ""
 	}
-	
-	// Collect all candidate IPs
+
 	var ipv4Candidates []net.IP
 	var ipv6Candidates []net.IP
-	
+
 	for _, iface := range interfaces {
-		// Skip down interfaces and loopback
-		if iface.Flags&net.FlagUp == 0 {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		
-		// Skip Docker, bridge, and virtual interfaces
+
+		// Skip virtual/container interfaces
 		name := strings.ToLower(iface.Name)
 		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") ||
 			strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "virbr") ||
 			strings.HasPrefix(name, "vmnet") || strings.HasPrefix(name, "lxcbr") {
 			continue
 		}
-		
+
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
-		
+
 		for _, addr := range addrs {
 			ipNet, ok := addr.(*net.IPNet)
 			if !ok {
 				continue
 			}
-			
 			ip := ipNet.IP
-			if ip == nil {
+			if ip == nil || isPrivateIP(ip) {
 				continue
 			}
-			
-			// Skip private IPs
-			if isPrivateIP(ip) {
-				continue
-			}
-			
-			// Collect public IPs
 			if ip4 := ip.To4(); ip4 != nil {
 				ipv4Candidates = append(ipv4Candidates, ip)
 			} else if ip.To16() != nil {
@@ -936,85 +1200,171 @@ func detectIPAddresses() (ipv4, ipv6 string) {
 			}
 		}
 	}
-	
-	// Prefer IPs from interfaces that are not point-to-point (usually better for public IPs)
-	// For now, just take the first public IP found
+
 	if len(ipv4Candidates) > 0 {
 		ipv4 = ipv4Candidates[0].String()
 	}
 	if len(ipv6Candidates) > 0 {
 		ipv6 = ipv6Candidates[0].String()
 	}
-	
-	// If no public IP found via interfaces, try external API as fallback (only for IPv4)
-	if ipv4 == "" {
-		ipv4 = getPublicIPv4()
-	}
-	
 	return ipv4, ipv6
 }
 
-// getPublicIPv4 tries to get public IPv4 from external API as fallback
-// Uses multiple services including HTTP versions for better reliability in China
+// getPublicIPv4 fetches the public IPv4 address from external APIs.
+// Uses parallel requests (first-wins) so a slow or unreachable service does not
+// block detection.  Each goroutine gets its own per-request timeout, avoiding
+// the shared-context starvation bug of the old sequential approach.
 func getPublicIPv4() string {
-	// Try multiple services for reliability, including HTTP versions (may work better in China)
-	// Order: try HTTP first (less likely to be blocked), then HTTPS
 	services := []string{
-		"http://ifconfig.me/ip",           // HTTP version, may work better in China
-		"http://icanhazip.com",            // HTTP version
-		"http://api.ipify.org",            // HTTP version
-		"https://api.ipify.org",           // HTTPS version
-		"https://icanhazip.com",           // HTTPS version
-		"https://ifconfig.me/ip",          // HTTPS version
-		"http://ip.sb",                    // Alternative service (may work in China)
-		"http://myip.ipip.net",            // Chinese service (should work in China)
-		"http://ip.3322.net",              // Chinese service (should work in China)
+		// Plain-text IP-echo services — most reliable and fast
+		"https://api4.my-ip.io/ip",   // IPv4-forced endpoint
+		"https://api.ipify.org",
+		"https://icanhazip.com",
+		"https://ipinfo.io/ip",       // ipinfo.io — accurate and widely available
+		"http://api.ipify.org",       // HTTP fallback (useful behind TLS-stripping proxies)
+		"http://icanhazip.com",
+		"http://ip.sb",
+		"http://myip.ipip.net",       // China-friendly
+		"http://ip.3322.net",         // China-friendly
+		"http://ifconfig.me/ip",
 	}
-	
-	// Use shared HTTP client for connection reuse
-	httpClient := getSharedHTTPClient()
-	if httpClient == nil {
-		// Fallback to simple client if shared client not available
-		httpClient = &http.Client{
-			Timeout: 10 * time.Second, // Increased timeout for cross-continent networks
-		}
-	}
-	
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	// Result channel is buffered so goroutines never block on send.
+	resultCh := make(chan string, len(services))
+
+	// Overall deadline: if no service replies within 8 s we give up.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	
-	for _, service := range services {
-		req, err := http.NewRequestWithContext(ctx, "GET", service, nil)
-		if err != nil {
-			continue
-		}
-		
-		req.Header.Set("User-Agent", "PulseClient/1.0")
-		req.Header.Set("Accept", "text/plain, */*")
-		
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			continue
-		}
-		
-		if resp.StatusCode == http.StatusOK {
-			body, err := ioutil.ReadAll(resp.Body)
-			resp.Body.Close()
+
+	// Dedicated lightweight client for IP detection — no keepalive needed here.
+	detectionClient := &http.Client{
+		Timeout: 5 * time.Second, // per-request timeout (independent of other goroutines)
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 4 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   4 * time.Second,
+			ResponseHeaderTimeout: 4 * time.Second,
+			DisableKeepAlives:     true, // no connection reuse needed for one-shot detection
+		},
+	}
+
+	for _, svc := range services {
+		go func(url string) {
+			reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer reqCancel()
+
+			req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 			if err != nil {
-				continue
+				return
+			}
+			req.Header.Set("User-Agent", "PulseClient/1.0")
+			req.Header.Set("Accept", "text/plain, */*")
+
+			resp, err := detectionClient.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return
+			}
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return
+			}
+			ipStr := strings.TrimSpace(string(body))
+			// Some services (e.g. ipinfo.io) return JSON; skip if not a plain IP
+			if strings.ContainsAny(ipStr, "{}\n") {
+				return
+			}
+			ip := net.ParseIP(ipStr)
+			if ip != nil && ip.To4() != nil && !isPrivateIP(ip) {
+				select {
+				case resultCh <- ipStr:
+				default: // another goroutine already won
+				}
+			}
+		}(svc)
+	}
+
+	// Return the first valid result or empty string on timeout.
+	select {
+	case ip := <-resultCh:
+		return ip
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+// getPublicIPv6 fetches the public IPv6 address from external APIs (parallel, first-wins).
+// Useful for NAT machines that have native IPv6 but no direct IPv4.
+func getPublicIPv6() string {
+	services := []string{
+		"https://api6.my-ip.io/ip",  // IPv6-forced endpoint
+		"https://ipv6.icanhazip.com",
+		"https://v6.ident.me",
+	}
+
+	resultCh := make(chan string, len(services))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	detectionClient := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 4 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   4 * time.Second,
+			ResponseHeaderTimeout: 4 * time.Second,
+			DisableKeepAlives:     true,
+		},
+	}
+
+	for _, svc := range services {
+		go func(url string) {
+			reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer reqCancel()
+
+			req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+			if err != nil {
+				return
+			}
+			req.Header.Set("User-Agent", "PulseClient/1.0")
+
+			resp, err := detectionClient.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return
+			}
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return
 			}
 			ipStr := strings.TrimSpace(string(body))
 			ip := net.ParseIP(ipStr)
-			if ip != nil && ip.To4() != nil && !isPrivateIP(ip) {
-				return ipStr
+			if ip != nil && ip.To4() == nil && !isPrivateIP(ip) { // must be IPv6
+				select {
+				case resultCh <- ipStr:
+				default:
+				}
 			}
-		} else {
-			resp.Body.Close()
-		}
+		}(svc)
 	}
-	
-	return ""
+
+	select {
+	case ip := <-resultCh:
+		return ip
+	case <-ctx.Done():
+		return ""
+	}
 }
 
 func getLocation() string {

@@ -439,41 +439,14 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// IMPORTANT: One client per ID - this ensures a client can only connect to one service
-	// If a client with this ID already exists, we replace it with the new registration
-	// This is the correct behavior: the latest registration wins (handles client restarts, IP changes, etc.)
-	// Note: We don't check IP/Port differences because clients may change IP addresses (e.g., dynamic IP, VPN, etc.)
-	// CRITICAL: Strict ID-based isolation - each ID is managed independently
-	// Registering ID=3 only affects ID=3, never touches ID=4, even if they share the same IP
-	//
-	// However, if another client (different ID) is using the same IP/port combination,
-	// and the new registration is from the same physical machine (same IP/port),
-	// we should remove the old registration to prevent confusion.
-	// This handles the case where a user switches from ID=3 to ID=4 on the same machine.
-	// We only do this if BOTH IP and port match exactly, to avoid false positives.
-	for existingID, existingClient := range r.clients {
-		if existingID != id && existingClient != nil {
-			// Check if existing client uses the exact same IP/port combination
-			// Only remove if both IPv4/IPv6 AND port match exactly
-			exactMatch := false
-			if port == existingClient.Port {
-				// Port matches, check if IPs match exactly
-				if (ip != "" && existingClient.IP != "" && ip == existingClient.IP) ||
-					(ipv6 != "" && existingClient.IPv6 != "" && ipv6 == existingClient.IPv6) {
-					// Exact match: same IP and port - this is likely the same physical machine
-					// Remove the old registration to prevent confusion
-					exactMatch = true
-				}
-			}
-
-			if exactMatch {
-				// Same physical machine registering with a different ID
-				// Remove the old registration to prevent duplicate polling/TCPing
-				log.Printf("⚠️  Removing client %s (ID=%s) because new client %s is registering from the same IP/port", existingClient.Name, existingID, id)
-				delete(r.clients, existingID)
-			}
-		}
-	}
+	// Registration is strictly ID-based: registering ID=3 only ever affects ID=3.
+	// We deliberately do NOT remove other client IDs that share the same IP/port.
+	// Rationale: multiple legitimate clients (e.g. two machines behind the same
+	// NAT router) share the same public IP and often the same default port (9090).
+	// A cross-ID removal loop would cause them to evict each other from the
+	// registry every 60 s, creating a permanent re-registration storm.
+	// If a user accidentally runs two clients with different IDs on the same machine
+	// they can delete the stale service from the admin page.
 
 	// Construct client URLs - prefer IPv4, fallback to IPv6
 	var url, url6 string
@@ -590,6 +563,17 @@ func (r *ClientRegistry) UpdatePushState(id string, lastPushAt time.Time) {
 	if client, exists := r.clients[id]; exists && client != nil {
 		client.PushMode = true
 		client.LastPushAt = lastPushAt
+	}
+}
+
+// UpdateSecret sets the cached secret for a client atomically.
+// Must be used instead of direct pointer writes (c.Secret = ...) to avoid
+// data races with concurrent Register calls that replace the ClientInfo pointer.
+func (r *ClientRegistry) UpdateSecret(id, secret string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if client, exists := r.clients[id]; exists && client != nil {
+		client.Secret = secret
 	}
 }
 
@@ -1077,23 +1061,55 @@ func handleListMetrics(store *Store, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark systems as offline if they haven't updated in the last 5 seconds
-	// This matches the 3-second polling interval with a 2-second buffer for network delays
-	// Also mark as offline if UpdatedAt is zero (newly added systems)
+	// Build a snapshot of the client registry for fast per-metric lookups.
+	// We do this once (one read-lock) rather than per-metric to minimise lock
+	// contention when there are many systems.
+	registryMap := make(map[string]ClientInfo)
+	if globalClientRegistry != nil {
+		for _, c := range globalClientRegistry.GetAll() {
+			registryMap[c.ID] = c
+		}
+	}
+
+	// Online/offline determination strategy:
+	//
+	//  Push-mode clients   → use registry LastPushAt (updated the instant a push
+	//    arrives, before any DB write, so zero lag).  Threshold = 10 s:
+	//    push interval (3 s) × 3 + 1 s buffer.  Handles the worst-case where one
+	//    push times out (8 s) and the next succeeds immediately afterwards.
+	//
+	//  Pull-mode clients   → use DB UpdatedAt (set by pollClient on each success).
+	//    Threshold = 5 s: poll interval (3 s) + 2 s network buffer.
+	//
+	//  Not in registry     → server may have just restarted; fall back to DB
+	//    UpdatedAt with a generous 12 s threshold so stale data is not shown as
+	//    offline immediately while clients re-register.
+	//
+	//  Zero UpdatedAt      → newly added by admin, never received data → offline.
 	now := time.Now().UTC()
 	authenticated := isAuthenticated(r)
 
 	for i := range metrics {
-		// Check if system should be marked as offline based on update time
-		// Use 5 seconds threshold (3s polling + 2s buffer) to ensure accurate status
-		shouldBeOffline := metrics[i].UpdatedAt.IsZero() || now.Sub(metrics[i].UpdatedAt) > 5*time.Second
-
-		// Always calculate Alert based on update time for consistency
-		// This ensures the status is always accurate based on the latest update
-		if shouldBeOffline {
-			metrics[i].Alert = true // Offline/paused state
+		var shouldBeOffline bool
+		if regClient, inReg := registryMap[metrics[i].ID]; inReg {
+			if regClient.PushMode {
+				// Real-time: LastPushAt is updated before any DB write.
+				shouldBeOffline = regClient.LastPushAt.IsZero() ||
+					time.Since(regClient.LastPushAt) > 10*time.Second
+			} else {
+				// Pull-mode: DB UpdatedAt is refreshed on every successful poll.
+				shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
+					now.Sub(metrics[i].UpdatedAt) > 5*time.Second
+			}
 		} else {
-			metrics[i].Alert = false // Online state
+			// Not in registry (server just restarted, clients reconnecting).
+			shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
+				now.Sub(metrics[i].UpdatedAt) > 12*time.Second
+		}
+		if shouldBeOffline {
+			metrics[i].Alert = true
+		} else {
+			metrics[i].Alert = false
 		}
 
 		// Hide IP addresses if not authenticated (security)
@@ -1483,10 +1499,10 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 
 	registry.Register(payload.ID, payload.Name, payload.Port, ip, ipv6)
 
-	// Update secret in registry cache (optimization: avoid DB lookups during polling)
-	if client := registry.Get(payload.ID); client != nil {
-		client.Secret = existing.Secret
-	}
+	// Cache the secret in the registry so pollClient can authenticate without a
+	// DB round-trip on every poll.  Use UpdateSecret (holds write lock) instead of
+	// a direct pointer write to avoid a data race with concurrent Register calls.
+	registry.UpdateSecret(payload.ID, existing.Secret)
 
 	// Return TCPing config in registration response so push-mode clients can start
 	// monitoring targets immediately without an extra round-trip.
@@ -1585,9 +1601,9 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		// stores no URL (URL="" means server will never attempt to poll this client).
 		// The client's IP is already preserved in the metric written to the DB.
 		registry.Register(clientID, payload.Name, "", "", "")
-		if c := registry.Get(clientID); c != nil {
-			c.Secret = existing.Secret
-		}
+		// Cache secret atomically (holds write lock) — avoids a data race with
+		// concurrent Register calls that would replace the ClientInfo pointer.
+		registry.UpdateSecret(clientID, existing.Secret)
 	}
 	registry.UpdatePushState(clientID, now)
 
@@ -1680,36 +1696,48 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// The data is already saved to the DB above; the polling loop will pick it up
 	// within ≤3 s — identical latency to pull-mode clients.
 
-	// Process any TCPing results included in the push payload
-	for _, tr := range payload.TCPingResults {
-		if tr.Target == "" {
-			continue
+	// Process any TCPing results included in the push payload.
+	// Save all results to history first, then batch-update the TCPingData
+	// snapshot with a single Get+Upsert instead of one per successful result.
+	if len(payload.TCPingResults) > 0 {
+		now := time.Now().UTC()
+		hasSuccess := false
+		for _, tr := range payload.TCPingResults {
+			if tr.Target == "" {
+				continue
+			}
+			var latencyPtr *float64
+			if tr.Success {
+				l := tr.Latency
+				latencyPtr = &l
+				hasSuccess = true
+			}
+			result := TCPingResult{
+				ClientID:  clientID,
+				Target:    tr.Target,
+				Latency:   latencyPtr,
+				Timestamp: now,
+			}
+			if saveErr := store.SaveTCPingResult(result); saveErr == nil {
+				invalidateTCPingCache(clientID)
+			}
 		}
-		var latencyPtr *float64
-		if tr.Success {
-			l := tr.Latency
-			latencyPtr = &l
-		}
-		result := TCPingResult{
-			ClientID:  clientID,
-			Target:    tr.Target,
-			Latency:   latencyPtr,
-			Timestamp: time.Now().UTC(),
-		}
-		if saveErr := store.SaveTCPingResult(result); saveErr == nil {
-			invalidateTCPingCache(clientID)
-		}
-		// Update latest tcping snapshot on SystemMetric
-		if tr.Success {
+		// Single Get+Upsert for all successful TCPing snapshots (reduces N DB reads
+		// and N DB writes to exactly 1+1, greatly reducing I/O for multi-target setups).
+		if hasSuccess {
 			if m, getErr := store.Get(clientID); getErr == nil && m != nil {
 				if m.TCPingData == nil {
 					m.TCPingData = make(map[string]TCPingTargetData)
 				}
-				m.TCPingData[tr.Target] = TCPingTargetData{
-					Latency:   tr.Latency,
-					Timestamp: time.Now().UTC(),
+				for _, tr := range payload.TCPingResults {
+					if tr.Target != "" && tr.Success {
+						m.TCPingData[tr.Target] = TCPingTargetData{
+							Latency:   tr.Latency,
+							Timestamp: now,
+						}
+					}
 				}
-				store.Upsert(*m) // best-effort, ignore error
+				store.Upsert(*m) //nolint:errcheck
 			}
 		}
 	}
@@ -1793,53 +1821,52 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 				continue
 			}
 
-		// Push-mode clients push data to the server; the server must NEVER attempt
-		// to poll them.  This applies regardless of whether a URL is stored in the
-		// registry — a NAT client registers with its NAT-gateway's public IP as URL,
-		// but that URL is not reachable (the port is not forwarded).  Polling it
-		// would spawn goroutines that each wait 15 s for a TCP timeout, accumulating
-		// ~5 blocked goroutines per NAT client and causing high resource usage.
-		//
-		// Offline detection: client is alive if it pushed within the last 30 s
-		// (10× the 3-second push interval).  30 s gives comfortable headroom over
-		// the 8-second push HTTP timeout: even if every push takes the maximum 8 s,
-		// we still see 3+ pushes before the threshold triggers.
-		if client.PushMode {
-			if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
-				// Recent push received — count as a successful update
-				failureCountMu.Lock()
-				if failureCount[client.ID] > 0 {
-					delete(failureCount, client.ID)
-				}
-				failureCountMu.Unlock()
-				mu.Lock()
-				updatedClientIDs = append(updatedClientIDs, client.ID)
-				mu.Unlock()
-			} else if !client.LastPushAt.IsZero() {
-				// Push is stale — apply the same offline / removal logic as pull failures
-				failureCountMu.Lock()
-				failureCount[client.ID]++
-				currentCount := failureCount[client.ID]
-				failureCountMu.Unlock()
-				if currentCount >= 2 {
-					if currentCount == 2 {
-						go markSystemAsOffline(store, broker, client.ID)
-					}
-					if currentCount >= maxFailures {
-						registry.Remove(client.ID)
-						failureCountMu.Lock()
+			// Push-mode clients push data to the server; the server must NEVER attempt
+			// to poll them.  This applies regardless of whether a URL is stored in the
+			// registry — a NAT client registers with its NAT-gateway's public IP as URL,
+			// but that URL is not reachable (the port is not forwarded).  Polling it
+			// would spawn goroutines that each wait 15 s for a TCP timeout, accumulating
+			// ~5 blocked goroutines per NAT client and causing high resource usage.
+			//
+			// Offline detection: client is alive if it pushed within the last 30 s
+			// (10× the 3-second push interval).  30 s gives comfortable headroom over
+			// the 8-second push HTTP timeout: even if every push takes the maximum 8 s,
+			// we still see 3+ pushes before the threshold triggers.
+			if client.PushMode {
+				if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
+					// Recent push received — count as a successful update
+					failureCountMu.Lock()
+					if failureCount[client.ID] > 0 {
 						delete(failureCount, client.ID)
-						failureCountMu.Unlock()
+					}
+					failureCountMu.Unlock()
+					mu.Lock()
+					updatedClientIDs = append(updatedClientIDs, client.ID)
+					mu.Unlock()
+				} else if !client.LastPushAt.IsZero() {
+					// Push is stale — apply offline / removal logic
+					failureCountMu.Lock()
+					failureCount[client.ID]++
+					currentCount := failureCount[client.ID]
+					failureCountMu.Unlock()
+					if currentCount >= 2 {
+						if currentCount == 2 {
+							go markSystemAsOffline(store, broker, client.ID)
+						}
+						if currentCount >= maxFailures {
+							registry.Remove(client.ID)
+							failureCountMu.Lock()
+							delete(failureCount, client.ID)
+							failureCountMu.Unlock()
+						}
 					}
 				}
+				// LastPushAt.IsZero() → client registered but hasn't pushed yet.
+				// Do NOT count as a failure; it may still be starting up.
+				continue
 			}
-			// LastPushAt.IsZero() → client registered but no push received yet.
-			// Do NOT count as a failure: the client may simply be starting up.
-			// The polling loop will include it in broadcasts once push begins.
-			continue
-		}
 
-			// Safety check: skip clients with no URL (non-push, non-connected)
+			// Pull-mode clients: skip those with no reachable URL.
 			if client.URL == "" && client.URL6 == "" {
 				continue
 			}
@@ -1960,30 +1987,32 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 // to maintain a stable 3-second update frequency. The offline status will be included in the
 // next regular broadcast from startClientPolling.
 func markSystemAsOffline(store *Store, broker *SSEBroker, systemID string) {
-	// Safety checks: prevent nil pointer dereference
 	if store == nil || broker == nil || systemID == "" {
 		return
 	}
 
 	existing, err := store.Get(systemID)
 	if err != nil || existing == nil {
-		return // System doesn't exist, nothing to update
+		return
 	}
 
-	// Only update if system is currently marked as online
+	// Race guard: this goroutine is spawned when failureCount reaches 2, but a
+	// push or poll may have succeeded in the narrow window between that decision
+	// and this goroutine actually running.  If UpdatedAt was refreshed within the
+	// last 5 seconds the client is alive — abort to avoid a false offline flash.
+	// 5 s is chosen as: push/poll interval (3 s) + 2 s scheduling slack.
+	if time.Since(existing.UpdatedAt) < 5*time.Second {
+		return
+	}
+
 	if !existing.Alert {
-		// Mark as offline and set UpdatedAt to 11 seconds ago
-		// This ensures handleListMetrics will correctly detect it as offline
-		existing.Alert = true                                        // Mark as offline/paused
-		existing.UpdatedAt = time.Now().UTC().Add(-11 * time.Second) // Set to past to trigger offline detection
-
-		if err := store.Upsert(*existing); err != nil {
-			return
-		}
-
-		// DO NOT broadcast here - let the polling loop handle all broadcasts
-		// This ensures stable 3-second update frequency without interruptions
-		// The offline status will be included in the next regular broadcast from startClientPolling
+		// Set UpdatedAt far enough in the past so handleListMetrics'
+		// pull-mode threshold (5 s) treats this system as offline.
+		// Using -13 s provides plenty of margin and also covers the
+		// not-in-registry fallback threshold (12 s).
+		existing.Alert = true
+		existing.UpdatedAt = time.Now().UTC().Add(-13 * time.Second)
+		store.Upsert(*existing) //nolint:errcheck
 	}
 }
 
@@ -2051,19 +2080,12 @@ func isClientConnected(client *ClientInfo) bool {
 				successfulURL = url
 				resp.Body.Close()
 				cancel() // ✅ Cancel context immediately on success
-				// Update working URL if we successfully connected
-				// CRITICAL: Always update WorkingURL when we successfully connect
-				// Use registry method to update atomically, so it's preserved even during re-registration
-				if successfulURL != "" {
-					// Update directly on the client object (pointer, so it updates the registry)
-					if client.WorkingURL != successfulURL {
-						client.WorkingURL = successfulURL
-					}
-					// CRITICAL: Also update via registry to ensure it's preserved during re-registration
-					// This is a safety measure in case Register creates a new object
-					if globalClientRegistry != nil {
-						globalClientRegistry.UpdateWorkingURL(client.ID, successfulURL)
-					}
+				// Update WorkingURL via the locked registry method only.
+				// DO NOT write client.WorkingURL directly here: client is the raw
+				// pointer returned by registry.Get() (lock already released), so a
+				// direct field write would race with concurrent Register() calls.
+				if successfulURL != "" && globalClientRegistry != nil {
+					globalClientRegistry.UpdateWorkingURL(client.ID, successfulURL)
 				}
 				return true // Success
 			}
@@ -2218,17 +2240,11 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		return false
 	}
 
-	// Update working URL if we successfully connected
-	// CRITICAL: Always update WorkingURL when we successfully connect, even if it's the same
-	// This ensures WorkingURL is preserved across registrations
-	// Use registry method to update atomically, so it's preserved even during re-registration
+	// Persist the working URL.  'client' here points to the goroutine-local copy
+	// of ClientInfo (passed by value from the polling loop), so writing its fields
+	// is safe.  We still call UpdateWorkingURL for the canonical registry update.
 	if successfulURL != "" {
-		// Update directly on the client object (pointer, so it updates the registry)
-		if client.WorkingURL != successfulURL {
-			client.WorkingURL = successfulURL
-		}
-		// CRITICAL: Also update via registry to ensure it's preserved during re-registration
-		// This is a safety measure in case Register creates a new object
+		client.WorkingURL = successfulURL // goroutine-local, race-free
 		if globalClientRegistry != nil {
 			globalClientRegistry.UpdateWorkingURL(client.ID, successfulURL)
 		}
@@ -2362,11 +2378,11 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		return false
 	}
 
-	// Update secret in registry cache if it changed (optimization: keep cache in sync)
-	if existing != nil && existing.Secret != "" {
-		if c := globalClientRegistry.Get(client.ID); c != nil && c.Secret != existing.Secret {
-			c.Secret = existing.Secret
-		}
+	// Keep the registry's cached secret in sync with the DB value so pollClient
+	// never uses a stale secret.  UpdateSecret holds the write lock, avoiding the
+	// data race that would occur with a direct pointer write after Get().
+	if existing != nil && existing.Secret != "" && globalClientRegistry != nil {
+		globalClientRegistry.UpdateSecret(client.ID, existing.Secret)
 	}
 
 	// Return true to indicate this client was successfully updated

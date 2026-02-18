@@ -113,6 +113,15 @@ var (
 	// Pending TCPing results collected by startPushTCPingLoop, consumed by startPushLoop
 	pendingTCPingResults   []ClientTCPingResult
 	pendingTCPingResultsMu sync.Mutex
+
+	// Cache for disk stats (changes slowly; refreshed every 30 s to avoid spawning
+	// external processes — df + awk — on every 3-second push cycle).
+	diskUsageCache     float64
+	diskUsageCacheTime time.Time
+	diskInfoCache      string
+	diskInfoCacheTime  time.Time
+	diskCacheMu        sync.RWMutex
+	diskCacheTTL       = 30 * time.Second
 )
 
 // ClientTCPingResult is one TCPing measurement to be sent to the server in push mode
@@ -824,7 +833,7 @@ func collectSystemMetrics() metricPayload {
 		NetOutMBps:         netOut,
 		TotalNetInBytes:    totalNetInBytes,
 		TotalNetOutBytes:   totalNetOutBytes,
-		AgentVersion:       "1.3.3",
+		AgentVersion:       "1.3.4",
 		Alert:              false, // Can be enhanced with actual alert logic
 	}
 }
@@ -1082,26 +1091,41 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 func getIPAddresses() (ipv4, ipv6 string) {
-	// Check cache first (IP addresses rarely change, refresh every 60 seconds)
 	ipCacheMutex.RLock()
-	if !ipCacheTime.IsZero() && time.Since(ipCacheTime) < ipCacheTTL {
-		v4, v6 := ipv4Cache, ipv6Cache
-		ipCacheMutex.RUnlock()
+	v4, v6 := ipv4Cache, ipv6Cache
+	cacheOk := !ipCacheTime.IsZero() && time.Since(ipCacheTime) < ipCacheTTL
+	coldStart := ipCacheTime.IsZero()
+	ipCacheMutex.RUnlock()
+
+	if cacheOk {
 		return v4, v6
 	}
-	ipCacheMutex.RUnlock()
-	
-	// Cache miss or expired, re-detect
-	ipv4, ipv6 = detectIPAddresses()
-	
-	// Update cache
-	ipCacheMutex.Lock()
-	ipv4Cache = ipv4
-	ipv6Cache = ipv6
-	ipCacheTime = time.Now()
-	ipCacheMutex.Unlock()
-	
-	return ipv4, ipv6
+
+	if coldStart {
+		// Very first call: block until we have real IPs so the first push payload
+		// is populated correctly.  This happens once at startup.
+		v4, v6 = detectIPAddresses()
+		ipCacheMutex.Lock()
+		ipv4Cache = v4
+		ipv6Cache = v6
+		ipCacheTime = time.Now()
+		ipCacheMutex.Unlock()
+		return v4, v6
+	}
+
+	// Cache stale (post-startup): refresh in the background so the push loop is
+	// never blocked by external IP-echo API latency (up to 8 s worst-case).
+	// The stale IPs are returned immediately; the next push cycle gets fresh IPs.
+	go func() {
+		newV4, newV6 := detectIPAddresses()
+		ipCacheMutex.Lock()
+		ipv4Cache = newV4
+		ipv6Cache = newV6
+		ipCacheTime = time.Now()
+		ipCacheMutex.Unlock()
+	}()
+
+	return v4, v6
 }
 
 // detectIPAddresses detects the machine's public IPv4 and IPv6 addresses.
@@ -1609,6 +1633,26 @@ func getMemoryUsage() float64 {
 }
 
 func getDiskUsage() float64 {
+	// Check cache — disk usage changes slowly; spawning df+awk every 3 s wastes CPU.
+	diskCacheMu.RLock()
+	if !diskUsageCacheTime.IsZero() && time.Since(diskUsageCacheTime) < diskCacheTTL {
+		v := diskUsageCache
+		diskCacheMu.RUnlock()
+		return v
+	}
+	diskCacheMu.RUnlock()
+
+	result := computeDiskUsage()
+
+	diskCacheMu.Lock()
+	diskUsageCache = result
+	diskUsageCacheTime = time.Now()
+	diskCacheMu.Unlock()
+
+	return result
+}
+
+func computeDiskUsage() float64 {
 	// Use gopsutil for cross-platform support
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		// Get all partitions and calculate weighted average
@@ -2597,6 +2641,26 @@ func getSwapInfo() string {
 // Get disk information in format "used / total" (e.g., "9.86 GiB / 18.58 GiB")
 // This function aggregates all mounted filesystems (excluding tmpfs, devtmpfs, squashfs)
 func getDiskInfo() string {
+	// Check cache — same reason as getDiskUsage: df+awk is expensive to run every 3 s.
+	diskCacheMu.RLock()
+	if !diskInfoCacheTime.IsZero() && time.Since(diskInfoCacheTime) < diskCacheTTL {
+		v := diskInfoCache
+		diskCacheMu.RUnlock()
+		return v
+	}
+	diskCacheMu.RUnlock()
+
+	result := computeDiskInfo()
+
+	diskCacheMu.Lock()
+	diskInfoCache = result
+	diskInfoCacheTime = time.Now()
+	diskCacheMu.Unlock()
+
+	return result
+}
+
+func computeDiskInfo() string {
 	// Use gopsutil for cross-platform support
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		// Get all partitions and sum up

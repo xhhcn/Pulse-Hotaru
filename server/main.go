@@ -1793,47 +1793,51 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 				continue
 			}
 
-			// Push-mode clients have no inbound URL; handle offline detection here
-			// instead of polling.  A client is considered alive if it pushed within
-			// the last 30 seconds (10× the 3-second push interval).
-			// 30 s gives comfortable headroom over the 8-second push HTTP timeout:
-			// even if every push takes the maximum 8 s, we still see 3+ pushes before
-			// the threshold triggers, preventing false "offline" flaps on slow networks.
-			if client.PushMode && client.URL == "" && client.URL6 == "" {
-				if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
-					// Recent push received — count as a successful update
-					failureCountMu.Lock()
-					if failureCount[client.ID] > 0 {
-						delete(failureCount, client.ID)
+		// Push-mode clients push data to the server; the server must NEVER attempt
+		// to poll them.  This applies regardless of whether a URL is stored in the
+		// registry — a NAT client registers with its NAT-gateway's public IP as URL,
+		// but that URL is not reachable (the port is not forwarded).  Polling it
+		// would spawn goroutines that each wait 15 s for a TCP timeout, accumulating
+		// ~5 blocked goroutines per NAT client and causing high resource usage.
+		//
+		// Offline detection: client is alive if it pushed within the last 30 s
+		// (10× the 3-second push interval).  30 s gives comfortable headroom over
+		// the 8-second push HTTP timeout: even if every push takes the maximum 8 s,
+		// we still see 3+ pushes before the threshold triggers.
+		if client.PushMode {
+			if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
+				// Recent push received — count as a successful update
+				failureCountMu.Lock()
+				if failureCount[client.ID] > 0 {
+					delete(failureCount, client.ID)
+				}
+				failureCountMu.Unlock()
+				mu.Lock()
+				updatedClientIDs = append(updatedClientIDs, client.ID)
+				mu.Unlock()
+			} else if !client.LastPushAt.IsZero() {
+				// Push is stale — apply the same offline / removal logic as pull failures
+				failureCountMu.Lock()
+				failureCount[client.ID]++
+				currentCount := failureCount[client.ID]
+				failureCountMu.Unlock()
+				if currentCount >= 2 {
+					if currentCount == 2 {
+						go markSystemAsOffline(store, broker, client.ID)
 					}
-					failureCountMu.Unlock()
-					mu.Lock()
-					updatedClientIDs = append(updatedClientIDs, client.ID)
-					mu.Unlock()
-				} else if !client.LastPushAt.IsZero() {
-					// Push is stale — apply the same offline / removal logic as pull failures
-					failureCountMu.Lock()
-					failureCount[client.ID]++
-					currentCount := failureCount[client.ID]
-					failureCountMu.Unlock()
-					if currentCount >= 2 {
-						if currentCount == 2 {
-							go markSystemAsOffline(store, broker, client.ID)
-						}
-						if currentCount >= maxFailures {
-							registry.Remove(client.ID)
-							failureCountMu.Lock()
-							delete(failureCount, client.ID)
-							failureCountMu.Unlock()
-						}
+					if currentCount >= maxFailures {
+						registry.Remove(client.ID)
+						failureCountMu.Lock()
+						delete(failureCount, client.ID)
+						failureCountMu.Unlock()
 					}
 				}
-				// LastPushAt.IsZero() → client registered but no push received yet.
-				// Do NOT count as a failure: the client may simply be starting up.
-				// It will be included in broadcasts as soon as the first push arrives
-				// (handleClientPush broadcasts immediately on success).
-				continue
 			}
+			// LastPushAt.IsZero() → client registered but no push received yet.
+			// Do NOT count as a failure: the client may simply be starting up.
+			// The polling loop will include it in broadcasts once push begins.
+			continue
+		}
 
 			// Safety check: skip clients with no URL (non-push, non-connected)
 			if client.URL == "" && client.URL6 == "" {

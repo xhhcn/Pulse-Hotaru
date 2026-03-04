@@ -110,9 +110,15 @@ var (
 	pushTCPingIntervalSec  int = 60
 	pushTCPingMu           sync.RWMutex
 
-	// Pending TCPing results collected by startPushTCPingLoop, consumed by startPushLoop
+	// Pending TCPing results collected by startPushTCPingLoop, consumed by startPushLoop.
+	// Capped at maxPendingTCPingResults to prevent unbounded growth during server downtime.
 	pendingTCPingResults   []ClientTCPingResult
 	pendingTCPingResultsMu sync.Mutex
+)
+
+const maxPendingTCPingResults = 500
+
+var (
 
 	// Cache for disk stats (changes slowly; refreshed every 30 s to avoid spawning
 	// external processes — df + awk — on every 3-second push cycle).
@@ -400,8 +406,8 @@ func startPeriodicRegistration() {
 			continue
 		}
 
-		// ✅ Read body BEFORE closing — fixes the silent bug where body was
-		// closed first, making ioutil.ReadAll always return an error.
+		// ✅ Always fully drain the body before closing to enable HTTP keep-alive
+		// connection reuse. For 200, parse TCPing config; for other statuses, discard.
 		if resp.StatusCode == http.StatusOK {
 			var regResp RegisterResponse
 			if body, readErr := ioutil.ReadAll(resp.Body); readErr == nil {
@@ -414,6 +420,8 @@ func startPeriodicRegistration() {
 					pushTCPingMu.Unlock()
 				}
 			}
+		} else {
+			ioutil.ReadAll(resp.Body) //nolint:errcheck
 		}
 		resp.Body.Close()
 	}
@@ -677,7 +685,11 @@ func startPushLoop() {
 			// Put TCPing results back so they are not lost
 			if len(tcpingResults) > 0 {
 				pendingTCPingResultsMu.Lock()
-				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				combined := append(tcpingResults, pendingTCPingResults...)
+				if len(combined) > maxPendingTCPingResults {
+					combined = combined[len(combined)-maxPendingTCPingResults:]
+				}
+				pendingTCPingResults = combined
 				pendingTCPingResultsMu.Unlock()
 			}
 			continue
@@ -690,7 +702,11 @@ func startPushLoop() {
 			// Put TCPing results back
 			if len(tcpingResults) > 0 {
 				pendingTCPingResultsMu.Lock()
-				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				combined := append(tcpingResults, pendingTCPingResults...)
+				if len(combined) > maxPendingTCPingResults {
+					combined = combined[len(combined)-maxPendingTCPingResults:]
+				}
+				pendingTCPingResults = combined
 				pendingTCPingResultsMu.Unlock()
 			}
 			continue
@@ -707,14 +723,20 @@ func startPushLoop() {
 			// Push failed — put TCPing results back so they are included in the next push
 			if len(tcpingResults) > 0 {
 				pendingTCPingResultsMu.Lock()
-				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				combined := append(tcpingResults, pendingTCPingResults...)
+				if len(combined) > maxPendingTCPingResults {
+					combined = combined[len(combined)-maxPendingTCPingResults:]
+				}
+				pendingTCPingResults = combined
 				pendingTCPingResultsMu.Unlock()
 			}
 			continue
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			// Parse updated TCPing config from server response
+			// Parse updated TCPing config from server response.
+			// json.NewDecoder reads the full small body into its buffer in one
+			// syscall, so resp.Body is at EOF after Decode; no extra drain needed.
 			var pushResp ClientPushResponse
 			if decErr := json.NewDecoder(resp.Body).Decode(&pushResp); decErr == nil {
 				pushTCPingMu.Lock()
@@ -723,16 +745,25 @@ func startPushLoop() {
 					pushTCPingIntervalSec = pushResp.TCPingIntervalSecs
 				}
 				pushTCPingMu.Unlock()
+			} else {
+				// Decode failed — drain remainder to enable connection reuse
+				ioutil.ReadAll(resp.Body) //nolint:errcheck
 			}
 		} else if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
 			// Server doesn't know this client ID or secret is wrong.
 			// TCPing results are genuinely not needed if the server rejects us.
 			// Don't put them back to avoid infinite accumulation.
+			ioutil.ReadAll(resp.Body) //nolint:errcheck // drain to enable connection reuse
 		} else {
 			// Transient server error — preserve TCPing results for next cycle
+			ioutil.ReadAll(resp.Body) //nolint:errcheck // drain to enable connection reuse
 			if len(tcpingResults) > 0 {
 				pendingTCPingResultsMu.Lock()
-				pendingTCPingResults = append(tcpingResults, pendingTCPingResults...)
+				combined := append(tcpingResults, pendingTCPingResults...)
+				if len(combined) > maxPendingTCPingResults {
+					combined = combined[len(combined)-maxPendingTCPingResults:]
+				}
+				pendingTCPingResults = combined
 				pendingTCPingResultsMu.Unlock()
 			}
 		}
@@ -833,7 +864,7 @@ func collectSystemMetrics() metricPayload {
 		NetOutMBps:         netOut,
 		TotalNetInBytes:    totalNetInBytes,
 		TotalNetOutBytes:   totalNetOutBytes,
-		AgentVersion:       "1.3.4",
+		AgentVersion:       "1.3.5",
 		Alert:              false, // Can be enhanced with actual alert logic
 	}
 }
@@ -2064,12 +2095,6 @@ func getCPUModel() string {
 	}
 	
 	// For ALL platforms: Detect virtualization and correct core type
-	// Clear cache to force fresh detection
-	cacheMutex.Lock()
-	virtualizationTypeCache = ""
-	virtualizationTypeCacheTime = time.Time{}
-	cacheMutex.Unlock()
-	
 	virtType := getVirtualizationType()
 	
 	// On VPS, all cores should be marked as Virtual

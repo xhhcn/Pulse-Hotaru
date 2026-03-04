@@ -126,7 +126,7 @@ func (s *Store) Upsert(metric SystemMetric) error {
 
 // List returns all system metrics sorted by order
 func (s *Store) List() ([]SystemMetric, error) {
-	var metrics []SystemMetric
+	metrics := make([]SystemMetric, 0)
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketName))
@@ -245,7 +245,7 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 // GetTCPingResults returns all tcping results for a client within 24 hours
 // If target is provided, only returns results for that target
 func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingResult, error) {
-	var results []TCPingResult
+	results := make([]TCPingResult, 0)
 	cutoffTime := time.Now().Add(-24 * time.Hour)
 	filterTarget := ""
 	if len(target) > 0 {
@@ -511,6 +511,10 @@ func (s *Store) GetTCPingConfig() (*TCPingConfig, error) {
 
 	if err != nil {
 		return nil, err
+	}
+
+	if config.Targets == nil {
+		config.Targets = []TCPingTargetEntry{}
 	}
 
 	return &config, nil

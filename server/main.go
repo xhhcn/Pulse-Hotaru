@@ -931,7 +931,22 @@ func main() {
 		handler = corsMiddleware(cdnFriendlyMiddleware(mux))
 	}
 
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+		// ReadHeaderTimeout guards against Slowloris: an attacker who opens a
+		// connection and dribbles headers byte-by-byte holds the goroutine for at
+		// most 30 s before the server closes the connection.
+		ReadHeaderTimeout: 30 * time.Second,
+		// IdleTimeout reclaims keep-alive connections that have been idle for >2m.
+		// This prevents file-descriptor exhaustion when many clients connect and
+		// then go silent.
+		IdleTimeout: 2 * time.Minute,
+		// ReadTimeout and WriteTimeout are intentionally left at 0 (unlimited):
+		// SSE connections (/api/events) are long-lived writes that would be killed
+		// by a non-zero WriteTimeout.
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("❌ Server stopped: %v", err)
 	}
 }
@@ -1392,6 +1407,9 @@ func handleDeleteMetric(store *Store, broker *SSEBroker, registry *ClientRegistr
 
 func handleClientRegister(store *Store, registry *ClientRegistry, w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// Registration payloads contain only a handful of short string fields;
+	// 8 KB is far more than needed and prevents any oversized-body abuse.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 
 	var payload struct {
 		ID     string `json:"id"`
@@ -1536,6 +1554,10 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		return
 	}
 	defer r.Body.Close()
+	// Limit push payload to 1 MB.  A normal push with 500 TCPing results is
+	// ~30 KB, so 1 MB is very generous while preventing memory exhaustion from
+	// a malicious or runaway client sending an unbounded body.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	// Decode the push payload (metric fields + optional secret + optional TCPing results)
 	var payload struct {
@@ -1777,6 +1799,12 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 	cleanupCounter := 0
 	const cleanupInterval = 100
 
+	// Per-client active poll guard: prevents goroutine pile-up when a client's
+	// /metrics endpoint is slow (>3 s RTT). If a poll goroutine is still running
+	// from the previous tick, we skip spawning a new one for that client.
+	var activePollMu sync.Mutex
+	activePollClients := make(map[string]bool)
+
 	for {
 		tickTime := <-ticker.C
 
@@ -1877,6 +1905,16 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			// - No need to verify existence on every poll (reduces DB load by 33 queries/sec)
 			// Note: If a client somehow gets out of sync, it will be removed after maxFailures
 
+			// Skip if a poll goroutine for this client is still running from a previous tick.
+			// This prevents goroutine pile-up when a client's /metrics endpoint is slow (>3 s).
+			activePollMu.Lock()
+			if activePollClients[client.ID] {
+				activePollMu.Unlock()
+				continue
+			}
+			activePollClients[client.ID] = true
+			activePollMu.Unlock()
+
 			wg.Add(1)
 			// Pass 'client' by VALUE into the goroutine so each goroutine owns its
 			// own copy (avoids the classic "loop variable captured by closure" race).
@@ -1885,6 +1923,11 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			// methods, so the registry is always the source of truth.
 			go func(c ClientInfo) {
 				defer wg.Done()
+				defer func() {
+					activePollMu.Lock()
+					delete(activePollClients, c.ID)
+					activePollMu.Unlock()
+				}()
 
 				if c.ID == "" || (c.URL == "" && c.URL6 == "") {
 					return
@@ -3241,6 +3284,11 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Normalize nil slice to empty slice so DB stores [] instead of null
+	if config.Targets == nil {
+		config.Targets = []TCPingTargetEntry{}
+	}
+
 	// Validate config
 	if config.IntervalSecs < 1 {
 		http.Error(w, "interval_secs must be at least 1", http.StatusBadRequest)
@@ -3392,6 +3440,12 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 		}
 	}
 
+	// Semaphore to cap the number of concurrent TCPing goroutines.
+	// Without this, N_clients × N_targets goroutines fire simultaneously on each tick.
+	// 50 is generous (handles ~10 clients × 5 targets) while preventing runaway growth.
+	const maxConcurrentTCPing = 50
+	tcpingSem := make(chan struct{}, maxConcurrentTCPing)
+
 	// Create ticker with initial interval
 	ticker := time.NewTicker(time.Duration(config.IntervalSecs) * time.Second)
 	defer ticker.Stop()
@@ -3504,11 +3558,14 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					continue
 				}
 
-				go func(clientID string, tgt TCPingTargetEntry) {
-					// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
-					// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
-					// which may have been updated by pollClient or isClientConnected
-					c := registry.Get(clientID)
+			go func(clientID string, tgt TCPingTargetEntry) {
+				tcpingSem <- struct{}{} // acquire semaphore slot
+				defer func() { <-tcpingSem }()
+
+				// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
+				// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
+				// which may have been updated by pollClient or isClientConnected
+				c := registry.Get(clientID)
 					if c == nil || c.ID == "" || tgt.Address == "" {
 						return
 					}

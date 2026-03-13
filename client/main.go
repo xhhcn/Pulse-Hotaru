@@ -130,6 +130,134 @@ var (
 	diskCacheTTL       = 30 * time.Second
 )
 
+// ── macOS: background CPU sampler ────────────────────────────────────────────
+// gopsutil cpu.Percent() compiled with CGO_ENABLED=0 cannot read CPU ticks on
+// macOS: the Mach host_processor_info API is CGO-only and the nocgo stub
+// returns [0.0] without error. Instead we run "top -l 2 -n 0" in a background
+// goroutine; it blocks ~1 s to capture a real 1-second delta.
+var (
+	macOSCPUVal   float64
+	macOSCPUMu    sync.RWMutex
+	macOSCPUOnce  sync.Once
+)
+
+func startMacOSCPULoop() {
+	macOSCPUOnce.Do(func() {
+		go func() {
+			// First sample immediately so the very first push has a real value.
+			v := sampleMacOSCPU()
+			macOSCPUMu.Lock()
+			macOSCPUVal = v
+			macOSCPUMu.Unlock()
+			for {
+				time.Sleep(4 * time.Second)
+				v = sampleMacOSCPU()
+				macOSCPUMu.Lock()
+				macOSCPUVal = v
+				macOSCPUMu.Unlock()
+			}
+		}()
+	})
+}
+
+// sampleMacOSCPU runs "top -l 2 -n 0" which produces two snapshots ~1 s apart.
+// The second "CPU usage" line is the actual delta over that second.
+func sampleMacOSCPU() float64 {
+	out, err := exec.Command("sh", "-c",
+		`top -l 2 -n 0 2>/dev/null | grep "CPU usage" | tail -1`).Output()
+	if err != nil {
+		return 0.0
+	}
+	line := strings.TrimSpace(string(out))
+	// Format: "CPU usage: 14.20% user, 7.10% sys, 78.69% idle"
+	var user, sys float64
+	if _, e := fmt.Sscanf(line, "CPU usage: %f%% user, %f%% sys", &user, &sys); e == nil {
+		v := user + sys
+		if v < 0 {
+			v = 0
+		}
+		if v > 100 {
+			v = 100
+		}
+		return v
+	}
+	return 0.0
+}
+
+// ── macOS: direct memory stats via vm_stat + sysctl ──────────────────────────
+// gopsutil mem.VirtualMemory() with CGO_ENABLED=0 on macOS also uses Mach APIs
+// in the CGO path; the nocgo path may misreport or fail on Apple Silicon.
+// We read hw.memsize and vm_stat directly instead.
+func macOSMemoryStats() (usedPct float64, usedBytes, totalBytes uint64, err error) {
+	// Total physical RAM
+	out, e := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	if e != nil {
+		return 0, 0, 0, e
+	}
+	if _, e = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &totalBytes); e != nil || totalBytes == 0 {
+		return 0, 0, 0, fmt.Errorf("bad hw.memsize")
+	}
+
+	// Page size (4096 on Intel, 16384 on Apple Silicon)
+	pageSize := uint64(4096)
+	if out, e = exec.Command("sysctl", "-n", "hw.pagesize").Output(); e == nil {
+		fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &pageSize)
+	}
+
+	// Parse vm_stat for page counts
+	out, e = exec.Command("vm_stat").Output()
+	if e != nil {
+		return 0, 0, totalBytes, e
+	}
+	var active, wired, compressed uint64
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimRight(strings.TrimSpace(parts[1]), ".")
+		var n uint64
+		if _, e := fmt.Sscanf(val, "%d", &n); e != nil {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(key, "Pages active"):
+			active = n
+		case strings.HasPrefix(key, "Pages wired down"):
+			wired = n
+		case strings.HasPrefix(key, "Pages occupied by compressor"):
+			compressed = n
+		}
+	}
+	usedBytes = (active + wired + compressed) * pageSize
+	if usedBytes > totalBytes {
+		usedBytes = totalBytes
+	}
+	usedPct = float64(usedBytes) / float64(totalBytes) * 100.0
+	return usedPct, usedBytes, totalBytes, nil
+}
+
+// ── macOS: swap via sysctl vm.swapusage ──────────────────────────────────────
+// Output format: "total = 3072.00M  used = 2097.25M  free = 974.75M (encrypted)"
+func macOSSwapStats() (usedBytes, totalBytes uint64) {
+	out, err := exec.Command("sysctl", "-n", "vm.swapusage").Output()
+	if err != nil {
+		return 0, 0
+	}
+	line := strings.TrimSpace(string(out))
+	re := regexp.MustCompile(`total\s*=\s*([\d.]+)M.*used\s*=\s*([\d.]+)M`)
+	m := re.FindStringSubmatch(line)
+	if len(m) == 3 {
+		var totalMB, usedMB float64
+		fmt.Sscanf(m[1], "%f", &totalMB)
+		fmt.Sscanf(m[2], "%f", &usedMB)
+		totalBytes = uint64(totalMB * 1024 * 1024)
+		usedBytes = uint64(usedMB * 1024 * 1024)
+	}
+	return usedBytes, totalBytes
+}
+
 // ClientTCPingResult is one TCPing measurement to be sent to the server in push mode
 type ClientTCPingResult struct {
 	Target  string  `json:"target"`
@@ -162,6 +290,11 @@ func main() {
 	startTime = time.Now()
 
 	log.Printf("🚀 Starting Probe Client (ID: %s, Name: %s)", agentID, agentName)
+
+	// macOS: start background CPU sampler early so the first push has a real value
+	if runtime.GOOS == "darwin" {
+		startMacOSCPULoop()
+	}
 
 	// Initial registration with server
 	go registerWithServer()
@@ -1465,10 +1598,16 @@ type cpuStats struct {
 }
 
 func getCPUUsage() float64 {
-	// Use gopsutil for cross-platform support
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		// Use instant reading (0 interval) for immediate response
-		// This gets the CPU usage since last call, much faster than waiting
+	if runtime.GOOS == "darwin" {
+		// gopsutil cpu.Percent() is broken with CGO_ENABLED=0 on macOS.
+		// Use the background top-based sampler instead.
+		startMacOSCPULoop()
+		macOSCPUMu.RLock()
+		v := macOSCPUVal
+		macOSCPUMu.RUnlock()
+		return v
+	}
+	if runtime.GOOS == "windows" {
 		percent, err := cpu.Percent(0, false)
 		if err == nil && len(percent) > 0 {
 			usage := percent[0]
@@ -1579,18 +1718,21 @@ func getCPUUsage() float64 {
 }
 
 func getMemoryUsage() float64 {
-	// Use gopsutil for cross-platform support
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" {
+		pct, _, _, err := macOSMemoryStats()
+		if err == nil {
+			if pct < 0 { pct = 0 }
+			if pct > 100 { pct = 100 }
+			return pct
+		}
+		return 0.0
+	}
+	if runtime.GOOS == "windows" {
 		vmStat, err := mem.VirtualMemory()
 		if err == nil {
-			// Ensure percentage is within 0-100 range
 			percent := vmStat.UsedPercent
-			if percent < 0 {
-				percent = 0
-			}
-			if percent > 100 {
-				percent = 100
-			}
+			if percent < 0 { percent = 0 }
+			if percent > 100 { percent = 100 }
 			return percent
 		}
 		return 0.0
@@ -2525,13 +2667,17 @@ func getVirtualizationType() string {
 
 // Get memory information in format "used / total" (e.g., "383.60 MiB / 1.88 GiB")
 func getMemoryInfo() string {
-	// Use gopsutil for cross-platform support
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" {
+		_, usedBytes, totalBytes, err := macOSMemoryStats()
+		if err == nil && totalBytes > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(usedBytes), formatBytes(totalBytes))
+		}
+		return ""
+	}
+	if runtime.GOOS == "windows" {
 		vmStat, err := mem.VirtualMemory()
 		if err == nil {
-			usedStr := formatBytes(vmStat.Used)
-			totalStr := formatBytes(vmStat.Total)
-			return fmt.Sprintf("%s / %s", usedStr, totalStr)
+			return fmt.Sprintf("%s / %s", formatBytes(vmStat.Used), formatBytes(vmStat.Total))
 		}
 		return ""
 	}
@@ -2606,19 +2752,18 @@ func getMemoryInfo() string {
 
 // Get swap information in format "used / total" (e.g., "75.12 MiB / 975.00 MiB")
 func getSwapInfo() string {
-	// Use gopsutil for cross-platform support
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		// Windows doesn't have swap, but macOS does
-		swapStat, err := mem.SwapMemory()
-		if err == nil {
-			if swapStat.Total > 0 {
-				usedStr := formatBytes(swapStat.Used)
-				totalStr := formatBytes(swapStat.Total)
-				return fmt.Sprintf("%s / %s", usedStr, totalStr)
-			}
+	if runtime.GOOS == "darwin" {
+		usedBytes, totalBytes := macOSSwapStats()
+		if totalBytes > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(usedBytes), formatBytes(totalBytes))
 		}
-		// Windows/macOS: return "0 B / 0 B" to indicate no swap (instead of empty string)
-		// This allows frontend to distinguish between "no data yet" (empty) and "no swap" (0 B / 0 B)
+		return "0 B / 0 B"
+	}
+	if runtime.GOOS == "windows" {
+		swapStat, err := mem.SwapMemory()
+		if err == nil && swapStat.Total > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(swapStat.Used), formatBytes(swapStat.Total))
+		}
 		return "0 B / 0 B"
 	}
 	

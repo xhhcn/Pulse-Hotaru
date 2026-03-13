@@ -28,13 +28,12 @@
 
 ---
 
-<p align="center"><sup>赞助</sup></p>
-<table align="center" border="0" cellspacing="0" cellpadding="6">
-  <tr>
-    <td><a href="https://www.dooki.cloud" target="_blank"><img src="assets/doki.png" height="60" alt="DokiDoki CDN"></a></td>
-    <td><a href="https://www.dooki.cloud" target="_blank"><b>DokiDoki</b><br><sub>CDN - 心跳网络</sub></a></td>
-  </tr>
-</table>
+<p align="center">
+  赞助：<a href="https://www.dooki.cloud" target="_blank"><b>DokiDoki CDN</b> 心跳网络</a><br><br>
+  <a href="https://www.dooki.cloud" target="_blank">
+    <img src="assets/doki.png" height="60" alt="DokiDoki CDN">
+  </a>
+</p>
 
 ---
 

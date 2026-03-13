@@ -29,7 +29,7 @@
 ---
 
 <p align="center">
-  赞助：<a href="https://www.dooki.cloud" target="_blank"><b>DokiDoki CDN</b> 心跳网络</a><br><br>
+  由 <a href="https://www.dooki.cloud" target="_blank"><b>DokiDoki CDN</b></a> 赞助<br><br>
   <a href="https://www.dooki.cloud" target="_blank">
     <img src="assets/doki.png" height="60" alt="DokiDoki CDN">
   </a>

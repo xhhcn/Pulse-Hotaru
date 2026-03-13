@@ -7,6 +7,6 @@ services:
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
-
 volumes:
   pulse-data:
+

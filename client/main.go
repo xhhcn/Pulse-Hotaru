@@ -1690,6 +1690,7 @@ func computeDiskUsage() float64 {
 		partitions, err := disk.Partitions(false)
 		if err == nil {
 			var totalSize, totalUsed uint64
+			seenBaseDisks := make(map[string]bool) // macOS: APFS deduplication
 			for _, partition := range partitions {
 				// Skip system reserved partitions on Windows
 				if runtime.GOOS == "windows" {
@@ -1702,7 +1703,22 @@ func computeDiskUsage() float64 {
 						}
 					}
 				} else {
-					usage, err := disk.Usage(partition.Mountpoint)
+					// macOS APFS: multiple volumes (System, Data, VM, Preboot…) share one
+					// physical container but each reports the full container capacity.
+					// Only count / and /Volumes/* and deduplicate by base disk (e.g. "disk3").
+					mp := partition.Mountpoint
+					if mp != "/" && !strings.HasPrefix(mp, "/Volumes/") {
+						continue
+					}
+					if !strings.HasPrefix(partition.Device, "/dev/disk") {
+						continue
+					}
+					baseDisk := macOSBaseDisk(partition.Device)
+					if seenBaseDisks[baseDisk] {
+						continue
+					}
+					seenBaseDisks[baseDisk] = true
+					usage, err := disk.Usage(mp)
 					if err == nil && usage.Total > 0 {
 						totalSize += usage.Total
 						totalUsed += usage.Used
@@ -2069,27 +2085,35 @@ func getCPUModel() string {
 			return ""
 		}
 	} else if runtime.GOOS == "darwin" {
-		// macOS: Use gopsutil
-		cpuInfo, err := cpu.Info()
-		if err != nil {
-			return ""
+		// Intel Mac: machdep.cpu.brand_string is the most reliable source
+		if out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output(); err == nil {
+			model = strings.TrimSpace(string(out))
 		}
-		if len(cpuInfo) == 0 {
-			return ""
-		}
-		model = strings.TrimSpace(cpuInfo[0].ModelName)
+		// Apple Silicon: machdep.cpu.brand_string does not exist; use system_profiler.
+		// Result is cached for 5 min so the ~0.5 s latency is only paid once.
 		if model == "" {
-			return ""
+			if out, err := exec.Command("sh", "-c",
+				`system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/^ *Chip:/{print $2; exit}'`).Output(); err == nil {
+				if s := strings.TrimSpace(string(out)); s != "" {
+					model = s
+				}
+			}
 		}
-		
-		// Get CPU cores count - use logical count (includes hyperthreading)
-		logicalCount, err := cpu.Counts(true)
-		if err == nil && logicalCount > 0 {
-			coreCount = logicalCount
-		} else if cpuInfo[0].Cores > 0 {
-			coreCount = int(cpuInfo[0].Cores)
+		// gopsutil fallback (works on Intel, may fail on Apple Silicon)
+		if model == "" {
+			if info, err := cpu.Info(); err == nil && len(info) > 0 {
+				model = strings.TrimSpace(info[0].ModelName)
+			}
 		}
-		
+		if model == "" {
+			model = "Apple CPU"
+		}
+		// Core count: prefer gopsutil logical count, fall back to sysctl
+		if count, err := cpu.Counts(true); err == nil && count > 0 {
+			coreCount = count
+		} else if out, err := exec.Command("sysctl", "-n", "hw.logicalcpu").Output(); err == nil {
+			fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &coreCount)
+		}
 		// Default to Physical, will be corrected below if VPS
 		coreType = "Physical"
 	}
@@ -2692,6 +2716,7 @@ func computeDiskInfo() string {
 		partitions, err := disk.Partitions(false)
 		if err == nil {
 			var totalSize, totalUsed uint64
+			seenBaseDisks := make(map[string]bool) // macOS: APFS deduplication
 			for _, partition := range partitions {
 				// Skip system reserved partitions on Windows
 				if runtime.GOOS == "windows" {
@@ -2704,7 +2729,20 @@ func computeDiskInfo() string {
 						}
 					}
 				} else {
-					usage, err := disk.Usage(partition.Mountpoint)
+					// macOS APFS: same deduplication logic as computeDiskUsage
+					mp := partition.Mountpoint
+					if mp != "/" && !strings.HasPrefix(mp, "/Volumes/") {
+						continue
+					}
+					if !strings.HasPrefix(partition.Device, "/dev/disk") {
+						continue
+					}
+					baseDisk := macOSBaseDisk(partition.Device)
+					if seenBaseDisks[baseDisk] {
+						continue
+					}
+					seenBaseDisks[baseDisk] = true
+					usage, err := disk.Usage(mp)
 					if err == nil && usage.Total > 0 {
 						totalSize += usage.Total
 						totalUsed += usage.Used
@@ -2876,6 +2914,19 @@ func addSpaceBeforeUnit(s string) string {
 		}
 	}
 	return s
+}
+
+// macOSBaseDisk extracts the base APFS container name from a macOS device path.
+// On macOS, APFS partitions share one physical container and all report its full
+// capacity. Deduplicating by the base disk avoids counting the same storage N times.
+// Examples: "/dev/disk3s6" -> "disk3", "/dev/disk3s1s1" -> "disk3"
+func macOSBaseDisk(device string) string {
+	name := strings.TrimPrefix(device, "/dev/")
+	re := regexp.MustCompile(`^(disk\d+)s`)
+	if m := re.FindStringSubmatch(name); len(m) > 1 {
+		return m[1]
+	}
+	return name
 }
 
 func envOr(k, def string) string {

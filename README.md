@@ -28,6 +28,16 @@
 
 ---
 
+<p align="center"><sup>赞助</sup></p>
+<table align="center" border="0" cellspacing="0" cellpadding="6">
+  <tr>
+    <td><a href="https://www.dooki.cloud" target="_blank"><img src="assets/doki.png" height="60" alt="DokiDoki CDN"></a></td>
+    <td><a href="https://www.dooki.cloud" target="_blank"><b>DokiDoki</b><br><sub>CDN - 心跳网络</sub></a></td>
+  </tr>
+</table>
+
+---
+
 ## ✨ v1.3.0 新功能
 
 - 🔐 **共享密钥认证** - 所有客户端使用统一的共享密钥连接服务器，简化部署配置

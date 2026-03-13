@@ -28,6 +28,16 @@
 
 ---
 
+<p align="center"><sup>Sponsor</sup></p>
+<table align="center" border="0" cellspacing="0" cellpadding="6">
+  <tr>
+    <td><a href="https://dokidoki.network" target="_blank"><img src="assets/doki.png" height="60" alt="DokiDoki CDN"></a></td>
+    <td><a href="https://dokidoki.network" target="_blank"><b>DokiDoki</b><br><sub>CDN - 心跳网络</sub></a></td>
+  </tr>
+</table>
+
+---
+
 ## ✨ What's New in v1.3.0
 
 - 🔐 **Shared Secret Authentication** - All clients use a unified shared secret to connect to the server, simplifying deployment

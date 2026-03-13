@@ -57,6 +57,18 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 main.go
           chmod +x probe-client-arm64
 
+      - name: Build macOS amd64
+        working-directory: ./client
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 main.go
+          chmod +x probe-client-darwin-amd64
+
+      - name: Build macOS arm64
+        working-directory: ./client
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 main.go
+          chmod +x probe-client-darwin-arm64
+
       - name: Build Windows amd64
         working-directory: ./client
         run: |
@@ -69,6 +81,8 @@ jobs:
           path: |
             client/probe-client
             client/probe-client-arm64
+            client/probe-client-darwin-amd64
+            client/probe-client-darwin-arm64
             client/probe-client.exe
           retention-days: 30
 
@@ -77,12 +91,11 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # Force add binaries even if they're in .gitignore
-          git add -f client/probe-client client/probe-client-arm64 client/probe-client.exe
-          # Only commit if there are actual changes (ignore if binaries are identical)
+          git add -f client/probe-client client/probe-client-arm64 \
+                     client/probe-client-darwin-amd64 client/probe-client-darwin-arm64 \
+                     client/probe-client.exe
           if ! git diff --staged --quiet; then
-            # Check if the changes are only in binary files (not source code)
-            if git diff --staged --name-only | grep -qE '^client/(probe-client|probe-client-arm64|probe-client\.exe)$'; then
+            if git diff --staged --name-only | grep -qE '^client/(probe-client|probe-client-arm64|probe-client-darwin-amd64|probe-client-darwin-arm64|probe-client\.exe)$'; then
               git commit -m "chore: update client binaries [skip actions]"
               git push
             fi
@@ -96,6 +109,8 @@ jobs:
           files: |
             client/probe-client
             client/probe-client-arm64
+            client/probe-client-darwin-amd64
+            client/probe-client-darwin-arm64
             client/probe-client.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

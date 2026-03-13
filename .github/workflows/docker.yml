@@ -100,10 +100,14 @@ jobs:
         run: |
           cd client
           echo "Building client binaries..."
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o probe-client main.go
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o probe-client main.go
           chmod +x probe-client
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 main.go
+          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 main.go
           chmod +x probe-client-arm64
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 main.go
+          chmod +x probe-client-darwin-amd64
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 main.go
+          chmod +x probe-client-darwin-arm64
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe main.go
           echo "Client binaries built successfully"
 
@@ -117,6 +121,8 @@ jobs:
           files: |
             client/probe-client
             client/probe-client-arm64
+            client/probe-client-darwin-amd64
+            client/probe-client-darwin-arm64
             client/probe-client.exe
             client/install.sh
           body: |
@@ -165,12 +171,14 @@ jobs:
             |----------|------|
             | Linux amd64 | `probe-client` |
             | Linux arm64 | `probe-client-arm64` |
+            | macOS Intel (amd64) | `probe-client-darwin-amd64` |
+            | macOS Apple Silicon (arm64) | `probe-client-darwin-arm64` |
             | Windows amd64 | `probe-client.exe` |
-            | Install Script | `install.sh` |
+            | Install Script (Linux + macOS) | `install.sh` |
 
-            **Quick Install:**
+            **Quick Install (Linux & macOS):**
             ```bash
-            curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id YOUR_ID --server http://YOUR_SERVER:8008
+            curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id YOUR_ID --server http://YOUR_SERVER:8080
             ```
           draft: false
           prerelease: false

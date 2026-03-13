@@ -237,6 +237,36 @@ curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh |
   --id <ID> --server <SERVER_URL> --secret <SECRET>
 ```
 
+### macOS（Intel / Apple Silicon）
+
+安装脚本会自动检测 CPU 架构，并将服务注册为 `launchd` 守护进程（开机自动启动）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- \
+  --id <ID> --server <SERVER_URL> --secret <SECRET>
+```
+
+> **注意**：macOS 需要 `sudo` 权限以便将 `.plist` 写入 `/Library/LaunchDaemons/`。
+
+**macOS 服务管理命令：**
+
+```bash
+# 查看运行状态
+sudo launchctl print system/com.pulse.client
+
+# 查看日志
+tail -f /var/log/pulse-client.log
+
+# 重启服务（推荐方式）
+sudo launchctl kickstart -k system/com.pulse.client
+
+# 停止服务
+sudo launchctl bootout system/com.pulse.client
+
+# 重新启动已停止的服务
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.pulse.client.plist
+```
+
 ### Windows (管理员 PowerShell)
 
 ```powershell
@@ -256,6 +286,15 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 **Linux:**
 ```bash
 sudo systemctl stop pulse-client && sudo systemctl disable pulse-client && sudo rm -f /opt/pulse/probe-client /etc/systemd/system/pulse-client.service && sudo systemctl daemon-reload
+```
+
+**macOS（含自动更新）:**
+```bash
+sudo launchctl bootout system/com.pulse.client 2>/dev/null || true
+sudo launchctl bootout system/com.pulse.client.update 2>/dev/null || true
+sudo rm -rf /opt/pulse \
+  /Library/LaunchDaemons/com.pulse.client.plist \
+  /Library/LaunchDaemons/com.pulse.client.update.plist
 ```
 
 **Windows (管理员 PowerShell):**

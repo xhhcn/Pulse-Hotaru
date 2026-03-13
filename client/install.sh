@@ -343,8 +343,10 @@ $(echo -e "$env_xml")    </dict>
 </plist>
 EOF
 
-    launchctl unload "$MACOS_PLIST_PATH" 2>/dev/null || true
-    launchctl load -w "$MACOS_PLIST_PATH"
+    # Use bootstrap/bootout (modern API, required on macOS 11+)
+    # bootout removes an existing registration so we can re-register cleanly
+    launchctl bootout system/${MACOS_PLIST_LABEL} 2>/dev/null || true
+    launchctl bootstrap system "$MACOS_PLIST_PATH"
     success "launchd daemon created and started"
 }
 
@@ -400,8 +402,8 @@ $(_macos_calendar_xml)
 </plist>
 EOF
 
-    launchctl unload "$MACOS_UPDATE_PLIST_PATH" 2>/dev/null || true
-    launchctl load -w "$MACOS_UPDATE_PLIST_PATH"
+    launchctl bootout system/${MACOS_UPDATE_PLIST_LABEL} 2>/dev/null || true
+    launchctl bootstrap system "$MACOS_UPDATE_PLIST_PATH"
     success "Auto-update launchd timer enabled (interval: ${UPDATE_INTERVAL})"
 }
 
@@ -471,12 +473,17 @@ validate_binary() {
 
 restart_service() {
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        if launchctl list "$MACOS_PLIST_LABEL" &>/dev/null; then
-            launchctl unload "$MACOS_PLIST_PATH" 2>/dev/null || true
-            launchctl load -w "$MACOS_PLIST_PATH"
+        # kickstart -k: kill the running process and restart it immediately.
+        # If the service is not yet bootstrapped (first install via update script),
+        # fall back to bootstrap.
+        if launchctl print "system/${MACOS_PLIST_LABEL}" &>/dev/null 2>&1; then
+            launchctl kickstart -k "system/${MACOS_PLIST_LABEL}"
             log_msg "[INFO] Updated and restarted ${MACOS_PLIST_LABEL}"
+        elif [ -f "$MACOS_PLIST_PATH" ]; then
+            launchctl bootstrap system "$MACOS_PLIST_PATH"
+            log_msg "[INFO] Updated binary and bootstrapped ${MACOS_PLIST_LABEL}"
         else
-            log_msg "[INFO] Updated binary, service is not running"
+            log_msg "[INFO] Updated binary, service plist not found"
         fi
     else
         if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -582,25 +589,27 @@ show_status() {
 
     if [[ "$OS" == "Darwin" ]]; then
         echo "Service Commands (launchd):"
-        echo "  Check status:   launchctl list ${MACOS_PLIST_LABEL}"
+        echo "  Check status:   sudo launchctl print system/${MACOS_PLIST_LABEL}"
         echo "  View logs:      tail -f /var/log/pulse-client.log"
-        echo "  Restart:        launchctl unload ${MACOS_PLIST_PATH} && launchctl load -w ${MACOS_PLIST_PATH}"
-        echo "  Stop:           launchctl unload ${MACOS_PLIST_PATH}"
+        echo "  Restart:        sudo launchctl kickstart -k system/${MACOS_PLIST_LABEL}"
+        echo "  Stop:           sudo launchctl bootout system/${MACOS_PLIST_LABEL}"
+        echo "  Start again:    sudo launchctl bootstrap system ${MACOS_PLIST_PATH}"
         if [ "$AUTO_UPDATE" = true ]; then
             echo ""
             echo "Auto-Update Commands:"
-            echo "  Run now:        launchctl start ${MACOS_UPDATE_PLIST_LABEL}"
+            echo "  Run now:        sudo launchctl kickstart system/${MACOS_UPDATE_PLIST_LABEL}"
             echo "  Update logs:    tail -f /var/log/pulse-client.log"
-            echo "  Disable:        launchctl unload ${MACOS_UPDATE_PLIST_PATH} && rm -f ${MACOS_UPDATE_PLIST_PATH}"
+            echo "  Disable:        sudo launchctl bootout system/${MACOS_UPDATE_PLIST_LABEL} && sudo rm -f ${MACOS_UPDATE_PLIST_PATH}"
         fi
         echo ""
         echo "Uninstall:"
         if [ "$AUTO_UPDATE" = true ]; then
-            echo "  launchctl unload ${MACOS_PLIST_PATH} ${MACOS_UPDATE_PLIST_PATH} 2>/dev/null || true"
-            echo "  rm -rf ${INSTALL_DIR} ${MACOS_PLIST_PATH} ${MACOS_UPDATE_PLIST_PATH}"
+            echo "  sudo launchctl bootout system/${MACOS_PLIST_LABEL} 2>/dev/null || true"
+            echo "  sudo launchctl bootout system/${MACOS_UPDATE_PLIST_LABEL} 2>/dev/null || true"
+            echo "  sudo rm -rf ${INSTALL_DIR} ${MACOS_PLIST_PATH} ${MACOS_UPDATE_PLIST_PATH}"
         else
-            echo "  launchctl unload ${MACOS_PLIST_PATH} 2>/dev/null || true"
-            echo "  rm -rf ${INSTALL_DIR} ${MACOS_PLIST_PATH}"
+            echo "  sudo launchctl bootout system/${MACOS_PLIST_LABEL} 2>/dev/null || true"
+            echo "  sudo rm -rf ${INSTALL_DIR} ${MACOS_PLIST_PATH}"
         fi
     else
         echo "Service Commands (systemd):"

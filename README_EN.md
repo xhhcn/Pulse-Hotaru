@@ -237,6 +237,36 @@ curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh |
   --id <ID> --server <SERVER_URL> --secret <SECRET>
 ```
 
+### macOS (Intel / Apple Silicon)
+
+The install script auto-detects CPU architecture and registers the service as a `launchd` daemon (auto-starts on boot):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- \
+  --id <ID> --server <SERVER_URL> --secret <SECRET>
+```
+
+> **Note**: macOS requires `sudo` to write `.plist` files into `/Library/LaunchDaemons/`.
+
+**macOS service management commands:**
+
+```bash
+# Check status
+sudo launchctl print system/com.pulse.client
+
+# View logs
+tail -f /var/log/pulse-client.log
+
+# Restart service (recommended)
+sudo launchctl kickstart -k system/com.pulse.client
+
+# Stop service
+sudo launchctl bootout system/com.pulse.client
+
+# Start a stopped service again
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.pulse.client.plist
+```
+
 ### Windows (Administrator PowerShell)
 
 ```powershell
@@ -256,6 +286,15 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 **Linux:**
 ```bash
 sudo systemctl stop pulse-client && sudo systemctl disable pulse-client && sudo rm -f /opt/pulse/probe-client /etc/systemd/system/pulse-client.service && sudo systemctl daemon-reload
+```
+
+**macOS (with auto-update):**
+```bash
+sudo launchctl bootout system/com.pulse.client 2>/dev/null || true
+sudo launchctl bootout system/com.pulse.client.update 2>/dev/null || true
+sudo rm -rf /opt/pulse \
+  /Library/LaunchDaemons/com.pulse.client.plist \
+  /Library/LaunchDaemons/com.pulse.client.update.plist
 ```
 
 **Windows (Administrator PowerShell):**

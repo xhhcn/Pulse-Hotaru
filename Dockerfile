@@ -12,8 +12,17 @@ COPY server/*.go ./
 RUN mkdir -p web/dist && touch web/dist/.gitkeep
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o probe-server .
 
-# Stage 2: Build frontend
-FROM node:20-alpine AS frontend-builder
+# Stage 2: Build frontend on the NATIVE build platform.
+#
+# The frontend output is a static HTML/JS/CSS bundle — completely
+# architecture-independent — so we never need to build it under the
+# target platform. Omitting `--platform=$BUILDPLATFORM` causes buildx
+# to run this stage under QEMU emulation when building linux/arm64 on
+# an amd64 runner, and `npm ci` (via its native `node-gyp` / V8
+# bootstrap code) crashes with "qemu: uncaught target signal 4
+# (Illegal instruction) - core dumped". Pinning to the BUILD platform
+# avoids emulation entirely and makes arm64 builds as fast as amd64.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 WORKDIR /build
 COPY server/web/package*.json ./
 RUN npm ci

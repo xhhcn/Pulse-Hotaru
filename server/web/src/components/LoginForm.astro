@@ -2,9 +2,9 @@
 // Login form component for admin authentication
 ---
 
-<div class="min-h-screen flex items-center justify-center bg-white dark:bg-[#151515] glass-login-wrapper px-3 sm:px-4">
+<div class="min-h-screen flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] glass-login-wrapper px-3 sm:px-4">
   <div class="w-full max-w-md">
-    <div class="glass-login bg-white dark:bg-[#1a1a1a] rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 p-4 sm:p-6 md:p-8 shadow-lg animate-login-card">
+    <div class="glass-login bg-white dark:bg-[#1a1a1a] rounded-xl border border-[#d4d4d4]/50 dark:border-[#404040]/50 p-4 sm:p-6 md:p-8 shadow-lg animate-login-card">
       <!-- Logo/Title -->
       <div class="text-center mb-6 sm:mb-8 animate-form-field" style="animation-delay: 0.1s;">
         <h1 class="text-xl sm:text-2xl font-bold text-[#0a0a0a] dark:text-[#f5f5f5] mb-2" data-translate-login="title">Admin Login</h1>
@@ -31,7 +31,7 @@
             name="password"
             required
             autocomplete="current-password"
-            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] focus:outline-none focus:ring-2 focus:ring-[#404040] dark:focus:ring-[#404040] focus:border-transparent transition-all duration-200 placeholder:text-[#737373] dark:placeholder:text-[#737373]"
+            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] outline-none transition-colors duration-200 focus:border-[#737373] dark:focus:border-[#525252] placeholder:text-[#737373] dark:placeholder:text-[#737373]"
             placeholder="Enter password"
           />
         </div>
@@ -43,7 +43,7 @@
             id="confirm-password"
             name="confirm-password"
             autocomplete="new-password"
-            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] focus:outline-none focus:ring-2 focus:ring-[#404040] dark:focus:ring-[#404040] focus:border-transparent transition-all duration-200 placeholder:text-[#737373] dark:placeholder:text-[#737373]"
+            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] outline-none transition-colors duration-200 focus:border-[#737373] dark:focus:border-[#525252] placeholder:text-[#737373] dark:placeholder:text-[#737373]"
             placeholder="Confirm password"
           />
         </div>
@@ -52,7 +52,7 @@
           <button
             type="submit"
             id="login-submit"
-            class="w-full py-2 px-4 rounded-lg bg-[#404040] hover:bg-[#525252] text-white font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#404040] focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-[#151515] btn-press"
+            class="w-full py-2 px-4 rounded-lg bg-[#404040] hover:bg-[#525252] text-white font-medium outline-none transition-colors duration-200 btn-press"
             data-translate-login="submit"
           >
             Login
@@ -312,9 +312,17 @@
       submitButton.textContent = translations[lang].setupPassword;
     }
 
+    // Guard against double-submission. On slow networks a fast double
+    // click on the submit button would fire two /api/auth/login requests
+    // (the server rate-limits, but the UI still felt unresponsive). We
+    // disable the button for the duration of the async flow and always
+    // re-enable it in finally so a failed login doesn't permanently
+    // lock the user out of retrying.
+    let submitInFlight = false;
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      
+      if (submitInFlight) return;
+
       const password = passwordField.value.trim();
       const confirmPassword = confirmPasswordInput.value.trim();
 
@@ -325,47 +333,57 @@
         return;
       }
 
-      if (!isPasswordSet) {
-        // Setup password
-        if (password !== confirmPassword) {
-          const lang = getCurrentLanguage();
-          showError(translations[lang].passwordMismatch);
-          return;
-        }
+      submitInFlight = true;
+      submitButton.disabled = true;
+      submitButton.classList.add('opacity-60', 'cursor-not-allowed');
 
-        const result = await setupPassword(password);
-        if (result && result.success) {
-          // After setup, automatically login
-          const loginResult = await login(password);
-          if (loginResult) {
+      try {
+        if (!isPasswordSet) {
+          // Setup password
+          if (password !== confirmPassword) {
+            const lang = getCurrentLanguage();
+            showError(translations[lang].passwordMismatch);
+            return;
+          }
+
+          const result = await setupPassword(password);
+          if (result && result.success) {
+            // After setup, automatically login
+            const loginResult = await login(password);
+            if (loginResult) {
+              // SECURITY: Validate redirect parameter to prevent open redirect
+              const urlParams = new URLSearchParams(window.location.search);
+              const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
+              window.location.href = redirect;
+            } else {
+              // Setup succeeded but login failed, redirect anyway (shouldn't happen)
+              // SECURITY: Validate redirect parameter to prevent open redirect
+              const urlParams = new URLSearchParams(window.location.search);
+              const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
+              window.location.href = redirect;
+            }
+          } else {
+            const lang = getCurrentLanguage();
+            const errorMsg = (result && result.error) ? result.error : translations[lang].error;
+            showError(errorMsg);
+          }
+        } else {
+          // Login
+          const success = await login(password);
+          if (success) {
             // SECURITY: Validate redirect parameter to prevent open redirect
             const urlParams = new URLSearchParams(window.location.search);
             const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
             window.location.href = redirect;
           } else {
-            // Setup succeeded but login failed, redirect anyway (shouldn't happen)
-            // SECURITY: Validate redirect parameter to prevent open redirect
-            const urlParams = new URLSearchParams(window.location.search);
-            const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
-            window.location.href = redirect;
+            const lang = getCurrentLanguage();
+            showError(translations[lang].invalidPassword);
           }
-        } else {
-          const lang = getCurrentLanguage();
-          const errorMsg = (result && result.error) ? result.error : translations[lang].error;
-          showError(errorMsg);
         }
-      } else {
-        // Login
-        const success = await login(password);
-        if (success) {
-          // SECURITY: Validate redirect parameter to prevent open redirect
-          const urlParams = new URLSearchParams(window.location.search);
-          const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
-          window.location.href = redirect;
-        } else {
-          const lang = getCurrentLanguage();
-          showError(translations[lang].invalidPassword);
-        }
+      } finally {
+        submitInFlight = false;
+        submitButton.disabled = false;
+        submitButton.classList.remove('opacity-60', 'cursor-not-allowed');
       }
     });
   })();

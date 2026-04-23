@@ -13,7 +13,25 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Pulse Monitor — a lightweight, real-time server monitoring dashboard." />
+    <!-- Self-hosted private dashboard: do not index individual instances. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="Pulse Monitor" />
+    <meta property="og:description" content="Lightweight, real-time server monitoring dashboard." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pulse Monitor" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Pulse Monitor" />
+    <meta name="twitter:description" content="Lightweight, real-time server monitoring dashboard." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
     <title>Pulse Monitor</title>
     <!-- View Transitions API styling for smooth theme switching -->
     <style>
@@ -229,7 +247,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       })();
     </script>
   </head>
-  <body class="min-h-screen overflow-x-hidden flex flex-col bg-[#151515] dark:bg-[#151515] bg-[#fafafa] text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]">
+  <body class="min-h-screen overflow-x-hidden flex flex-col bg-[#fafafa] dark:bg-[#151515] text-[#151515] dark:text-[#f5f5f5]">
     <div id="auth-check" class="hidden min-h-screen flex flex-col">
       <div class="px-2 sm:px-4 md:px-6 animate-navbar">
         <NavBar />
@@ -241,10 +259,23 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         <Footer />
       </div>
     </div>
-    <div id="login-redirect" class="min-h-screen flex items-center justify-center">
+    <!--
+      Auth-gate overlay. Positioned `fixed inset-0` with an opaque body-
+      matching background so it covers the page while auth resolves, and
+      carries a 200 ms opacity transition. When auth passes we don't snap
+      it out with `display: none` — that would leave a visible gap
+      frame between spinner-gone and main-content-faded-in (the `.animate-
+      content` class has a 0.1 s animation-delay). Instead we set
+      `opacity: 0` first, let the fade play, and only THEN apply `hidden`.
+      During those 200 ms the main content's own entrance animations run
+      underneath, so the perceived transition is a clean cross-fade
+      rather than a snap-out / blank-frame / fade-in. The `z-50` ensures
+      the overlay stays above the main content while it fades.
+    -->
+    <div id="login-redirect" class="fixed inset-0 z-50 flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] transition-opacity duration-200 ease-out">
       <div class="text-center animate-page-in">
-        <div class="w-8 h-8 border-2 border-[#404040] dark:border-[#404040] border-[#d4d4d4] border-t-transparent dark:border-t-transparent rounded-full animate-spin-smooth mx-auto mb-4"></div>
-        <p class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">Checking access...</p>
+        <div class="w-8 h-8 border-[3px] border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin-smooth mx-auto mb-4"></div>
+        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">Checking access...</p>
       </div>
     </div>
   </body>
@@ -266,7 +297,30 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   (async () => {
     const authCheck = document.getElementById('auth-check');
     const loginRedirect = document.getElementById('login-redirect');
-    
+
+    // Reveal the authenticated page with a smooth cross-fade:
+    //  1. Un-hide #auth-check so its child animations (.animate-navbar
+    //     / .animate-content) start their entrance keyframes.
+    //  2. Drop the overlay out of the hit-testing path (`pointer-events:
+    //     none`) so during the 200 ms fade the user can already
+    //     interact with the NavBar / content underneath — otherwise
+    //     the still-present (but fading) overlay sitting at `z-50`
+    //     would swallow clicks for that window, which on a slow tap
+    //     is user-visible.
+    //  3. Set the overlay's opacity to 0 so its 200 ms CSS transition
+    //     carries the spinner out while the content fades in.
+    //  4. After the fade (220 ms gives a small buffer over the 200 ms
+    //     transition to avoid a one-frame flash) apply `.hidden` so
+    //     the overlay leaves the layout tree.
+    // The overlay is `position: fixed` so step 3's opacity fade does
+    // not cause a layout shift below the auth-check content.
+    function revealAuthContent() {
+      authCheck.classList.remove('hidden');
+      loginRedirect.style.pointerEvents = 'none';
+      loginRedirect.style.opacity = '0';
+      setTimeout(() => loginRedirect.classList.add('hidden'), 220);
+    }
+
     // Get token from URL parameter
     const urlParams = new URLSearchParams(window.location.search);
     const shareToken = urlParams.get('token');
@@ -279,8 +333,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         
         // If privacy is not enabled, allow access
         if (!privacyConfig.enabled) {
-          authCheck.classList.remove('hidden');
-          loginRedirect.classList.add('hidden');
+          revealAuthContent();
           return;
         }
         
@@ -297,8 +350,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
             const verifyData = await verifyRes.json();
             if (verifyData.valid) {
               // Token is valid, allow access
-              authCheck.classList.remove('hidden');
-              loginRedirect.classList.add('hidden');
+              revealAuthContent();
               return;
             }
           }
@@ -319,8 +371,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
               const verifyData = await verifyRes.json();
               if (verifyData.valid) {
                 // Admin token is valid, allow access
-                authCheck.classList.remove('hidden');
-                loginRedirect.classList.add('hidden');
+                revealAuthContent();
                 return;
               }
             }
@@ -333,13 +384,11 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         window.location.href = '/login?redirect=/';
       } else {
         // Privacy config check failed, allow access (fail open)
-        authCheck.classList.remove('hidden');
-        loginRedirect.classList.add('hidden');
+        revealAuthContent();
       }
     } catch (err) {
       // Privacy config check failed, allow access (fail open)
-      authCheck.classList.remove('hidden');
-      loginRedirect.classList.add('hidden');
+      revealAuthContent();
     }
   })();
 </script>

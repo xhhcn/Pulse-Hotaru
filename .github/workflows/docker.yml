@@ -94,21 +94,27 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          # Client builds only require Go 1.15, but we use 1.22 to match
+          # the server toolchain and allow rebuilding anything in-repo.
+          go-version: '1.22'
 
       - name: Build Client Binaries
+        # Build the whole client package (`.`), not `main.go` alone.
+        # The client has been split into main.go + hwprobe_*.go/.s +
+        # linux_kernel{,_other}.go (selected by GOOS/GOARCH build tags),
+        # so single-file builds fail with "undefined: readSysinfo" etc.
         run: |
           cd client
           echo "Building client binaries..."
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o probe-client main.go
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o probe-client .
           chmod +x probe-client
-          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 main.go
+          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 .
           chmod +x probe-client-arm64
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 main.go
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 .
           chmod +x probe-client-darwin-amd64
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 main.go
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 .
           chmod +x probe-client-darwin-arm64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe main.go
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe .
           echo "Client binaries built successfully"
 
       - name: Create GitHub Release
@@ -130,43 +136,38 @@ jobs:
 
             ### ✨ New Features
 
-            **Push Mode (NAT / Outbound-only Support)**
-            - Clients behind NAT or without inbound ports now proactively push metrics every 3 seconds
-            - Server automatically detects push-mode clients and skips inbound polling for them
-            - TCPing is executed locally on push-mode clients; results are included in each push payload
-            - Server responds to each push with the latest TCPing configuration for immediate propagation
+            **One-click Migration & Backup**
+            - New `scripts/migrate.sh`, `scripts/backup.sh`, and `scripts/restore.sh` for zero-downtime migration between hosts using hot bbolt snapshots
+            - Admin dashboard now exposes a "Download Backup" button that streams a consistent `metrics.db` snapshot via the server API
+            - Server-side `/api/admin/backup` endpoint with Bearer-auth, path-safe streaming, and audit logging
+            - `migrate.sh` self-bootstraps `backup.sh` / `restore.sh` on the remote host, preserves inherited `PASSWORD` / `TOKEN` env vars instead of leaking via argv, and ships a rescue path on restore failure
 
-            **Public IP Detection for NAT Clients**
-            - Client now prioritizes external API lookups (ipinfo.io and others) in parallel to obtain the correct egress/public IP
-            - Server-side NAT IP fixup: if the reported IP is private or empty, the real remote IP from the HTTP request is used for geolocation
-            - Both mechanisms ensure accurate country detection for NAT and outbound-only machines
+            **macOS Client Parity**
+            - Full Apple Silicon and Intel Mac support with accurate CPU model, core counts, nominal frequency, memory, swap, disk, and network metrics
+            - Reworked installer uses the modern `launchctl bootstrap` / `bootout` APIs (replacing deprecated `load` / `unload`)
+            - OS reporting now includes the macOS product version (e.g. `macOS 14.4`)
 
-            **Real-time SSE Broadcast for Push Clients**
-            - Server immediately broadcasts an SSE event after receiving a push, making the frontend update near-instantly (< 3 s) instead of waiting for the next polling cycle
+            **UI Polish & Accessibility**
+            - Cross-fade auth/login overlay with `pointer-events: none` during fade so the dashboard is interactive immediately
+            - Refined stagger animations, column-width stability during the waterfall entrance, reduced-motion support, and glassmorphism theme parity
+            - SEO/metadata pass: accurate `description`, `robots: noindex, nofollow` (instances are private), `theme-color` (dark/light), Open Graph, Twitter card, apple-touch-icon, and a `/robots.txt` that disallows indexing by default
 
-            ### 🔧 Bug Fixes & Stability
+            ### 🔧 Fixes & Hardening
 
-            **Registration Conflict on IP Change Fixed**
-            - Removed the IP/port comparison that caused HTTP 409 errors when a client legitimately re-registered with a different IP
-            - Client identity is now validated solely by ID + secret, allowing seamless reconnection after IP changes
-
-            **Concurrency & Data Race Fixes**
-            - `ClientRegistry.GetAll` now returns value copies instead of raw pointers, eliminating data races between the polling loop and concurrent registry writes
-            - `pollClient` uses `UpdateWorkingURL` for atomic updates instead of modifying potentially stale local copies
-            - `ClientRegistry.Register` preserves `PushMode`, `LastPushAt`, and `Secret` when a client re-registers, preventing false offline detections
-            - Push offline detection threshold raised to 30 s to tolerate network jitter with the 8 s push timeout
-
-            **Client-side Reliability**
-            - Fixed critical bug where `resp.Body.Close()` was called before reading the body in `startPeriodicRegistration`, preventing TCPing config from ever updating
-            - TCPing results are restored to the pending queue on transient push failures to prevent data loss
-            - Dedicated `pushHTTPClient` with 8 s timeout prevents the push loop from blocking on slow responses
-            - Periodic re-registration interval reduced from 5 s to 60 s (push loop already maintains liveness)
+            - **Server static cache**: standalone binary now emits the same `Cache-Control` headers as the Docker/Nginx build, so binary-only deployments don't serve stale HTML after an upgrade
+            - **macOS metrics under `CGO_ENABLED=0`**: CPU / memory / swap no longer report zero on Darwin builds
+            - **Linux client build**: split into `hwprobe_*.go/.s` + `linux_kernel{,_other}.go` for correct per-arch compilation (workflows now build the package `.`, not a single file)
+            - **Docker / binary caching parity**: `docker/nginx.conf` emits `Cache-Control: no-cache` for HTML and long-lived caching for hashed assets; the standalone server replicates this
+            - **Admin / index auth flow**: privacy-disabled, valid-token, invalid-token, no-token, and config-failure paths verified against a jsdom harness (9/9 scenarios)
+            - **Security**: stdin-only password prompts, `0600` DB permissions after restore, Bearer-only admin API, audit-logged backup downloads, and explicit warnings when falling back to plaintext HTTP during migration
 
             ### 📦 Docker Images
             - `xhh1128/pulse:${{ steps.version.outputs.version }}`
             - `xhh1128/pulse:latest`
 
-            ### 📥 Client Downloads
+            ### 📥 Downloads
+
+            **Client binaries**
             | Platform | File |
             |----------|------|
             | Linux amd64 | `probe-client` |
@@ -176,9 +177,21 @@ jobs:
             | Windows amd64 | `probe-client.exe` |
             | Install Script (Linux + macOS) | `install.sh` |
 
+            **Server standalone binaries** (uploaded by the standalone workflow)
+            | Platform | File |
+            |----------|------|
+            | Linux amd64 | `pulse-server-standalone-linux-amd64` |
+            | Linux arm64 | `pulse-server-standalone-linux-arm64` |
+
             **Quick Install (Linux & macOS):**
             ```bash
             curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id YOUR_ID --server http://YOUR_SERVER:8080
+            ```
+
+            **One-click migration to a new host:**
+            ```bash
+            PASSWORD="$OLD_ADMIN_PW" TOKEN="$NEW_ADMIN_PW" \
+              bash scripts/migrate.sh --from https://old.example.com --to https://new.example.com
             ```
           draft: false
           prerelease: false

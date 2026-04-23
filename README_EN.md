@@ -329,6 +329,111 @@ Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregi
 
 ---
 
+## 🚚 Migrating to Another Server
+
+All of Pulse's server state (registered systems, shared secrets, TCPing history, admin password, dashboard config, …) lives in **one bbolt file**. The repo ships `scripts/migrate.sh`, which wraps the entire migration into **a single command** — run it on the new server and it pulls everything across from the old one. **The old server stays fully online** the whole time, with zero data loss.
+
+> Every client keeps its `AGENT_ID` / `SECRET`; the only thing that might need updating is `SERVER_BASE` (the URL).  
+> If the old host sits behind a domain + reverse proxy, flip DNS to the new IP and clients need no change at all.
+
+### ✨ One command end-to-end
+
+```bash
+# ── On the NEW server ──
+
+# 1) Install Pulse (pick one)
+#    A. Standalone binary (systemd) — recommended, lowest overhead
+#       The installer also drops backup/restore/migrate into /opt/pulse/scripts/
+#       and creates the pulse-migrate / pulse-backup / pulse-restore commands.
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+
+#    B. Docker Compose
+# mkdir pulse && cd pulse && \
+# curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml && \
+# docker compose up -d && \
+# curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/scripts/migrate.sh -o migrate.sh && chmod +x migrate.sh
+#       migrate.sh will auto-fetch its backup.sh/restore.sh siblings from the repo — one file is enough.
+
+# 2) One command — prompts for the OLD admin password (never shown on screen)
+sudo pulse-migrate --from https://OLD_HOST                 # binary install (simplest)
+# or, in the Docker directory:
+# sudo ./migrate.sh --from https://OLD_HOST
+
+# Non-interactive (CI / automation — use an env var, not an argv flag):
+# sudo PASSWORD='OldAdminPW' pulse-migrate --from https://OLD_HOST -y
+```
+
+`migrate.sh` performs, in order:
+
+1. Log in to the **old server** with the password you supplied and exchange it for a one-shot admin token. The password is piped to `curl` via stdin, so it never shows up in `ps`.
+2. Call `GET /api/admin/backup` to pull a **transactionally-consistent** hot snapshot — built on bbolt's `Tx.WriteTo` inside a read-only transaction, so it can never capture a half-written page. **The old server is never stopped.**
+3. Validate the downloaded file (size + bbolt magic number `0xEDDA0CED`) so a truncated `scp` or a still-gzipped archive is caught *before* anything destructive runs.
+4. Auto-detect whether the new server runs under **Docker Compose** or **systemd (standalone binary)**, stop it, save the current `metrics.db` as `metrics.db.pre-restore-<timestamp>` (so rollback is a single command), install the snapshot, and restart.
+5. Poll `/healthz` until it returns 200, or print logs + rollback instructions on a 60-second timeout.
+
+By default the downloaded snapshot is staged in a `0700` private `mktemp` directory with the file itself at `0600`, and is deleted after a successful restore. Pass `--keep-backup ./pulse-backup.db` to also keep an offline copy.
+
+### 💾 Prefer a one-click manual backup? Use the admin panel
+
+Log in to `/admin` and look at the top-right icon bar — there is a new **Download Backup** button (download icon, emerald hover). Click once and the browser saves `pulse-backup-<UTC-timestamp>.db`. The file is byte-for-byte the **same consistent hot snapshot** `pulse-backup` / `migrate.sh` pull over the CLI (backed by bbolt's `Tx.WriteTo`), so you can feed it straight into `sudo pulse-restore <file>` on any fresh host. Handy when you have no SSH, want an ad-hoc backup before a risky change, or just want an extra safety copy before a migration.
+
+### 🔐 Security notes (30-second read)
+
+- **Use HTTPS or an SSH tunnel.** The snapshot carries the admin password hash and every per-system shared secret — shipping it over plaintext HTTP across the internet is as good as publishing your keys. The script warns on non-localhost `http://`. If you don't have HTTPS on the old host:
+  ```bash
+  ssh -fN -L 8008:localhost:8008 user@OLD_HOST
+  sudo pulse-migrate --from http://localhost:8008
+  ```
+- **Avoid `--password 'plaintext'`.** Argv is visible to every local user via `ps`. Prefer the interactive prompt (no flag) or the `PASSWORD=...` environment variable.
+- **Treat the backup file as the live DB.** Keep it `0600` (the script does), move it over an encrypted channel, and delete it when you're done.
+- **The server already does the heavy lifting**: 5 failed logins → IP locked for 15 min, bcrypt password hashing, `/api/admin/backup` accepts **only** `Authorization: Bearer` (no `?token=` query, to keep tokens out of nginx access logs and shell history), and every backup pull writes an audit log line including the caller's IP.
+
+### 🔁 Repoint clients (only if the URL actually changed)
+
+```bash
+# Linux (systemd client)
+sudo sed -i 's#http://OLD_HOST:8008#http://NEW_HOST:8008#g' \
+  /etc/systemd/system/pulse-client.service
+sudo systemctl daemon-reload && sudo systemctl restart pulse-client
+```
+
+### 🛡️ Rollback
+
+The previous `metrics.db` is preserved as `metrics.db.pre-restore-<timestamp>`, so one command reverts the migration:
+
+```bash
+# Standalone binary
+sudo systemctl stop pulse-server
+sudo cp /opt/pulse/data/metrics.db.pre-restore-* /opt/pulse/data/metrics.db
+sudo systemctl start pulse-server
+
+# Docker
+docker compose stop
+cp datatz/metrics.db.pre-restore-* datatz/metrics.db
+docker compose up -d
+```
+
+Once you've verified `/admin` login works, the system list is complete, and TCPing charts render, delete the `.pre-restore-*` files.
+
+### 📅 Bonus: periodic backups
+
+The same scripts make good cron fodder for zero-downtime backups (env var keeps the password out of `ps`):
+
+```bash
+# Daily at 03:00 UTC
+0 3 * * * PASSWORD='YourAdminPW' /opt/pulse/scripts/backup.sh \
+  --server http://127.0.0.1:8008 \
+  --output /var/backups/pulse/pulse-$(date -u +\%Y\%m\%d).db
+```
+
+### ⚠️ Gotchas
+
+- **The backup file is the keys to the kingdom.** It embeds every per-system shared secret and the admin password hash. Treat it with the same care you'd treat the live DB — file permissions, transport encryption.
+- **Never run two servers against the same client fleet.** Each client will report to whichever server answers first, so data will split across them. Take the old host offline once the new one is verified.
+- **Full flag references**: `pulse-migrate --help`, `pulse-backup --help`, `pulse-restore --help` (or run the underlying `/opt/pulse/scripts/*.sh --help`).
+
+---
+
 ## ✨ New Features
 
 - Privacy Mode

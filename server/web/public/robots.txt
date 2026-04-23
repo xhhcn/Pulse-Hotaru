@@ -1,0 +1,5 @@
+# Pulse Monitor is a self-hosted private monitoring dashboard.
+# Individual instances typically contain private infrastructure data
+# and should NOT be indexed by public search engines.
+User-agent: *
+Disallow: /

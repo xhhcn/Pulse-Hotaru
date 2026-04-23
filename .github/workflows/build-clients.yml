@@ -45,34 +45,42 @@ jobs:
         with:
           go-version: '1.21'
 
+      # NOTE: We build the whole package (`.`) rather than `main.go`. The
+      # client is split across multiple source files (main.go +
+      # hwprobe_{amd64,386,other}.{go,s} + linux_kernel{,_other}.go)
+      # selected by GOOS/GOARCH build tags. Passing only `main.go` to
+      # `go build` compiles that single file in isolation and fails with
+      # "undefined: readSysinfo / cpuBrandStringFromCPUID / ..." because
+      # the symbols live in sibling files. `.` is the package directory
+      # and pulls in every matching .go/.s file automatically.
       - name: Build Linux amd64
         working-directory: ./client
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o probe-client main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o probe-client .
           chmod +x probe-client
 
       - name: Build Linux arm64
         working-directory: ./client
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 .
           chmod +x probe-client-arm64
 
       - name: Build macOS amd64
         working-directory: ./client
         run: |
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 main.go
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 .
           chmod +x probe-client-darwin-amd64
 
       - name: Build macOS arm64
         working-directory: ./client
         run: |
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 main.go
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 .
           chmod +x probe-client-darwin-arm64
 
       - name: Build Windows amd64
         working-directory: ./client
         run: |
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe main.go
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -91,9 +99,9 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add -f client/probe-client client/probe-client-arm64 \
-                     client/probe-client-darwin-amd64 client/probe-client-darwin-arm64 \
-                     client/probe-client.exe
+          git add client/probe-client client/probe-client-arm64 \
+                  client/probe-client-darwin-amd64 client/probe-client-darwin-arm64 \
+                  client/probe-client.exe
           if ! git diff --staged --quiet; then
             if git diff --staged --name-only | grep -qE '^client/(probe-client|probe-client-arm64|probe-client-darwin-amd64|probe-client-darwin-arm64|probe-client\.exe)$'; then
               git commit -m "chore: update client binaries [skip actions]"

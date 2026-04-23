@@ -329,6 +329,111 @@ Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregi
 
 ---
 
+## 🚚 迁移到另一台服务器
+
+Pulse 服务端的全部状态（系统列表、共享密钥、TCPing 历史、管理员密码、面板配置……）都只保存在 **一个 bbolt 文件** 里。仓库提供的 `scripts/migrate.sh` 把整个流程打包成 **一条命令**：在新服务器上跑一次，就能从旧服务器把所有数据搬过来，**旧服务器全程不停机、零数据丢失**。
+
+> 客户端 `AGENT_ID` / `SECRET` 保持不变，只有 `SERVER_BASE`（服务端地址）可能需要改。  
+> 如果旧端用的是域名 + 反代，只需把 DNS 切到新 IP 即可，客户端完全不用动。
+
+### ✨ 一条命令完成迁移
+
+```bash
+# ── 在新服务器上 ──
+
+# 1) 安装 Pulse（二选一）
+#    A. 独立二进制（systemd） — 推荐，资源占用最小
+#       安装器会顺便把 backup/restore/migrate 脚本装到 /opt/pulse/scripts/
+#       并创建 pulse-migrate / pulse-backup / pulse-restore 三个命令。
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+
+#    B. Docker Compose
+# mkdir pulse && cd pulse && \
+# curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml && \
+# docker compose up -d && \
+# curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/scripts/migrate.sh -o migrate.sh && chmod +x migrate.sh
+#       migrate.sh 会自动从仓库拉取它所依赖的 backup.sh / restore.sh，一个文件够用
+
+# 2) 一条命令迁移 —— 交互式输入旧服务器的管理员密码
+sudo pulse-migrate --from https://OLD_HOST                 # 二进制方式（最便捷）
+# 或在 Docker 目录里：
+# sudo ./migrate.sh --from https://OLD_HOST
+
+# 非交互（CI/自动化，推荐用 env var 避免密码进 `ps`）：
+# sudo PASSWORD='旧服务器密码' pulse-migrate --from https://OLD_HOST -y
+```
+
+`migrate.sh` 按顺序完成：
+
+1. 用你提供的密码登录 **旧服务器**，换取一次性管理员令牌（密码通过 stdin 传给 `curl`，不会出现在 `ps` 里）。
+2. 调用 `GET /api/admin/backup` 拉一份 **事务级一致性** 的热备份——基于 bbolt 的 `Tx.WriteTo`，不会捕获到半写入页，**旧服务器不停机**。
+3. 校验下载文件：大小 + bbolt 魔数 `0xEDDA0CED`，避免 `scp` 断流或误传成 `.gz` 直接使用。
+4. 自动识别新服务器是 **Docker** 还是 **独立二进制**，停服 → 把当前 `metrics.db` 另存为 `metrics.db.pre-restore-<时间戳>`（一条命令回滚）→ 放入新文件 → 重启服务。
+5. 轮询 `/healthz` 直到返回 200，或 60 秒超时后打印日志并给出回滚命令。
+
+默认把下载的备份文件放在权限 `0700` 的私有临时目录，文件本身 `0600`，成功后自动清理；加 `--keep-backup ./pulse-backup.db` 可以保留一份做离线归档。
+
+### 💾 只想手动备份？管理面板一键下载
+
+进 `/admin` 登录后，表头右上角多了一个 **下载备份** 按钮（下载图标，绿色悬停色）。点一下浏览器就会保存一个 `pulse-backup-<UTC 时间戳>.db` —— 跟 `pulse-backup` / `migrate.sh` 拉到的**完全是同一个文件**（事务级一致热快照，基于 `Tx.WriteTo`），可以直接喂给 `sudo pulse-restore <文件>` 在任意新机器上还原。适合：没 SSH 环境、想快速做一次性备份、或者给迁移留个保险。
+
+### 🔐 安全要点（认真看一眼，30 秒）
+
+- **用 HTTPS 或 SSH 隧道**。备份里带着管理员密码哈希 + 每台机器的共享密钥，纯 HTTP 走公网等于把钥匙挂外面。脚本会在检测到非本地 `http://` 时弹出提醒。没有 HTTPS 时推荐：
+  ```bash
+  ssh -fN -L 8008:localhost:8008 user@OLD_HOST
+  sudo pulse-migrate --from http://localhost:8008
+  ```
+- **别用 `--password '明文'`**。命令行参数在 `ps` 里所有本机用户都看得到。优先：交互式提示（无参数）或环境变量 `PASSWORD='...' pulse-migrate ...`。
+- **备份文件 = 生产 DB**。保存时用 `0600` 权限（脚本已做），传输时走加密通道，不用了就删。
+- **服务端已经做了多层防护**：登录 5 次失败锁 IP 15 分钟、密码 bcrypt、`/api/admin/backup` 只认 `Authorization: Bearer`（拒绝 `?token=` query，避免令牌进 nginx 日志）、每次备份都会写一条审计日志（包含客户端 IP）。
+
+### 🔁 客户端地址更新（仅当 URL 变了）
+
+```bash
+# Linux（systemd 客户端）
+sudo sed -i 's#http://OLD_HOST:8008#http://NEW_HOST:8008#g' \
+  /etc/systemd/system/pulse-client.service
+sudo systemctl daemon-reload && sudo systemctl restart pulse-client
+```
+
+### 🛡️ 回滚
+
+旧的 `metrics.db` 在迁移时被自动备份为 `metrics.db.pre-restore-<时间戳>`，随时可以回滚：
+
+```bash
+# 独立二进制
+sudo systemctl stop pulse-server
+sudo cp /opt/pulse/data/metrics.db.pre-restore-* /opt/pulse/data/metrics.db
+sudo systemctl start pulse-server
+
+# Docker
+docker compose stop
+cp datatz/metrics.db.pre-restore-* datatz/metrics.db
+docker compose up -d
+```
+
+在 `/admin` 登录正常、系统列表齐全、TCPing 图表渲染正常后，再删除这些 `.pre-restore-*` 文件即可。
+
+### 📅 顺便：周期性备份
+
+同一套脚本可以挂到 cron 做日常热备（零停机）：
+
+```bash
+# 每天 UTC 03:00 一次，环境变量传密码避免 ps 泄漏
+0 3 * * * PASSWORD='YourAdminPW' /opt/pulse/scripts/backup.sh \
+  --server http://127.0.0.1:8008 \
+  --output /var/backups/pulse/pulse-$(date -u +\%Y\%m\%d).db
+```
+
+### ⚠️ 注意事项
+
+- **备份文件等同于全部密钥**：里面包含所有系统的共享密钥和管理员密码哈希，和生产 DB 一样谨慎对待（文件权限、传输通道）。
+- **不要同时运行两台服务端指向同一套客户端**——客户端会上报给最先通的那台，数据会分裂。迁移完成后及时下线旧端。
+- **脚本参数全览**：`pulse-migrate --help`、`pulse-backup --help`、`pulse-restore --help`（或直接 `/opt/pulse/scripts/*.sh --help`）。
+
+---
+
 ## ✨ 新特征
 
 - 私有化模式

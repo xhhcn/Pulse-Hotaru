@@ -73,6 +73,39 @@ fi
 chmod +x "$INSTALL_DIR/pulse-server"
 print_message "$GREEN" "✅ Binary downloaded and made executable"
 
+# Drop the migration helper scripts (backup / restore / migrate) into
+# $INSTALL_DIR/scripts so future migrations are a single command on a
+# fresh VPS — no git clone required. We fetch from the same tag as the
+# binary so the scripts and the server agree about the /api/admin/backup
+# contract. If GitHub is unreachable we don't hard-fail the install;
+# the server itself is already working and the scripts can be fetched
+# later by rerunning the installer.
+print_message "$YELLOW" "📂 Installing migration helper scripts..."
+mkdir -p "$INSTALL_DIR/scripts"
+if [ "$VERSION" = "latest" ]; then
+    SCRIPT_BASE="https://raw.githubusercontent.com/$GITHUB_REPO/main/scripts"
+else
+    SCRIPT_BASE="https://raw.githubusercontent.com/$GITHUB_REPO/$VERSION/scripts"
+fi
+SCRIPTS_OK=true
+for s in backup.sh restore.sh migrate.sh; do
+    if ! wget -q "$SCRIPT_BASE/$s" -O "$INSTALL_DIR/scripts/$s"; then
+        SCRIPTS_OK=false
+        break
+    fi
+    chmod +x "$INSTALL_DIR/scripts/$s"
+done
+if $SCRIPTS_OK; then
+    ln -sf "$INSTALL_DIR/scripts/migrate.sh" /usr/local/bin/pulse-migrate
+    ln -sf "$INSTALL_DIR/scripts/backup.sh"  /usr/local/bin/pulse-backup
+    ln -sf "$INSTALL_DIR/scripts/restore.sh" /usr/local/bin/pulse-restore
+    print_message "$GREEN" "✅ Migration helpers installed to $INSTALL_DIR/scripts"
+    print_message "$GREEN" "   CLI shortcuts: pulse-migrate / pulse-backup / pulse-restore"
+else
+    rm -f "$INSTALL_DIR/scripts/backup.sh" "$INSTALL_DIR/scripts/restore.sh" "$INSTALL_DIR/scripts/migrate.sh"
+    print_message "$YELLOW" "⚠️  Could not fetch migration helpers (non-fatal) — rerun installer later."
+fi
+
 # Create systemd service
 print_message "$YELLOW" "⚙️  Creating systemd service..."
 cat > /etc/systemd/system/$SERVICE_NAME.service << EOF
@@ -133,10 +166,14 @@ if systemctl is-active --quiet $SERVICE_NAME; then
     print_message "$YELLOW" "📁 Installation directory: $INSTALL_DIR"
     print_message "$YELLOW" "💾 Data directory: $INSTALL_DIR/data"
     echo ""
+    print_message "$YELLOW" "🔄 Migrate from another Pulse server (zero downtime):"
+    print_message "$GREEN" "   sudo pulse-migrate --from https://OLD_HOST:8008"
+    echo ""
     print_message "$YELLOW" "🗑️  Uninstall:"
     print_message "$GREEN" "   sudo systemctl stop $SERVICE_NAME && sudo systemctl disable $SERVICE_NAME"
     print_message "$GREEN" "   sudo rm -f $INSTALL_DIR/pulse-server /etc/systemd/system/$SERVICE_NAME.service"
-    print_message "$GREEN" "   sudo rm -rf $INSTALL_DIR/data && sudo systemctl daemon-reload"
+    print_message "$GREEN" "   sudo rm -f /usr/local/bin/pulse-migrate /usr/local/bin/pulse-backup /usr/local/bin/pulse-restore"
+    print_message "$GREEN" "   sudo rm -rf $INSTALL_DIR/scripts $INSTALL_DIR/data && sudo systemctl daemon-reload"
     echo ""
     print_message "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 else

@@ -7,17 +7,20 @@ dist/
 coverage/
 
 # Compiled binaries
-*.exe
+# Server binaries are built locally during development / by CI and NOT
+# committed to the repo (the CI workflow uploads them to GitHub Release
+# artifacts instead — see .github/workflows/docker.yml).
 server/probe-server
 server/probe-server.exe
-# Server standalone binaries (built by CI/CD and uploaded to GitHub Release)
 server/pulse-server-standalone
 server/pulse-server-standalone-linux-amd64
 server/pulse-server-standalone-linux-arm64
-# Client binaries are built by CI/CD and committed to repo for distribution
-client/probe-client
-client/probe-client.exe
-client/probe-client-arm64
+# NOTE: client/probe-client* binaries ARE intentionally committed to the
+# repo for distribution (install.sh downloads them via raw.githubusercontent).
+# The Build Client Binaries workflow regenerates them on every push to main
+# and commits the updated artifacts. Do NOT add them here — if they were
+# gitignored, CI would need `git add -f` and devs couldn't normally track
+# local rebuilds.
 
 # Database and data files
 *.db

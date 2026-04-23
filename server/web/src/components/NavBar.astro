@@ -39,17 +39,17 @@ const { isAdmin = false } = Astro.props;
   <div id="navbar-icons-container" class="flex items-center gap-0.5 sm:gap-1" style="opacity: 0;">
     <button
       id="language-btn"
-      class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
-      aria-label="language"
-      title="切换语言"
+      class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
+      aria-label="Toggle language"
+      title="Toggle language"
     >
       <Icon name="languages" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
     </button>
     <button
       id="theme-btn"
-      class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
-      aria-label="theme"
-      title="切换主题"
+      class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
+      aria-label="Toggle theme"
+      title="Toggle theme"
     >
       <Icon
         id="theme-icon-moon"
@@ -66,17 +66,23 @@ const { isAdmin = false } = Astro.props;
     </button>
     {isAdmin ? (
       <a
+        id="navbar-home-link"
         href="/"
-        class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
-        aria-label="home"
+        class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
+        aria-label="Home"
+        title="Home"
+        data-nav-link="home"
       >
         <Icon name="home" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
       </a>
     ) : (
       <a
+        id="navbar-admin-link"
         href="/admin"
-        class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
-        aria-label="admin"
+        class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90"
+        aria-label="Admin"
+        title="Admin"
+        data-nav-link="admin"
       >
         <Icon name="user" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
       </a>
@@ -163,6 +169,48 @@ const { isAdmin = false } = Astro.props;
       const current = getCurrentTheme();
       const newTheme = current === 'dark' ? 'light' : 'dark';
       setTheme(newTheme);
+      updateThemeButton();
+    }
+
+    // Keep the "home" / "admin" navigation link's tooltip + aria-label
+    // localized. Unlike the language and theme buttons, these are plain
+    // <a> elements whose label text is static per-page (isAdmin prop
+    // decides which one renders), so we only need to re-translate, not
+    // reflect any "next action" state.
+    function updateNavLinks() {
+      const labels = {
+        home:  { en: 'Home',  zh: '首页' },
+        admin: { en: 'Admin', zh: '管理' },
+      };
+      const lang = getCurrentLanguage();
+      document.querySelectorAll('[data-nav-link]').forEach((el) => {
+        const key = el.getAttribute('data-nav-link');
+        const entry = labels[key];
+        if (!entry) return;
+        const value = entry[lang] || entry.en;
+        el.setAttribute('title', value);
+        el.setAttribute('aria-label', value);
+      });
+    }
+
+    // Keep the theme button's aria-label / title in sync with what a
+    // click will do next, and with the current UI language. Called on
+    // every theme toggle and once on initial mount so the tooltip is
+    // correct even when the user never clicks the button.
+    function updateThemeButton() {
+      const btn = document.getElementById('theme-btn');
+      if (!btn) return;
+      const currentLang = getCurrentLanguage();
+      const currentTheme = getCurrentTheme();
+      const nextIsDark = currentTheme !== 'dark';
+      let label;
+      if (currentLang === 'zh') {
+        label = nextIsDark ? '切换到深色模式' : '切换到浅色模式';
+      } else {
+        label = nextIsDark ? 'Switch to dark mode' : 'Switch to light mode';
+      }
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
     }
 
     function applyTheme(theme) {
@@ -478,6 +526,21 @@ const { isAdmin = false } = Astro.props;
       if (themeBtn) {
         themeBtn.addEventListener('click', toggleTheme);
       }
+
+      // Initialize tooltip / aria-label text for both buttons on mount
+      // so tooltips reflect the actual next action from the very first
+      // hover (before the user has toggled anything). Also react to
+      // language changes so that e.g. switching to English refreshes the
+      // theme button's "Switch to dark mode" label immediately without
+      // a theme toggle.
+      updateLanguageButton();
+      updateThemeButton();
+      updateNavLinks();
+      window.addEventListener('languagechange', () => {
+        updateLanguageButton();
+        updateThemeButton();
+        updateNavLinks();
+      });
 
       // System theme listener removed - we use fixed defaults
     }

@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -32,6 +35,63 @@ type Store struct {
 	db *bolt.DB
 }
 
+// openBolt opens the bbolt database with the safer FreelistMapType and a
+// slightly more generous lock timeout. FreelistMapType uses a hashmap instead
+// of a sorted array for the freelist, which is significantly more robust
+// against the freelist-corruption bugs present in older bbolt versions and
+// drastically reduces the probability of "invalid freelist page" panics after
+// an ungraceful shutdown.
+func openBolt(dbPath string) (*bolt.DB, error) {
+	return bolt.Open(dbPath, 0600, &bolt.Options{
+		Timeout:      5 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+}
+
+// isDBCorruptionError returns true when the error returned from bolt.Open
+// looks like on-disk corruption that cannot be recovered by re-opening.
+// We keep the match list intentionally conservative: we only want to auto
+// quarantine on errors that are known to be unrecoverable. All other errors
+// (timeout, permission denied, ...) are left to bubble up.
+func isDBCorruptionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	corruptionSignatures := []string{
+		"invalid freelist page",
+		"invalid database",
+		"meta page",
+		"checksum",
+		"unexpected EOF",
+		"page flags",
+		"invalid page type",
+		"invalid leaf",
+		"invalid branch",
+	}
+	for _, sig := range corruptionSignatures {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// quarantineCorruptDB renames the broken file aside with a timestamp suffix so
+// that the service can start with a fresh database while still preserving the
+// evidence for post-mortem inspection / manual recovery via `bbolt` CLI.
+func quarantineCorruptDB(dbPath string, cause error) (string, error) {
+	suffix := time.Now().UTC().Format("20060102T150405Z")
+	backupPath := fmt.Sprintf("%s.corrupt-%s", dbPath, suffix)
+	if err := os.Rename(dbPath, backupPath); err != nil {
+		return "", fmt.Errorf("failed to quarantine corrupt database (%v): %w", cause, err)
+	}
+	// bbolt also creates a .lock file next to the DB on some platforms; make a
+	// best-effort cleanup so the fresh DB can acquire the lock.
+	_ = os.Remove(dbPath + ".lock")
+	return backupPath, nil
+}
+
 // NewStore creates or opens the database
 func NewStore(dbPath string) (*Store, error) {
 	// Use default path if not specified
@@ -45,12 +105,27 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	// Open database (creates if doesn't exist)
-	db, err := bolt.Open(dbPath, 0600, &bolt.Options{
-		Timeout: 1 * time.Second,
-	})
+	// Open database (creates if doesn't exist). If the on-disk file is
+	// corrupted (e.g. "invalid freelist page" after an ungraceful shutdown),
+	// quarantine it and start over with an empty DB so that the service can
+	// still come up. The corrupt file is preserved as <path>.corrupt-<ts> for
+	// manual recovery with the `bbolt` CLI.
+	db, err := openBolt(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		if isDBCorruptionError(err) {
+			log.Printf("⚠️  Detected corrupt bbolt database at %s: %v", dbPath, err)
+			backupPath, qerr := quarantineCorruptDB(dbPath, err)
+			if qerr != nil {
+				return nil, qerr
+			}
+			log.Printf("🗂️  Corrupt database moved aside to %s. Starting with a fresh database.", backupPath)
+			db, err = openBolt(dbPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open database after quarantine: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to open database: %w", err)
+		}
 	}
 
 	// Initialize buckets
@@ -99,6 +174,34 @@ func (s *Store) Close() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// Snapshot streams a consistent hot-backup of the entire bbolt database
+// to the provided writer. Internally it runs inside a read-only
+// transaction (db.View) and delegates to bbolt's built-in Tx.WriteTo,
+// which produces a byte-identical copy of the on-disk file as it
+// appeared at the moment the transaction began — safe to take while
+// the server is live serving traffic, with no downtime and no risk of
+// a half-written page ending up in the backup.
+//
+// The number of bytes written is returned so the caller can set
+// Content-Length for streamed HTTP responses.
+//
+// The resulting file can be used as a drop-in replacement for
+// data/metrics.db on a new host: stop the target container, swap the
+// file, start it. See scripts/backup.sh and scripts/restore.sh for a
+// turnkey migration workflow.
+func (s *Store) Snapshot(w io.Writer) (int64, error) {
+	if s.db == nil {
+		return 0, fmt.Errorf("database not open")
+	}
+	var written int64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		n, werr := tx.WriteTo(w)
+		written = n
+		return werr
+	})
+	return written, err
 }
 
 // Upsert inserts or updates a system metric
@@ -383,31 +486,50 @@ func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 	return nil
 }
 
-// CleanupOldTCPingResults removes tcping results older than 24 hours
+// CleanupOldTCPingResults removes tcping results older than 24 hours.
+//
+// Keys are formatted as "<unix-seconds>_<client>_<target>" where the
+// timestamp is always 10 digits (Unix seconds fit in 10 characters until
+// year 2286), so bbolt's lexicographic iteration order matches numeric
+// timestamp order. We therefore seek to the cutoff prefix and stop
+// iterating as soon as we encounter a record newer than the cutoff —
+// avoiding a full-bucket scan of potentially hundreds of thousands of
+// entries every hour on busy deployments.
 func (s *Store) CleanupOldTCPingResults() error {
 	cutoffTime := time.Now().Add(-24 * time.Hour)
+	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
 	var keysToDelete [][]byte
 
-	// First pass: collect keys to delete
+	// First pass: collect keys to delete using a cursor with early-exit.
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
 			return fmt.Errorf("tcping bucket not found")
 		}
 
-		return bucket.ForEach(func(k, v []byte) error {
-			var result TCPingResult
-			if err := json.Unmarshal(v, &result); err != nil {
-				// Corrupted entry, mark for deletion
-				keysToDelete = append(keysToDelete, k)
+		c := bucket.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			// Fast path: if the key's numeric prefix is already >= cutoff
+			// prefix, every remaining key is newer too — stop iterating.
+			// Compare only the 11-byte "<ts>_" prefix to avoid interpreting
+			// the client-id / target suffix. Short keys (legacy / corrupt)
+			// fall through to the JSON branch below.
+			if len(k) >= len(cutoffPrefix) && bytes.Compare(k[:len(cutoffPrefix)], cutoffPrefix) >= 0 {
 				return nil
 			}
 
-			if result.Timestamp.Before(cutoffTime) {
-				keysToDelete = append(keysToDelete, k)
+			var result TCPingResult
+			if err := json.Unmarshal(v, &result); err != nil {
+				// Corrupted entry, mark for deletion
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+				continue
 			}
-			return nil
-		})
+
+			if result.Timestamp.Before(cutoffTime) {
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+			}
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -648,8 +770,13 @@ func (s *Store) GetNavbarConfig() (*NavbarConfig, error) {
 			// Fallback to timestamp-based secret if crypto/rand fails
 			config.SharedSecret = fmt.Sprintf("%x", time.Now().UnixNano())[:16]
 		}
-		// Save the generated secret
-		s.SaveNavbarConfig(&config)
+		// Persist the generated secret. Log failures explicitly: silently
+		// swallowing the error used to mask situations where the DB was
+		// read-only or full, which then caused every subsequent read to
+		// regenerate a fresh secret and break already-registered clients.
+		if err := s.SaveNavbarConfig(&config); err != nil {
+			log.Printf("⚠️  Failed to persist generated shared secret: %v", err)
+		}
 	}
 
 	return &config, nil

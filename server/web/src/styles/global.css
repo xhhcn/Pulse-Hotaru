@@ -15,8 +15,15 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* `body.light` / `body.dark` have higher specificity than Tailwind's
+   `bg-[#fafafa]` utility applied on the body element, so the colours
+   declared here are what actually paints the page in each theme. Keep
+   these in sync with the page-level `<body class="bg-[#fafafa] dark:bg-[#151515]">`
+   intent — using pure white here previously silently clobbered the
+   page's #fafafa choice and produced a slightly brighter-than-designed
+   light surface. */
 body.light {
-  background: #ffffff;
+  background: #fafafa;
   color: #151515;
 }
 
@@ -35,15 +42,113 @@ body.dark {
 
 ::-webkit-scrollbar {
   width: 10px;
+  height: 10px;
 }
 
+/* Scrollbar thumb — dark theme (default). Sized for 10px track with
+   transparent border so the thumb visually reads as ~6px — matches the
+   subtle "monitoring dashboard" aesthetic. */
 ::-webkit-scrollbar-thumb {
   background: #374151;
   border-radius: 9999px;
 }
 
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Scrollbar thumb — light theme. A dark-grey thumb on a white page
+   (the previous behavior) stood out too hard against the otherwise
+   airy surface; these greys (neutral-300/400) match the border and
+   secondary-text palette we already use elsewhere in light mode. */
+body.light ::-webkit-scrollbar-thumb,
+html.light ::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+}
+
+body.light ::-webkit-scrollbar-thumb:hover,
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #a3a3a3;
+}
+
+/* Firefox equivalent — thin scrollbar that also adapts to theme.
+   `thin` + transparent track gives the same compact appearance as
+   the WebKit rules above without needing ::-webkit-scrollbar-track. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #374151 transparent;
+}
+
+body.light *,
+html.light * {
+  scrollbar-color: #d4d4d4 transparent;
+}
+
 .group:hover .group-hover\:opacity-100 {
   opacity: 1;
+}
+
+/* ========================================
+   Keyboard focus indicators (:focus-visible)
+   ========================================
+   Many components set `outline-none` on inputs/buttons and rely on a
+   subtle border-color swap for the focus state. That alone is nearly
+   invisible when Tab-navigating with the keyboard and fails WCAG
+   2.4.7 (Focus Visible). The rules below restore a visible focus
+   indicator ONLY for keyboard users (`:focus-visible`, not `:focus`),
+   so mouse clicks stay clean.
+
+   Style choice — strengthen the existing edge, do NOT stack a ring.
+   An earlier iteration used a 2px solid blue halo with 2px outline
+   offset, which visually reads as "a blue box floating around the
+   element" — especially jarring on the filter input whose own border
+   is a neutral grey. The current rule takes the opposite approach:
+
+     * 1px outline (not 2px) — same width as the underlying border.
+     * `outline-offset: 0` — the outline sits directly on the edge of
+       the element, flush against its border, so the composite reads
+       as "the border got a shade darker / slightly thicker" rather
+       than "a separate glowing ring appeared around it".
+     * Neutral translucent colour tuned to the surrounding palette:
+         - Dark mode: rgba(255,255,255,0.35) darkens against the
+           dark-grey #404040/50 border the input already uses,
+           producing a clean, slightly brighter edge.
+         - Light mode: rgba(0,0,0,0.30) against the #d4d4d4/50 border,
+           producing a visibly darker edge without any colour cast.
+     * `border-radius: inherit` — the outline follows rounded corners.
+
+   Elements that declare their own Tailwind `focus:ring-*` opt out
+   below — we don't want an outline stacked on top of a ring.
+
+   IMPORTANT: Do NOT set `border-radius: inherit` here. That would
+   not affect the outline's shape (the outline already follows the
+   element's own `border-radius` automatically in every modern
+   browser); it would instead OVERWRITE the focused element's own
+   border-radius with whatever the parent has — which for our inputs
+   is 0, instantly turning a `rounded-xl` field into a sharp
+   rectangle on focus. The earlier iteration of this rule had that
+   line and it produced the bug the user saw: input remained rounded
+   until focus, then snapped to a square box. */
+:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 0;
+}
+
+body.light :focus-visible,
+html.light :focus-visible {
+  outline-color: rgba(0, 0, 0, 0.30);
+}
+
+/* Elements already declaring their own Tailwind focus ring (via
+   focus:ring-*) should not stack an additional outline on top of it. */
+[class*="focus:ring"]:focus-visible,
+[class*="focus-visible:ring"]:focus-visible,
+[data-no-focus-ring]:focus-visible {
+  outline: none;
 }
 
 /* Hide scrollbar but keep scrolling functionality */
@@ -815,16 +920,25 @@ html.light.glass-enabled .progress-track {
   background: rgba(0, 0, 0, 0.05) !important;
 }
 
-/* --- Tags in detail section glass --- */
-html.glass-enabled.dark .system-details .inline-flex,
-html.dark.glass-enabled .system-details .inline-flex {
+/* --- Tags in detail section glass ---
+   Covers the neutral grey pills (OS, virtualization, free-form tags
+   like "Python" / "traffic:*"). The `:not([data-color-tag])` guard
+   intentionally skips the coloured spr:/spy:/spb: badges — those use
+   an inline `background-image: linear-gradient(...)` that must render
+   at full opacity, otherwise the rainbow/cool/warm palettes collapse
+   into a dull translucent pill that defeats the whole purpose of the
+   coloured-tag feature. CSS cannot express "override background-color
+   but preserve background-image" reliably across vendors, so the
+   cleanest contract is: *don't touch tags that opted into a colour*. */
+html.glass-enabled.dark .system-details .inline-flex:not([data-color-tag]),
+html.dark.glass-enabled .system-details .inline-flex:not([data-color-tag]) {
   background: rgba(255, 255, 255, 0.08) !important;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
 
-html.glass-enabled.light .system-details .inline-flex,
-html.light.glass-enabled .system-details .inline-flex {
+html.glass-enabled.light .system-details .inline-flex:not([data-color-tag]),
+html.light.glass-enabled .system-details .inline-flex:not([data-color-tag]) {
   background: rgba(0, 0, 0, 0.05) !important;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -850,4 +964,89 @@ html.dark.glass-enabled #columns-dropdown label:hover {
 html.glass-enabled.light #columns-dropdown label:hover,
 html.light.glass-enabled #columns-dropdown label:hover {
   background-color: rgba(0, 0, 0, 0.04) !important;
+}
+
+/* ========================================
+   Glassmorphism — Accessibility & Fallbacks
+   Keep this block at the end so it overrides the translucent
+   defaults above. Goals:
+     1) Respect the OS "reduce transparency" a11y preference:
+        strip the blurs and make surfaces fully opaque so text
+        stays legible for users who find translucency
+        disorienting or hard to read.
+     2) Degrade gracefully on browsers without backdrop-filter
+        (old Firefox without the pref, legacy webviews) by
+        bumping the already-translucent panes up to nearly
+        opaque — otherwise the lack of blur leaves foreground
+        text sitting on a near-transparent card and it becomes
+        unreadable against the body gradient.
+   We deliberately do NOT remove the body gradient — it's just
+   a painted background and costs nothing once the filter is
+   off. ======================================== */
+@media (prefers-reduced-transparency: reduce) {
+  html.glass-enabled .glass-nav,
+  html.glass-enabled .glass-card,
+  html.glass-enabled .glass-inner,
+  html.glass-enabled .system-details,
+  html.glass-enabled #columns-dropdown,
+  html.glass-enabled #system-filter-input,
+  html.glass-enabled #columns-btn,
+  html.glass-enabled .draggable-item,
+  html.glass-enabled [data-modal-content],
+  html.glass-enabled [data-tcping-chart-container] > div:first-child,
+  html.glass-enabled [data-tcping-tabs] button,
+  html.glass-enabled .glass-login,
+  html.glass-enabled .system-details .inline-flex:not([data-color-tag]) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  html.glass-enabled.dark .glass-nav,
+  html.glass-enabled.dark .glass-card,
+  html.glass-enabled.dark .glass-inner,
+  html.glass-enabled.dark #columns-dropdown,
+  html.glass-enabled.dark [data-modal-content],
+  html.glass-enabled.dark [data-tcping-chart-container] > div:first-child,
+  html.glass-enabled.dark .glass-login,
+  html.glass-enabled.dark .draggable-item,
+  html.glass-enabled.dark #system-filter-input,
+  html.glass-enabled.dark #columns-btn {
+    background: #1c1c1c !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+  }
+  html.glass-enabled.light .glass-nav,
+  html.glass-enabled.light .glass-card,
+  html.glass-enabled.light .glass-inner,
+  html.glass-enabled.light #columns-dropdown,
+  html.glass-enabled.light [data-modal-content],
+  html.glass-enabled.light [data-tcping-chart-container] > div:first-child,
+  html.glass-enabled.light .glass-login,
+  html.glass-enabled.light .draggable-item,
+  html.glass-enabled.light #system-filter-input,
+  html.glass-enabled.light #columns-btn {
+    background: #ffffff !important;
+    border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html.glass-enabled.dark .glass-nav,
+  html.glass-enabled.dark .glass-card,
+  html.glass-enabled.dark .glass-inner,
+  html.glass-enabled.dark #columns-dropdown,
+  html.glass-enabled.dark [data-modal-content],
+  html.glass-enabled.dark [data-tcping-chart-container] > div:first-child,
+  html.glass-enabled.dark .glass-login,
+  html.glass-enabled.dark .draggable-item {
+    background: rgba(22, 22, 30, 0.95) !important;
+  }
+  html.glass-enabled.light .glass-nav,
+  html.glass-enabled.light .glass-card,
+  html.glass-enabled.light .glass-inner,
+  html.glass-enabled.light #columns-dropdown,
+  html.glass-enabled.light [data-modal-content],
+  html.glass-enabled.light [data-tcping-chart-container] > div:first-child,
+  html.glass-enabled.light .glass-login,
+  html.glass-enabled.light .draggable-item {
+    background: rgba(255, 255, 255, 0.96) !important;
+  }
 }

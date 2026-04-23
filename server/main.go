@@ -1,15 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -23,6 +24,29 @@ import (
 	"syscall"
 	"time"
 )
+
+// secretEqual performs a constant-time comparison of two secret strings.
+//
+// Plain `==` / `!=` on Go strings short-circuits on the first byte mismatch,
+// which leaks timing information an attacker can use to guess a secret
+// byte-by-byte (a classic side-channel attack). `subtle.ConstantTimeCompare`
+// always walks both operands to completion — its runtime depends only on the
+// length of the inputs, never on their content. We use it for every check
+// that compares a user-supplied credential against a server-side secret:
+// per-system `Secret`, privacy `ShareToken`, and in-memory `authTokens`
+// lookups where the key is constructed from attacker-controlled input.
+//
+// The length-mismatch early return is itself safe because the length of a
+// real secret is public (it's either the 16-char base64 from generateSecret,
+// the 44-char base64 from GenerateAuthToken, or an admin-chosen string whose
+// length is not itself a secret). Returning early on length mismatch avoids
+// a fixed-size buffer allocation for obviously bogus inputs.
+func secretEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
 
 //go:embed all:web/dist
 var webFiles embed.FS
@@ -188,12 +212,16 @@ func clearAllTCPingCache() {
 }
 
 // Cleanup expired cache entries periodically
-func startTCPingCacheCleanup() {
+func startTCPingCacheCleanup(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		tcpingCacheMu.Lock()
 		now := time.Now()
 		for clientID, entry := range tcpingCache {
@@ -232,73 +260,157 @@ type metricPayload struct {
 	Secret             string   `json:"secret,omitempty"` // Secret for client authentication (sent by client during registration)
 }
 
-// SSE Broker for broadcasting updates
+// SSE Broker for broadcasting updates.
+//
+// The broker supports two subscriber "views" so the server can push a single
+// stream of state-carrying events that is correctly masked per-subscriber:
+//
+//   - SSEViewPublic: anonymous / share-token users. IPv4, IPv6 and Secret are
+//     always stripped before the payload reaches this subscriber.
+//   - SSEViewAdmin:  authenticated admin users. Full payload is delivered.
+//
+// The view is locked in at Subscribe() time (i.e. at SSE connection time) and
+// is the same level that the request was authorised at. This matches the
+// existing semantics of GET /api/metrics, where the auth decision is made
+// once per request.
+//
+// For state-carrying events (such as "metric_updated" which now embeds the
+// full systems list), the caller uses BroadcastByView to deliver a distinct
+// pre-marshaled payload per view. For pure signal events (like ping, or
+// best-effort notifications), Broadcast delivers the same payload to every
+// subscriber regardless of view.
+type SSEView int
+
+const (
+	SSEViewPublic SSEView = iota
+	SSEViewAdmin
+)
+
+// Per-subscriber bounded channel.
+//
+// Because every state-carrying broadcast we send contains the complete,
+// authoritative system list, a subscriber that is briefly slow to drain its
+// queue can discard older events without losing information — the next event
+// fully supersedes everything queued before it. A small buffer (2) is
+// therefore sufficient and keeps worst-case memory use bounded even when
+// payloads grow: ~N subscribers × 2 events × payload size, rather than
+// 30 × payload size per subscriber.
+const sseSubscriberBuffer = 2
+
+type sseSubscriber struct {
+	ch   chan string
+	view SSEView
+}
+
 type SSEBroker struct {
-	clients map[chan string]bool
+	clients map[*sseSubscriber]struct{}
 	mu      sync.RWMutex
 }
 
 func NewSSEBroker() *SSEBroker {
 	return &SSEBroker{
-		clients: make(map[chan string]bool),
+		clients: make(map[*sseSubscriber]struct{}),
 	}
 }
 
-func (b *SSEBroker) Subscribe() chan string {
+// Subscribe registers a new subscriber with the given view level. The returned
+// pointer must be passed to Unsubscribe when the SSE handler exits.
+func (b *SSEBroker) Subscribe(view SSEView) *sseSubscriber {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	ch := make(chan string, 30) // Increased from 10 to 30: allows 30 updates buffering (10 seconds worth at 3s interval)
-	b.clients[ch] = true
-	return ch
+	sub := &sseSubscriber{
+		ch:   make(chan string, sseSubscriberBuffer),
+		view: view,
+	}
+	b.clients[sub] = struct{}{}
+	return sub
 }
 
-func (b *SSEBroker) Unsubscribe(ch chan string) {
+func (b *SSEBroker) Unsubscribe(sub *sseSubscriber) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	delete(b.clients, ch)
-	close(ch)
+	if _, ok := b.clients[sub]; !ok {
+		return
+	}
+	delete(b.clients, sub)
+	close(sub.ch)
 }
 
+// Broadcast delivers the same payload to every subscriber, regardless of
+// view. Intended for signal-only events (e.g. "metric_deleted" notifications,
+// "order_updated" hints) that carry no privileged fields.
 func (b *SSEBroker) Broadcast(event string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	for ch := range b.clients {
-		select {
-		case ch <- event:
-		default:
-			// Client buffer full, skip
-		}
+	for sub := range b.clients {
+		sendWithDropOldest(sub.ch, event)
 	}
 }
 
-// broadcastJSON safely broadcasts a JSON event by marshaling the data structure
-// This prevents JSON injection vulnerabilities from user-controlled input
-func broadcastJSON(broker *SSEBroker, eventType string, data map[string]interface{}) {
-	if broker == nil {
+// BroadcastByView delivers a different pre-marshaled payload to each view
+// level. The caller is responsible for ensuring each payload is correctly
+// masked for its audience.
+func (b *SSEBroker) BroadcastByView(byView map[SSEView]string) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for sub := range b.clients {
+		payload, ok := byView[sub.view]
+		if !ok {
+			continue
+		}
+		sendWithDropOldest(sub.ch, payload)
+	}
+}
+
+// sendWithDropOldest delivers event into ch without ever blocking the caller.
+//
+// Semantics:
+//   * If the buffer has room, the event is enqueued and we return.
+//   * If the buffer is full, the oldest queued event is discarded to make
+//     room for the new one. Because every state-carrying event carries the
+//     full latest state, losing an older queued event is semantically
+//     equivalent to never having sent it — the newer event fully supersedes
+//     it.
+//   * In the worst-case (full buffer + a concurrent sender raced us to both
+//     slots) we fall through and drop the new event rather than spin.  The
+//     next broadcast (within 3 s) re-syncs the subscriber from fresh state.
+//
+// The implementation is intentionally bounded (at most three non-blocking
+// select operations, no unbounded loop) so that a pathological interleaving
+// with other senders or with Unsubscribe's close(ch) can never live-lock or
+// misbehave. A send onto a closed channel would panic; it is only safe
+// because Unsubscribe holds the broker's write lock which excludes every
+// BroadcastByView/Broadcast call holding the read lock. By the time the
+// channel is closed, no sendWithDropOldest for this subscriber is running
+// and the subscriber has already been removed from the clients map, so no
+// new sends start.
+func sendWithDropOldest(ch chan string, event string) {
+	// Fast path: room in the buffer right now.
+	select {
+	case ch <- event:
 		return
+	default:
 	}
 
-	// Build event data with type
-	eventData := map[string]interface{}{
-		"type": eventType,
-	}
-	// Merge additional data
-	for k, v := range data {
-		eventData[k] = v
-	}
-
-	// Marshal to JSON safely
-	jsonData, err := json.Marshal(eventData)
-	if err != nil {
-		// If marshaling fails, log error but don't crash
-		log.Printf("⚠️  Failed to marshal broadcast event: %v", err)
-		return
+	// Buffer was full — try to discard the oldest queued event.
+	select {
+	case <-ch:
+	default:
+		// Someone else (most likely the SSE reader goroutine) drained a slot
+		// in between; fall through to one last send attempt.
 	}
 
-	broker.Broadcast(string(jsonData))
+	// Final send attempt. If this fails we drop the event — a concurrent
+	// sender beat us to the slot we just freed, and the subscriber will
+	// converge on the next broadcast anyway.
+	select {
+	case ch <- event:
+	default:
+	}
 }
 
 // Client registry for tracking agent clients
@@ -322,11 +434,18 @@ type ClientInfo struct {
 	LastPushAt time.Time `json:"-"` // time of last successful push (in-memory only)
 }
 
-// ClientTCPingResult is a single TCPing measurement sent by the client in push mode
+// ClientTCPingResult is a single TCPing measurement sent by the client in push mode.
+//
+// MeasuredAt carries the exact moment the dial completed on the client (UTC). When
+// present (clients ≥ 1.3.6) the server uses it verbatim as the record timestamp so
+// the saved history reflects the real measurement time, not "whenever the next 3 s
+// push cycle happened to arrive". Older clients that do not send this field leave it
+// at the zero value and the server falls back to its own clock.
 type ClientTCPingResult struct {
-	Target  string  `json:"target"`            // e.g. "8.8.8.8:53"
-	Latency float64 `json:"latency"`           // milliseconds; 0 if failed
-	Success bool    `json:"success"`
+	Target     string    `json:"target"`  // e.g. "8.8.8.8:53"
+	Latency    float64   `json:"latency"` // milliseconds; 0 if failed
+	Success    bool      `json:"success"`
+	MeasuredAt time.Time `json:"measured_at,omitempty"`
 }
 
 // ClientPushResponse is returned to push-mode clients with updated TCPing config
@@ -537,10 +656,34 @@ func getServerIP() string {
 	return udpAddr.IP.String()
 }
 
+// Get returns a DEFENSIVE VALUE COPY of the ClientInfo registered under id
+// (wrapped in a pointer for API compatibility with nil-checking callers),
+// or nil when the id is unknown.
+//
+// The registry map stores *ClientInfo, and writers (UpdateWorkingURL,
+// UpdateSecret, UpdatePushState) mutate fields in place while holding the
+// write lock. If Get were to return the raw map pointer, the caller would
+// read fields such as WorkingURL / Secret / URL without any lock after
+// RUnlock returned, racing with concurrent writers. A string is two words
+// on 64-bit (pointer + length), so a torn read could observe a pointer
+// from one value and a length from another — either garbage or a segfault.
+//
+// Returning a copy eliminates the race for callers that do:
+//
+//	c := registry.Get(id)
+//	if c == nil { … }
+//	_ = c.WorkingURL   // now reads from an owned copy, race-free
+//
+// GetAll already follows the same "value copy on release" pattern.
 func (r *ClientRegistry) Get(id string) *ClientInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.clients[id]
+	c, ok := r.clients[id]
+	if !ok || c == nil {
+		return nil
+	}
+	snap := *c
+	return &snap
 }
 
 // UpdateWorkingURL updates the WorkingURL for a client atomically
@@ -641,7 +784,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize database: %v", err)
 	}
-	defer store.Close()
 
 	// Initialize SSE broker
 	broker := NewSSEBroker()
@@ -652,14 +794,28 @@ func main() {
 	// Initialize IP country cache
 	ipCache := NewIPCountryCache()
 
-	// Setup graceful shutdown
+	// Root context for the whole process; cancelled on SIGTERM/SIGINT so that
+	// long-lived goroutines (SSE handlers, polling loops, etc.) can exit
+	// cleanly before we close the database. This ordering is critical for
+	// bbolt durability: if we call store.Close() while a write transaction is
+	// still in flight, the on-disk file can be left in a state that tickles
+	// the old "invalid freelist page" class of corruption bugs.
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+
+	// Signal handling: translate the first SIGTERM/SIGINT into a context
+	// cancellation, let main() perform the ordered shutdown below. A second
+	// signal forces an immediate exit so operators can still kill a stuck
+	// process.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		log.Println("\n🛑 Shutting down gracefully...")
-		store.Close()
-		os.Exit(0)
+		log.Println("\n🛑 Shutdown signal received, draining...")
+		cancelRoot()
+		<-sigChan
+		log.Println("🛑 Second signal received, exiting immediately")
+		os.Exit(1)
 	}()
 
 	// Setup HTTP routes
@@ -726,7 +882,7 @@ func main() {
 		if r.Method == http.MethodGet {
 			handleGetTCPingConfig(store, w, r)
 		} else if r.Method == http.MethodPost {
-			handleSetTCPingConfig(store, w, r)
+			handleSetTCPingConfig(store, broker, clientRegistry, w, r)
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -827,21 +983,30 @@ func main() {
 		}
 	})
 
+	// Admin-only hot backup. Streams a consistent bbolt snapshot of
+	// the entire metrics.db file to the client, no downtime required.
+	// See handleAdminBackup above for the migration recipe.
+	mux.HandleFunc("/api/admin/backup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			handleAdminBackup(store, w, r)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	addr := ":" + portFromEnv()
-	// Start polling clients every 3 seconds
-	go startClientPolling(store, broker, clientRegistry, ipCache)
-
-	// Start tcping polling with configurable interval
-	go startTCPingPolling(clientRegistry, store)
-
-	// Start cleanup old tcping data every hour
-	go startTCPingCleanup(store)
-
-	// Start IP cache cleanup every hour
-	go startIPCacheCleanup(ipCache)
-
-	// Start TCPing query cache cleanup every 5 minutes
-	go startTCPingCacheCleanup()
+	// All background loops observe rootCtx and exit promptly when the process
+	// is asked to shut down. This matters because the shutdown path is:
+	//     cancelRoot() -> srv.Shutdown() -> store.Close()
+	// If these loops keep running past srv.Shutdown, they will race with
+	// store.Close by issuing db.Update/db.View calls on a closing DB, which
+	// can cause half-written transactions (one of the failure modes that
+	// contributed to the previous bbolt "invalid freelist page" corruption).
+	go startClientPolling(rootCtx, store, broker, clientRegistry, ipCache)
+	go startTCPingPolling(rootCtx, clientRegistry, store)
+	go startTCPingCleanup(rootCtx, store)
+	go startIPCacheCleanup(rootCtx, ipCache)
+	go startTCPingCacheCleanup(rootCtx)
 
 	// Check if running in standalone mode or Docker mode
 	standalone := hasEmbeddedFiles()
@@ -857,6 +1022,40 @@ func main() {
 		distFS, err := fs.Sub(webFiles, "web/dist")
 		if err != nil {
 			log.Fatalf("❌ Failed to access embedded files: %v", err)
+		}
+
+		// setStaticCacheHeaders mirrors the two-tier caching strategy the
+		// nginx config uses in Docker mode (see docker/nginx.conf). Without
+		// this, the standalone binary would serve /admin/index.html with
+		// whatever Go's http.FileServer produces by default — Last-Modified
+		// only, no Cache-Control — and browsers would happily keep the
+		// stale HTML in their disk cache across deployments, so newly
+		// added UI elements (e.g. the Download Backup button) would
+		// silently fail to appear after an upgrade. The two rules are:
+		//
+		//   1. HTML entrypoints (*.html and the directory-less SPA
+		//      routes like /admin, /login) → Cache-Control: no-cache,
+		//      must-revalidate. The ETag we still get from http.FileServer
+		//      means a revalidation costs a cheap 304 when the file really
+		//      hasn't changed, while guaranteeing we notice when it has.
+		//
+		//   2. Content-addressed bundle assets under /_astro/ (Astro
+		//      fingerprints every filename with an 8-char content hash, so
+		//      a changed asset is always served under a new URL) →
+		//      Cache-Control: public, max-age=31536000, immutable.
+		//      "immutable" tells the browser not even to revalidate.
+		//
+		// Every other static asset (favicon.svg, arbitrary files the user
+		// dropped into dist/) gets the http.FileServer default, which is
+		// the safe middle ground of a heuristic cache + Last-Modified
+		// revalidation.
+		setStaticCacheHeaders := func(w http.ResponseWriter, urlPath string) {
+			switch {
+			case strings.HasSuffix(urlPath, ".html") || urlPath == "/" || filepath.Ext(urlPath) == "":
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			case strings.HasPrefix(urlPath, "/_astro/"):
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 		}
 
 		// Create a handler that combines API routes and static files
@@ -875,8 +1074,8 @@ func main() {
 
 			// Try to open the file from embedded FS
 			if f, err := distFS.Open(path); err == nil {
-				// File exists, serve it
 				f.Close()
+				setStaticCacheHeaders(w, r.URL.Path)
 				http.FileServer(http.FS(distFS)).ServeHTTP(w, r)
 				return
 			}
@@ -889,7 +1088,6 @@ func main() {
 				indexPath := cleanPath + "/index.html"
 
 				if f, err := distFS.Open(indexPath); err == nil {
-					// Directory index.html exists, read and serve it
 					defer f.Close()
 					content, err := io.ReadAll(f)
 					if err != nil {
@@ -897,6 +1095,7 @@ func main() {
 						return
 					}
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					setStaticCacheHeaders(w, r.URL.Path)
 					w.Write(content)
 					return
 				}
@@ -916,6 +1115,7 @@ func main() {
 				}
 
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				setStaticCacheHeaders(w, r.URL.Path)
 				w.Write(content)
 				return
 			}
@@ -945,10 +1145,52 @@ func main() {
 		// ReadTimeout and WriteTimeout are intentionally left at 0 (unlimited):
 		// SSE connections (/api/events) are long-lived writes that would be killed
 		// by a non-zero WriteTimeout.
+
+		// BaseContext wires the process-wide rootCtx into every incoming
+		// request so long-lived handlers (notably /api/events SSE) observe
+		// rootCtx cancellation and return promptly during shutdown.
+		BaseContext: func(net.Listener) context.Context { return rootCtx },
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("❌ Server stopped: %v", err)
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErrCh <- err
+			return
+		}
+		serverErrCh <- nil
+	}()
+
+	// Wait for either the root context to be cancelled (SIGTERM/SIGINT) or
+	// the HTTP server to fail on its own.
+	select {
+	case <-rootCtx.Done():
+		log.Println("🧹 Shutting down HTTP server...")
+	case err := <-serverErrCh:
+		if err != nil {
+			log.Printf("❌ HTTP server error: %v", err)
+		}
+		cancelRoot()
 	}
+
+	// Give in-flight requests up to 25s to finish. We deliberately stay below
+	// the 30s supervisord stopwaitsecs so the shutdown completes before the
+	// supervisor escalates to SIGKILL.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("⚠️  HTTP shutdown returned: %v", err)
+	}
+
+	// Now that no handler can be issuing new db.Update calls, it is safe to
+	// close the bbolt DB. Closing bbolt flushes in-flight writes and releases
+	// the file lock.
+	if err := store.Close(); err != nil {
+		log.Printf("⚠️  store close returned: %v", err)
+	} else {
+		log.Println("✅ Database closed cleanly")
+	}
+	log.Println("👋 Shutdown complete")
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -956,35 +1198,59 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.Request) {
+	// Determine the subscriber's admin status first. Anyone with a valid admin
+	// session (cookie / Authorization header / admin_token query param) is an
+	// admin subscriber and will receive payloads that still contain IPv4, IPv6
+	// and Secret. Everyone else is a public subscriber and receives payloads
+	// with those fields stripped server-side before they ever hit the wire.
+	//
+	// Admin status is locked in at subscription time. This matches the
+	// existing semantics of GET /api/metrics (where the auth decision is made
+	// once per request) and means that a session that expires mid-stream
+	// cannot retroactively be used to escalate privilege — the browser will
+	// ultimately have to reconnect, and the new connection will be
+	// re-authorised from scratch.
+	isAdmin := isAuthenticated(r)
+	if !isAdmin {
+		// EventSource cannot send an Authorization header, so admin sessions
+		// identify themselves to SSE via the admin_token query parameter.
+		// We validate it exactly like the Bearer-token path in isAuthenticated.
+		//
+		// If the token is valid the subscriber is upgraded to the admin view
+		// (IPv4 / IPv6 / Secret included). If the token is missing or invalid
+		// we silently fall through to the public view: the admin dashboard
+		// page guards access via /api/auth/verify at load time, so the only
+		// way to reach this code with an invalid admin_token is either
+		// (a) a public page (index.astro) whose user happens to have a stale
+		// token in localStorage — they should still be able to watch the
+		// public stream, not receive a 401, and (b) an admin whose session
+		// expired mid-session — any mutation they attempt will fail at the
+		// mutation endpoint and redirect them to /login via the page's
+		// existing wrapped-fetch logic.
+		if adminToken := r.URL.Query().Get("admin_token"); adminToken != "" {
+			authTokensMu.Lock()
+			expiry, exists := authTokens[adminToken]
+			authTokensMu.Unlock()
+			if exists && time.Now().Before(expiry) {
+				isAdmin = true
+			}
+		}
+	}
+
 	// Check privacy mode - if enabled, require authentication or valid share token
 	privacyConfig, err := store.GetPrivacyConfig()
 	if err == nil && privacyConfig.Enabled {
-		// Privacy mode is enabled, check authentication
-		authenticated := isAuthenticated(r)
+		authorised := isAdmin
 
-		// If not authenticated, check for share token or admin token in query
-		if !authenticated {
+		if !authorised {
 			shareToken := r.URL.Query().Get("token")
-			adminToken := r.URL.Query().Get("admin_token")
-
 			if shareToken != "" {
-				// Verify share token
-				if shareToken == privacyConfig.ShareToken && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
-					// Valid share token, allow access
-					authenticated = true
-				}
-			} else if adminToken != "" {
-				// Check admin token
-				authTokensMu.Lock()
-				expiry, exists := authTokens[adminToken]
-				authTokensMu.Unlock()
-				if exists && time.Now().Before(expiry) {
-					authenticated = true
+				if privacyConfig.ShareToken != "" && secretEqual(shareToken, privacyConfig.ShareToken) && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
+					// Share token grants access but NOT admin privileges.
+					authorised = true
 				}
 			}
-
-			if !authenticated {
-				// No valid authentication or share token, deny access
+			if !authorised {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -1003,9 +1269,14 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 	// CDN-specific headers to prevent caching and buffering
 	w.Header().Set("X-Cache-Control", "no-cache")
 
-	// Subscribe to broker
-	ch := broker.Subscribe()
-	defer broker.Unsubscribe(ch)
+	// Subscribe to broker with the correct view so every broadcast is masked
+	// per our auth decision above.
+	view := SSEViewPublic
+	if isAdmin {
+		view = SSEViewAdmin
+	}
+	sub := broker.Subscribe(view)
+	defer broker.Unsubscribe(sub)
 
 	// Get flusher for real-time streaming
 	flusher, ok := w.(http.Flusher)
@@ -1014,23 +1285,219 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Tell the browser to auto-reconnect in 3 s if the stream is ever lost.
+	// This overrides the default (3–5 s, browser dependent) with a deterministic
+	// value so all browsers behave the same. Must be the first SSE line.
+	fmt.Fprint(w, "retry: 3000\n\n")
+
 	// Send initial connection message
 	fmt.Fprintf(w, "event: connected\ndata: {\"message\":\"Connected to updates stream\"}\n\n")
 	flusher.Flush()
+
+	// Immediately push a full state snapshot so the frontend can render on
+	// connect without ever calling GET /api/metrics. Between this initial
+	// push and the 3-second broadcast cadence, an EventSource subscriber has
+	// a complete, self-contained feed of authoritative state.
+	//
+	// Ordering note: between Subscribe() above and the fresh snapshot we are
+	// about to build, a broadcast tick may have queued an older state event
+	// in sub.ch. That event is by definition at most ~3 s stale relative to
+	// our fresh snapshot, and delivering it AFTER the initial snapshot would
+	// briefly flash older data over newer data on the client. We therefore
+	// drain any such events non-blockingly before pushing the initial
+	// snapshot. Genuinely new broadcasts arriving after we enter the select
+	// loop below are always fresher than the initial snapshot and get
+	// delivered in order.
+	if snapshot, err := buildMetricsSnapshot(store, globalClientRegistry, isAdmin); err == nil {
+		payload, merr := json.Marshal(map[string]interface{}{
+			"type":    "metric_updated",
+			"systems": snapshot,
+			"count":   len(snapshot),
+		})
+		if merr == nil {
+		drain:
+			for {
+				select {
+				case <-sub.ch:
+					// Discard: no fresher than our snapshot.
+				default:
+					break drain
+				}
+			}
+			fmt.Fprintf(w, "event: update\ndata: %s\n\n", string(payload))
+			flusher.Flush()
+		}
+	}
+
+	// Independent SSE keepalive.
+	// The 3-second startClientPolling broadcast already keeps the connection
+	// warm under normal conditions, but if that loop is ever briefly delayed
+	// (slow DB, long GC pause, etc.) the SSE stream can sit idle long enough
+	// for an upstream proxy (nginx default 60 s, some CDNs 30 s) to close the
+	// TCP connection. An explicit 15 s SSE comment-line ping (lines starting
+	// with ":" are ignored by the EventSource API but count as traffic) makes
+	// the stream resilient to proxy idle timeouts independent of the polling
+	// loop and adds only ~4 bytes / 15 s / client of overhead.
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
 
 	// Listen for client disconnect and broker messages
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
-			// Client disconnected
+			// Client disconnected (or server-wide shutdown via BaseContext)
 			return
-		case msg := <-ch:
-			// Send update to client
+		case msg, ok := <-sub.ch:
+			if !ok {
+				// Channel closed by Unsubscribe — stream is being torn down.
+				return
+			}
 			fmt.Fprintf(w, "event: update\ndata: %s\n\n", msg)
+			flusher.Flush()
+		case <-keepalive.C:
+			// Comment-line heartbeat; ignored by EventSource but keeps the
+			// proxy/CDN connection alive.
+			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		}
 	}
+}
+
+// buildMetricsSnapshot assembles the same enriched metrics list that
+// GET /api/metrics returns. It is used both by the HTTP handler and by the
+// SSE broadcaster so that the two surfaces can never drift apart.
+//
+// Parameters:
+//   - store        : persistent storage
+//   - registry     : live in-memory client registry for push-mode freshness
+//   - authenticated: when false, IPv4 / IPv6 / Secret fields are cleared on
+//     every returned row. The caller is responsible for deciding the auth
+//     level up front (privacy mode, share token, admin session, etc.).
+//
+// Online/offline determination strategy (preserved from the original handler):
+//
+//	Push-mode clients   → use registry LastPushAt (updated the instant a push
+//	  arrives, before any DB write, so zero lag). Threshold = 10 s:
+//	  push interval (3 s) × 3 + 1 s buffer. Handles the worst-case where one
+//	  push times out (8 s) and the next succeeds immediately afterwards.
+//
+//	Pull-mode clients   → use DB UpdatedAt (set by pollClient on each success).
+//	  Threshold = 5 s: poll interval (3 s) + 2 s network buffer.
+//
+//	Not in registry     → server may have just restarted; fall back to DB
+//	  UpdatedAt with a generous 12 s threshold so stale data is not shown as
+//	  offline immediately while clients re-register.
+//
+//	Zero UpdatedAt      → newly added by admin, never received data → offline.
+func buildMetricsSnapshot(store *Store, registry *ClientRegistry, authenticated bool) ([]SystemMetric, error) {
+	metrics, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a snapshot of the client registry for fast per-metric lookups.
+	// We do this once (one read-lock) rather than per-metric to minimise lock
+	// contention when there are many systems.
+	registryMap := make(map[string]ClientInfo)
+	if registry != nil {
+		for _, c := range registry.GetAll() {
+			registryMap[c.ID] = c
+		}
+	}
+
+	now := time.Now().UTC()
+
+	for i := range metrics {
+		var shouldBeOffline bool
+		if regClient, inReg := registryMap[metrics[i].ID]; inReg {
+			if regClient.PushMode {
+				shouldBeOffline = regClient.LastPushAt.IsZero() ||
+					time.Since(regClient.LastPushAt) > 10*time.Second
+			} else {
+				shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
+					now.Sub(metrics[i].UpdatedAt) > 5*time.Second
+			}
+		} else {
+			shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
+				now.Sub(metrics[i].UpdatedAt) > 12*time.Second
+		}
+		metrics[i].Alert = shouldBeOffline
+
+		// SECURITY: Mask privileged fields for unauthenticated callers.
+		if !authenticated {
+			metrics[i].IPv4 = ""
+			metrics[i].IPv6 = ""
+			metrics[i].Secret = ""
+		}
+	}
+
+	return metrics, nil
+}
+
+// broadcastMetricsSnapshot fans out the authoritative latest state of the
+// system list to every SSE subscriber. Two distinct payloads are prepared:
+//
+//   - A "public" payload with IPv4 / IPv6 / Secret stripped, delivered to
+//     anonymous and share-token subscribers.
+//   - An "admin" payload with everything intact, delivered to authenticated
+//     admin subscribers.
+//
+// Because each payload carries the complete state, any subscriber whose
+// buffer drops an older event still converges to the correct view on the
+// next broadcast — we never rely on the frontend reconstructing state from a
+// stream of diffs. This keeps the push path idempotent and self-healing.
+func broadcastMetricsSnapshot(store *Store, registry *ClientRegistry, broker *SSEBroker) {
+	if broker == nil || store == nil {
+		return
+	}
+
+	// Build the authoritative (admin-view) snapshot exactly once. The
+	// public-view payload is derived from it by shallow-cloning the slice and
+	// masking IPv4 / IPv6 / Secret on each entry — this avoids a second
+	// store.List (full db.View + JSON unmarshal + sort) and a second
+	// registry.GetAll that used to run every 3 s. Shallow copy is safe
+	// because:
+	//   * IPv4 / IPv6 / Secret are plain strings (value copy)
+	//   * TCPingData (map) and Tags (slice) are NOT mutated here; they are
+	//     read-only for the marshaller, and we never touch them.
+	adminMetrics, err := buildMetricsSnapshot(store, registry, true)
+	if err != nil {
+		log.Printf("⚠️  broadcastMetricsSnapshot: snapshot failed: %v", err)
+		return
+	}
+
+	publicMetrics := make([]SystemMetric, len(adminMetrics))
+	copy(publicMetrics, adminMetrics)
+	for i := range publicMetrics {
+		publicMetrics[i].IPv4 = ""
+		publicMetrics[i].IPv6 = ""
+		publicMetrics[i].Secret = ""
+	}
+
+	publicJSON, err := json.Marshal(map[string]interface{}{
+		"type":    "metric_updated",
+		"systems": publicMetrics,
+		"count":   len(publicMetrics),
+	})
+	if err != nil {
+		log.Printf("⚠️  broadcastMetricsSnapshot: public marshal failed: %v", err)
+		return
+	}
+	adminJSON, err := json.Marshal(map[string]interface{}{
+		"type":    "metric_updated",
+		"systems": adminMetrics,
+		"count":   len(adminMetrics),
+	})
+	if err != nil {
+		log.Printf("⚠️  broadcastMetricsSnapshot: admin marshal failed: %v", err)
+		return
+	}
+
+	broker.BroadcastByView(map[SSEView]string{
+		SSEViewPublic: string(publicJSON),
+		SSEViewAdmin:  string(adminJSON),
+	})
 }
 
 func handleListMetrics(store *Store, w http.ResponseWriter, r *http.Request) {
@@ -1053,12 +1520,11 @@ func handleListMetrics(store *Store, w http.ResponseWriter, r *http.Request) {
 			}
 
 			if !authenticated && shareToken != "" {
-				// Verify share token
-				if shareToken == privacyConfig.ShareToken && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
-					// Valid share token, allow access
+				// Verify share token (constant-time to avoid leaking the token
+				// via byte-by-byte timing side channels).
+				if privacyConfig.ShareToken != "" && secretEqual(shareToken, privacyConfig.ShareToken) && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
 					authenticated = true
 				} else {
-					// Invalid or expired share token, deny access
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
@@ -1070,75 +1536,10 @@ func handleListMetrics(store *Store, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	metrics, err := store.List()
+	metrics, err := buildMetricsSnapshot(store, globalClientRegistry, isAuthenticated(r))
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
-	}
-
-	// Build a snapshot of the client registry for fast per-metric lookups.
-	// We do this once (one read-lock) rather than per-metric to minimise lock
-	// contention when there are many systems.
-	registryMap := make(map[string]ClientInfo)
-	if globalClientRegistry != nil {
-		for _, c := range globalClientRegistry.GetAll() {
-			registryMap[c.ID] = c
-		}
-	}
-
-	// Online/offline determination strategy:
-	//
-	//  Push-mode clients   → use registry LastPushAt (updated the instant a push
-	//    arrives, before any DB write, so zero lag).  Threshold = 10 s:
-	//    push interval (3 s) × 3 + 1 s buffer.  Handles the worst-case where one
-	//    push times out (8 s) and the next succeeds immediately afterwards.
-	//
-	//  Pull-mode clients   → use DB UpdatedAt (set by pollClient on each success).
-	//    Threshold = 5 s: poll interval (3 s) + 2 s network buffer.
-	//
-	//  Not in registry     → server may have just restarted; fall back to DB
-	//    UpdatedAt with a generous 12 s threshold so stale data is not shown as
-	//    offline immediately while clients re-register.
-	//
-	//  Zero UpdatedAt      → newly added by admin, never received data → offline.
-	now := time.Now().UTC()
-	authenticated := isAuthenticated(r)
-
-	for i := range metrics {
-		var shouldBeOffline bool
-		if regClient, inReg := registryMap[metrics[i].ID]; inReg {
-			if regClient.PushMode {
-				// Real-time: LastPushAt is updated before any DB write.
-				shouldBeOffline = regClient.LastPushAt.IsZero() ||
-					time.Since(regClient.LastPushAt) > 10*time.Second
-			} else {
-				// Pull-mode: DB UpdatedAt is refreshed on every successful poll.
-				shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
-					now.Sub(metrics[i].UpdatedAt) > 5*time.Second
-			}
-		} else {
-			// Not in registry (server just restarted, clients reconnecting).
-			shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
-				now.Sub(metrics[i].UpdatedAt) > 12*time.Second
-		}
-		if shouldBeOffline {
-			metrics[i].Alert = true
-		} else {
-			metrics[i].Alert = false
-		}
-
-		// Hide IP addresses if not authenticated (security)
-		if !authenticated {
-			metrics[i].IPv4 = ""
-			metrics[i].IPv6 = ""
-		}
-
-		// CRITICAL SECURITY: Never expose secret to unauthenticated users
-		// For authenticated admin users, return secret so they can generate install commands
-		if !authenticated {
-			metrics[i].Secret = ""
-		}
-		// Authenticated admin users can see secret for generating install commands
 	}
 
 	writeJSON(w, http.StatusOK, metrics)
@@ -1146,6 +1547,14 @@ func handleListMetrics(store *Store, w http.ResponseWriter, r *http.Request) {
 
 func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// Cap body at 1 MB: mirrors /api/clients/push and is far larger than any
+	// realistic metricPayload (even with long OS / CPU model strings and a
+	// generous set of tags a real payload stays well under 16 KB). Without
+	// this cap a compromised-secret client or a misconfigured admin browser
+	// could stream an unbounded body and force the server to buffer it during
+	// json.Decode, driving RSS growth that we've otherwise worked hard to
+	// keep bounded.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var payload metricPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
@@ -1214,11 +1623,14 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 			if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
 				providedSecret = strings.TrimPrefix(authHeader, "Bearer ")
 			} else {
-				// Fallback: check query parameter
+				// Fallback: check query parameter.
+				// NOTE: Discouraged because query strings may end up in
+				// access logs / reverse-proxy logs / referer headers; we
+				// accept it for backward compat with older clients only.
 				providedSecret = r.URL.Query().Get("secret")
 			}
 
-			if providedSecret != existing.Secret {
+			if !secretEqual(providedSecret, existing.Secret) {
 				http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 				return
 			}
@@ -1337,14 +1749,15 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		return
 	}
 
-	// Only broadcast immediately if this is from admin page (manual add/edit)
-	// Client data updates will be broadcast by the polling loop every 3 seconds
-	// This prevents duplicate broadcasts when client sends data and polling happens simultaneously
+	// Only broadcast immediately if this is from admin page (manual add/edit).
+	// Client data updates are already covered by the 3 s polling-loop
+	// broadcast; emitting a second broadcast here would cause duplicate
+	// work on every single client tick.
+	//
+	// For admin mutations we push the full authoritative snapshot so every
+	// connected browser re-renders immediately — no GET round-trip required.
 	if broker != nil && !isFromClient {
-		// SECURITY: Use JSON marshaling to prevent injection from user-controlled ID
-		broadcastJSON(broker, "metric_updated", map[string]interface{}{
-			"id": metric.ID,
-		})
+		broadcastMetricsSnapshot(store, globalClientRegistry, broker)
 	}
 
 	// CRITICAL SECURITY: Never expose secret in API responses to unauthenticated users
@@ -1394,12 +1807,14 @@ func handleDeleteMetric(store *Store, broker *SSEBroker, registry *ClientRegistr
 	// Remove client from registry to stop polling
 	registry.Remove(id)
 
-	// Broadcast deletion to all connected clients
+	// Push a single authoritative snapshot so every connected browser drops
+	// the deleted row without needing to re-fetch. We deliberately do NOT
+	// emit a separate "metric_deleted" signal here: that would make clients
+	// process the same change twice (once via the signal → GET /api/metrics,
+	// once via the snapshot), which is both wasted work and a race risk.
+	// The snapshot alone is the single source of truth.
 	if broker != nil {
-		// SECURITY: Use JSON marshaling to prevent injection from user-controlled ID
-		broadcastJSON(broker, "metric_deleted", map[string]interface{}{
-			"id": id,
-		})
+		broadcastMetricsSnapshot(store, globalClientRegistry, broker)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted", "id": id})
@@ -1451,7 +1866,7 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 			http.Error(w, "secret is required for authentication", http.StatusUnauthorized)
 			return
 		}
-		if payload.Secret != existing.Secret {
+		if !secretEqual(payload.Secret, existing.Secret) {
 			log.Printf("❌ Client registration failed: invalid secret for ID '%s'", payload.ID)
 			http.Error(w, "invalid secret", http.StatusUnauthorized)
 			return
@@ -1592,7 +2007,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		if providedSecret == "" {
 			providedSecret = payload.Secret
 		}
-		if providedSecret != existing.Secret {
+		if !secretEqual(providedSecret, existing.Secret) {
 			http.Error(w, "invalid secret", http.StatusUnauthorized)
 			return
 		}
@@ -1721,11 +2136,69 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// Process any TCPing results included in the push payload.
 	// Save all results to history first, then batch-update the TCPingData
 	// snapshot with a single Get+Upsert instead of one per successful result.
+	//
+	// Deletion-race guard: the admin may have just removed a target via
+	// POST /api/tcping/config. Because clients learn about the new config
+	// only on their NEXT push response (≤ 3 s later), a push that was
+	// already queued can still carry results for a target that no longer
+	// exists in the config. Before the guard was added those stray
+	// measurements would be written to history AFTER
+	// DeleteTCPingResultsByTarget ran, leaving a single "first point" on
+	// the chart that never went away. We fix this by filtering the
+	// incoming list against the current config — any target that is not
+	// configured right now is silently dropped.
+	// Read the current tcping config once: we use it both to filter
+	// incoming results (deletion-race guard, see below) and to echo it
+	// back to the client at the end of this handler. Reading it twice
+	// used to risk observing two slightly different snapshots if admin
+	// saved between the reads; one read closes that gap.
+	tcpingConfig, configErr := store.GetTCPingConfig()
+	if configErr != nil || tcpingConfig == nil {
+		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
+	}
+
 	if len(payload.TCPingResults) > 0 {
+		// Build an allowed-target set from the live config. If the config
+		// read failed outright above we still have an empty TCPingConfig,
+		// which here means "admin has configured no targets" — in that
+		// case nothing is allowed, and any queued pushes are dropped.
+		allowedTargets := make(map[string]struct{}, len(tcpingConfig.Targets))
+		for _, t := range tcpingConfig.Targets {
+			if t.Address != "" {
+				allowedTargets[t.Address] = struct{}{}
+			}
+		}
+		targetAllowed := func(name string) bool {
+			_, ok := allowedTargets[name]
+			return ok
+		}
+
 		now := time.Now().UTC()
 		hasSuccess := false
+		// Sanity bound on MeasuredAt: accept anything within [now-10min, now+30s].
+		// Further in the past probably means the result was queued during a long
+		// offline period and would distort charts; further in the future means
+		// client clock skew. In either case we fall back to `now`.
+		const maxPast = 10 * time.Minute
+		const maxFuture = 30 * time.Second
+		sanitize := func(t time.Time) time.Time {
+			if t.IsZero() {
+				return now
+			}
+			if t.After(now.Add(maxFuture)) || now.Sub(t) > maxPast {
+				return now
+			}
+			return t.UTC()
+		}
 		for _, tr := range payload.TCPingResults {
 			if tr.Target == "" {
+				continue
+			}
+			if !targetAllowed(tr.Target) {
+				// Target was removed from config between this client's
+				// measurement and the push arriving. Silently drop it so
+				// no stray history points can linger on admin-deleted
+				// targets.
 				continue
 			}
 			var latencyPtr *float64
@@ -1738,7 +2211,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 				ClientID:  clientID,
 				Target:    tr.Target,
 				Latency:   latencyPtr,
-				Timestamp: now,
+				Timestamp: sanitize(tr.MeasuredAt),
 			}
 			if saveErr := store.SaveTCPingResult(result); saveErr == nil {
 				invalidateTCPingCache(clientID)
@@ -1752,11 +2225,12 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 					m.TCPingData = make(map[string]TCPingTargetData)
 				}
 				for _, tr := range payload.TCPingResults {
-					if tr.Target != "" && tr.Success {
-						m.TCPingData[tr.Target] = TCPingTargetData{
-							Latency:   tr.Latency,
-							Timestamp: now,
-						}
+					if tr.Target == "" || !tr.Success || !targetAllowed(tr.Target) {
+						continue
+					}
+					m.TCPingData[tr.Target] = TCPingTargetData{
+						Latency:   tr.Latency,
+						Timestamp: sanitize(tr.MeasuredAt),
 					}
 				}
 				store.Upsert(*m) //nolint:errcheck
@@ -1764,11 +2238,10 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		}
 	}
 
-	// Return current TCPing config so client can run TCPing locally
-	tcpingConfig, configErr := store.GetTCPingConfig()
-	if configErr != nil || tcpingConfig == nil {
-		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
-	}
+	// Echo the tcping config we already loaded (see top of handler) so the
+	// client can schedule its next measurements. We deliberately reuse
+	// that single read to give a consistent snapshot in both the filter
+	// and the response.
 	targets := make([]string, 0, len(tcpingConfig.Targets))
 	for _, t := range tcpingConfig.Targets {
 		if t.Address != "" {
@@ -1785,7 +2258,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 // (which don't receive these as parameters) can still reach them.
 var globalClientRegistry *ClientRegistry
 
-func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistry, ipCache *IPCountryCache) {
+func startClientPolling(ctx context.Context, store *Store, broker *SSEBroker, registry *ClientRegistry, ipCache *IPCountryCache) {
 	globalClientRegistry = registry
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -1806,7 +2279,12 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 	activePollClients := make(map[string]bool)
 
 	for {
-		tickTime := <-ticker.C
+		var tickTime time.Time
+		select {
+		case <-ctx.Done():
+			return
+		case tickTime = <-ticker.C:
+		}
 
 		// Periodically cleanup failureCount for clients no longer in registry
 		// This prevents memory leak when systems are deleted via admin page
@@ -1827,18 +2305,15 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 
 		clients := registry.GetAll()
 		if len(clients) == 0 {
-			// Still broadcast even if no clients to maintain stable interval
-			if broker != nil {
-				broker.Broadcast(`{"type":"metric_updated","count":0}`)
-			}
+			// No clients right now, but we still push a state snapshot every
+			// tick so that newly-added-but-empty systems (and their offline
+			// indicators) stay fresh in every browser.
+			broadcastMetricsSnapshot(store, registry, broker)
 			continue
 		}
 
 		// Use WaitGroup with timeout pattern
 		var wg sync.WaitGroup
-		// Use mutex-protected slice to collect results safely
-		var mu sync.Mutex
-		var updatedClientIDs []string
 
 		// Poll all clients in parallel.
 		// GetAll() returns value COPIES (not pointers) so all reads of PushMode,
@@ -1862,15 +2337,12 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			// we still see 3+ pushes before the threshold triggers.
 			if client.PushMode {
 				if !client.LastPushAt.IsZero() && time.Since(client.LastPushAt) <= 30*time.Second {
-					// Recent push received — count as a successful update
+					// Recent push received — clear any stale failure counter.
 					failureCountMu.Lock()
 					if failureCount[client.ID] > 0 {
 						delete(failureCount, client.ID)
 					}
 					failureCountMu.Unlock()
-					mu.Lock()
-					updatedClientIDs = append(updatedClientIDs, client.ID)
-					mu.Unlock()
 				} else if !client.LastPushAt.IsZero() {
 					// Push is stale — apply offline / removal logic
 					failureCountMu.Lock()
@@ -1942,10 +2414,6 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 						delete(failureCount, c.ID)
 					}
 					failureCountMu.Unlock()
-
-					mu.Lock()
-					updatedClientIDs = append(updatedClientIDs, c.ID)
-					mu.Unlock()
 				} else {
 					// Polling failed, increment failure count
 					failureCountMu.Lock()
@@ -2006,21 +2474,19 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			}
 			// If already past 2.9 seconds, broadcast immediately (shouldn't happen in normal operation)
 
-			// Broadcast all updates at once
-			// Always broadcast every 3 seconds to ensure frontend gets updates even if no data changed
-			// This maintains the 3-second update frequency for all metrics (except TCPing)
-			mu.Lock()
-			count := len(updatedClientIDs)
-			mu.Unlock()
-
-			// Always broadcast to maintain 3-second update frequency
-			// Frontend will check if data actually changed and update accordingly
-			if broker != nil {
-				// SECURITY: Use JSON marshaling to prevent injection
-				broadcastJSON(broker, "metric_updated", map[string]interface{}{
-					"count": count,
-				})
-			}
+			// Push the full authoritative system list on every tick. Each
+			// subscriber receives the payload masked for its view level
+			// (public or admin), so the browser never needs to call
+			// GET /api/metrics — the server is the one doing the pushing.
+			//
+			// Broadcasting every tick (even when nothing changed in this
+			// interval) is deliberate: it guarantees the frontend's visible
+			// state is refreshed at a predictable 3 s cadence (e.g. so
+			// "online / offline" indicators flip at the right moment as soon
+			// as their freshness threshold expires), and it makes the stream
+			// self-healing — a subscriber whose TCP pipe swallowed one event
+			// fully catches up on the next.
+			broadcastMetricsSnapshot(store, registry, broker)
 		}()
 	}
 }
@@ -2293,8 +2759,16 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		}
 	}
 
+	// Defensive size limit on the client-reported /metrics body.
+	// A healthy payload (cpu %, mem, disk, net, uptime, a handful of strings
+	// and tags) is well under 16 KB; we allow 1 MB so exotic configurations
+	// (many tags, long hostnames) still decode, but a compromised or broken
+	// client cannot stream an unbounded body that OOMs the server.
+	// This symmetrises with handleClientPush, which already caps the push
+	// body via http.MaxBytesReader(..., 1<<20).
+	bodyReader := io.LimitReader(resp.Body, 1<<20)
 	var payload metricPayload
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(bodyReader).Decode(&payload); err != nil {
 		return false
 	}
 
@@ -2625,7 +3099,7 @@ func getCountryFromIP(ip string) string {
 			// geojs.io (another alternative, works well globally)
 			url: fmt.Sprintf("https://get.geojs.io/v1/ip/country/%s", ip),
 			parser: func(resp *http.Response) string {
-				body, err := ioutil.ReadAll(resp.Body)
+				body, err := io.ReadAll(resp.Body)
 				if err != nil {
 					return ""
 				}
@@ -2735,6 +3209,10 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 	}
 
 	defer r.Body.Close()
+	// 256 KB is more than enough for ~10k system IDs (each ~30 bytes JSON);
+	// prevents an authenticated-but-malicious admin browser tab from being
+	// used to amplify a memory-exhaustion attack on the server.
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 
 	var payload struct {
 		Order []string `json:"order"` // Array of system IDs in desired order
@@ -2763,12 +3241,13 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 		}
 	}
 
-	// Broadcast order change to all connected clients
+	// Push a single authoritative snapshot so every connected browser
+	// re-sorts its rows without fetching anything. We intentionally do NOT
+	// emit a separate "order_updated" signal: the snapshot already carries
+	// the final order and dual-firing would make legacy/new clients render
+	// twice for the same change.
 	if broker != nil {
-		// SECURITY: Use JSON marshaling to prevent injection
-		broadcastJSON(broker, "order_updated", map[string]interface{}{
-			"count": len(payload.Order),
-		})
+		broadcastMetricsSnapshot(store, globalClientRegistry, broker)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -2779,9 +3258,35 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Permissive CORS is safe here because we never set
+		// Access-Control-Allow-Credentials, so browsers do NOT attach cookies
+		// on cross-origin requests. Every mutation requires a Bearer token in
+		// the Authorization header (which is never auto-sent by the browser),
+		// so a malicious origin cannot invoke privileged endpoints without
+		// first stealing the token via a completely separate flaw. The
+		// public GET surface is, by design, readable by anyone.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Baseline hardening headers applied to every response.
+		//   - X-Content-Type-Options: nosniff — stops browsers from
+		//     "helpfully" re-interpreting a text/plain body as HTML/JS, which
+		//     would otherwise turn a misconfigured error page into an XSS
+		//     vector on older browsers.
+		//   - X-Frame-Options: SAMEORIGIN — keeps the dashboard out of
+		//     attacker-controlled iframes so we cannot be framed into a
+		//     clickjacking UI. SAMEORIGIN (vs DENY) leaves the door open if
+		//     an admin ever embeds the dashboard inside their own intranet
+		//     portal on the same host.
+		//   - Referrer-Policy: strict-origin-when-cross-origin — a safe
+		//     default that sends full Referer only on same-origin navigation
+		//     and strips to just the origin when going cross-site, limiting
+		//     leakage of URL-embedded tokens (e.g. old share-token links in
+		//     users' browser history).
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -2867,6 +3372,8 @@ type TCPingResponse struct {
 // Handle tcping result from client
 func handleTCPingResult(store *Store, w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// Small JSON (5 fields, all short); 16 KB is plenty.
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	var payload TCPingResultPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
@@ -2896,7 +3403,7 @@ func handleTCPingResult(store *Store, w http.ResponseWriter, r *http.Request) {
 			providedSecret = r.URL.Query().Get("secret")
 		}
 
-		if providedSecret != existing.Secret {
+		if !secretEqual(providedSecret, existing.Secret) {
 			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
 		}
@@ -2943,7 +3450,7 @@ func handleGetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 				}
 			}
 			if !authenticated && shareToken != "" {
-				if shareToken == privacyConfig.ShareToken && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
+				if privacyConfig.ShareToken != "" && secretEqual(shareToken, privacyConfig.ShareToken) && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
 					authenticated = true
 				}
 			}
@@ -2977,7 +3484,7 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 				}
 			}
 			if !authenticated && shareToken != "" {
-				if shareToken == privacyConfig.ShareToken && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
+				if privacyConfig.ShareToken != "" && secretEqual(shareToken, privacyConfig.ShareToken) && !privacyConfig.TokenExpires.IsZero() && time.Now().Before(privacyConfig.TokenExpires) {
 					authenticated = true
 				}
 			}
@@ -3075,6 +3582,11 @@ func handleSetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 	}
 
 	defer r.Body.Close()
+	// NavbarConfig includes CustomCSS and CustomJS, which are free-form
+	// text entered by the admin. 1 MB accommodates even the hairy real-world
+	// custom stylesheets (minified bootstrap is ~160 KB, full theme kits
+	// rarely exceed a few hundred KB) while still capping a runaway request.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var config NavbarConfig
 	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
@@ -3167,6 +3679,7 @@ func handleSetPrivacyConfig(store *Store, w http.ResponseWriter, r *http.Request
 	}
 
 	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var payload struct {
 		Enabled          bool   `json:"enabled"`
 		ShareToken       string `json:"share_token"`
@@ -3235,6 +3748,8 @@ func handleSetPrivacyConfig(store *Store, w http.ResponseWriter, r *http.Request
 
 func handleVerifyShareToken(store *Store, w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// A token is a short string; anything more than a few KB is abuse.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var payload struct {
 		Token string `json:"token"`
 	}
@@ -3255,8 +3770,8 @@ func handleVerifyShareToken(store *Store, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if token matches
-	if config.ShareToken == "" || config.ShareToken != payload.Token {
+	// Check if token matches (constant-time).
+	if config.ShareToken == "" || !secretEqual(config.ShareToken, payload.Token) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"valid": false, "reason": "invalid_token"})
 		return
 	}
@@ -3270,7 +3785,7 @@ func handleVerifyShareToken(store *Store, w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": true})
 }
 
-func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request) {
+func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegistry, w http.ResponseWriter, r *http.Request) {
 	// Require authentication for setting TCPing config
 	if !isAuthenticated(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -3278,6 +3793,9 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 	}
 
 	defer r.Body.Close()
+	// 64 KB fits ~500 targets (each target is ~100 bytes of JSON); the
+	// handler's per-target validation below further rejects silly lists.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var config TCPingConfig
 	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
@@ -3326,21 +3844,18 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		// Must contain ":" to separate host and port
-		if !strings.Contains(address, ":") {
+		// Split host and port. Use net.SplitHostPort so bracketed IPv6
+		// literals like "[::1]:443" or "[2001:db8::1]:443" round-trip
+		// correctly; a naive strings.SplitN(":") splits at the first ":"
+		// and treats the leading "[" as the host, which makes it
+		// impossible to save any IPv6 tcping target from the admin UI.
+		host, portStr, splitErr := net.SplitHostPort(address)
+		if splitErr != nil {
 			http.Error(w, fmt.Sprintf("invalid target format: %s (expected format: host:port) for target: %s", address, target.Name), http.StatusBadRequest)
 			return
 		}
-
-		// Split host and port
-		parts := strings.SplitN(address, ":", 2)
-		if len(parts) != 2 {
-			http.Error(w, fmt.Sprintf("invalid target format: %s (expected format: host:port) for target: %s", address, target.Name), http.StatusBadRequest)
-			return
-		}
-
-		host := strings.TrimSpace(parts[0])
-		portStr := strings.TrimSpace(parts[1])
+		host = strings.TrimSpace(host)
+		portStr = strings.TrimSpace(portStr)
 
 		// Validate host is not empty
 		if host == "" {
@@ -3355,15 +3870,21 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		// Additional validation: check for common injection patterns
-		// Allow valid characters for hostnames and IP addresses
-		// Hostname regex: alphanumeric, dots, hyphens, brackets (for IPv6)
-		hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-\[\]:]+$`)
+		// Additional validation: check for common injection patterns.
+		// Valid hosts are hostnames (a-z, 0-9, dot, hyphen), IPv4
+		// literals, or IPv6 literals (hex + ":"). Note that after
+		// net.SplitHostPort the IPv6 brackets have already been
+		// stripped, so we no longer need to allow "[" / "]" here.
+		hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-:]+$`)
 		if !hostnameRegex.MatchString(host) {
 			http.Error(w, fmt.Sprintf("invalid target host format for target: %s", target.Name), http.StatusBadRequest)
 			return
 		}
 	}
+
+	// Collect targets that were removed by this save so we can clean up all
+	// their derived state (history, per-system snapshot, frontend cache).
+	var removedTargets []string
 
 	// Get old config to compare targets
 	oldConfig, err := store.GetTCPingConfig()
@@ -3379,20 +3900,72 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			newTargets[t.Address] = true
 		}
 
-		// Delete data for removed targets
+		// Delete HISTORY data for removed targets.
 		for oldTarget := range oldTargets {
 			if !newTargets[oldTarget] {
 				_ = store.DeleteTCPingResultsByTarget(oldTarget)
+				removedTargets = append(removedTargets, oldTarget)
 			}
 		}
-
-		// Clear all TCPing cache since targets changed
-		clearAllTCPingCache()
 	}
 
 	if err := store.SaveTCPingConfig(&config); err != nil {
 		http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Only clear the in-memory tcping cache *after* the new config has
+	// been persisted successfully. If SaveTCPingConfig returned an error
+	// above we would otherwise have wiped every chart's history for no
+	// reason while leaving the old config still in force.
+	if oldConfig != nil {
+		clearAllTCPingCache()
+	}
+
+	// Prune the "latest per target" snapshot (SystemMetric.TCPingData) for
+	// every system that still carries a deleted target. Without this step
+	// the map keeps the stale entry forever; that single leftover datum is
+	// what produced the "first point still remaining after delete" the
+	// user observed. Note that DeleteTCPingResultsByTarget above already
+	// cleaned the history bucket, so after this loop there is literally
+	// zero trace of the target anywhere in the store.
+	if len(removedTargets) > 0 {
+		if metrics, listErr := store.List(); listErr == nil {
+			removedSet := make(map[string]struct{}, len(removedTargets))
+			for _, t := range removedTargets {
+				removedSet[t] = struct{}{}
+			}
+			for _, m := range metrics {
+				if len(m.TCPingData) == 0 {
+					continue
+				}
+				mutated := false
+				for target := range m.TCPingData {
+					if _, isRemoved := removedSet[target]; isRemoved {
+						delete(m.TCPingData, target)
+						mutated = true
+					}
+				}
+				if mutated {
+					_ = store.Upsert(m)
+				}
+			}
+		}
+	}
+
+	// Notify every connected browser that the tcping config changed so
+	// they can invalidate their cached copy (cachedTCPingConfig in
+	// SystemTable.astro) and redraw expanded charts without a manual
+	// page reload. The payload is deliberately minimal — just a signal.
+	// Right after this we also broadcast a fresh metrics snapshot so the
+	// pruned tcping_data reaches the frontend in the same SSE flush.
+	if broker != nil {
+		if payload, mErr := json.Marshal(map[string]interface{}{
+			"type": "tcping_config_updated",
+		}); mErr == nil {
+			broker.Broadcast(string(payload))
+		}
+		broadcastMetricsSnapshot(store, registry, broker)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -3430,7 +4003,7 @@ func getTCPingHTTPClient() *http.Client {
 }
 
 // Start tcping polling with configurable interval and targets
-func startTCPingPolling(registry *ClientRegistry, store *Store) {
+func startTCPingPolling(ctx context.Context, registry *ClientRegistry, store *Store) {
 	// Get initial config
 	config, err := store.GetTCPingConfig()
 	if err != nil {
@@ -3464,7 +4037,11 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 	httpClient := getTCPingHTTPClient()
 
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 
 		// Reload config on each tick to support dynamic updates
 		config, err := store.GetTCPingConfig()
@@ -3525,6 +4102,23 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 				continue
 			}
 
+			// Registry-churn guard: a push-mode client that was just dropped from the
+			// registry (e.g. after a long network glitch) re-registers via
+			// handleClientRegister with a real URL and PushMode=false, then UpdatePushState
+			// flips the bit on its next push (~3 s later). In that narrow window the tcping
+			// ticker used to pull /tcping once and create a stray, non-push-aligned history
+			// record. Suppress the pull when the persisted SystemMetric shows a very fresh
+			// UpdatedAt (≤ 10 s) — a pure pull-mode client never updates UpdatedAt without
+			// the server first polling it, so this unambiguously marks "something is
+			// pushing to this ID right now".
+			if client.LastPushAt.IsZero() {
+				if m, err := store.Get(client.ID); err == nil && m != nil {
+					if !m.UpdatedAt.IsZero() && time.Since(m.UpdatedAt) < 10*time.Second {
+						continue
+					}
+				}
+			}
+
 			// Registry already maintains consistency with database (same as client polling):
 			// - Clients are added when they register (POST /api/clients/register)
 			// - Clients are removed when systems are deleted (handleDeleteMetric)
@@ -3558,8 +4152,20 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					continue
 				}
 
+			// Acquire the semaphore slot BEFORE spawning the goroutine so we
+			// never launch more than maxConcurrentTCPing workers at a time.
+			// Doing it inside the goroutine (the old pattern) would let a busy
+			// tick spawn N_clients × N_targets goroutines up front, all of
+			// them blocked on the channel send — the stack and scheduler
+			// overhead of hundreds of parked goroutines is exactly what the
+			// semaphore is supposed to prevent.
+			select {
+			case <-ctx.Done():
+				return
+			case tcpingSem <- struct{}{}:
+			}
+
 			go func(clientID string, tgt TCPingTargetEntry) {
-				tcpingSem <- struct{}{} // acquire semaphore slot
 				defer func() { <-tcpingSem }()
 
 				// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
@@ -3610,7 +4216,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 							"target": tgt.Address,
 						}
 						requestData, _ := json.Marshal(tcpingRequest)
-						req, reqErr := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(requestData)))
+						req, reqErr := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(requestData))
 						if reqErr != nil {
 							// Silent failure - request creation errors are rare and usually indicate programming errors
 							continue
@@ -3659,8 +4265,14 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 						registry.UpdateWorkingURL(clientID, successfulBaseURL)
 					}
 
+					// Defensive size limit: the /tcping response is a tiny JSON
+					// object ({ success, latency, error? }) — well under 1 KB in
+					// practice. 64 KB is a very generous ceiling that still stops
+					// a compromised / runaway client from streaming an unbounded
+					// body back at us.
+					tcpingBody := io.LimitReader(resp.Body, 64<<10)
 					var tcpingResp TCPingResponse
-					if err := json.NewDecoder(resp.Body).Decode(&tcpingResp); err != nil {
+					if err := json.NewDecoder(tcpingBody).Decode(&tcpingResp); err != nil {
 						return
 					}
 
@@ -3711,23 +4323,31 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 }
 
 // Start cleanup old tcping data every hour
-func startTCPingCleanup(store *Store) {
+func startTCPingCleanup(ctx context.Context, store *Store) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		_ = store.CleanupOldTCPingResults()
 	}
 }
 
 // Start IP cache cleanup every hour
-func startIPCacheCleanup(ipCache *IPCountryCache) {
+func startIPCacheCleanup(ctx context.Context, ipCache *IPCountryCache) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		if ipCache != nil {
 			removed := ipCache.CleanExpired()
 			if removed > 0 {
@@ -3821,6 +4441,10 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
+	// Password JSON is tiny; 4 KB caps any unboundedness without affecting
+	// even the upper bound of a legitimate 128-char password.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var payload struct {
 		Password string `json:"password"`
 	}
@@ -3828,7 +4452,6 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// SECURITY: Validate password length to prevent DoS attacks
 	// Bcrypt is computationally expensive, so limit password length
@@ -3898,6 +4521,11 @@ func handleAuthLogin(store *Store, w http.ResponseWriter, r *http.Request) {
 	}
 	loginAttemptsMu.Unlock()
 
+	defer r.Body.Close()
+	// Cap body before decoding: prevents an attacker from forcing the server
+	// to allocate many MB just to parse a login attempt. Still plenty of
+	// room for the 128-char upper bound we enforce below.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var payload struct {
 		Password string `json:"password"`
 	}
@@ -3905,7 +4533,6 @@ func handleAuthLogin(store *Store, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// SECURITY: Validate password length to prevent DoS attacks
 	// Bcrypt is computationally expensive, so limit password length
@@ -3988,6 +4615,8 @@ func handleAuthVerify(store *Store, w http.ResponseWriter, r *http.Request) {
 	attempt.lastAttempt = time.Now()
 	verifyAttemptsMu.Unlock()
 
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var payload struct {
 		Token string `json:"token"`
 	}
@@ -3995,7 +4624,6 @@ func handleAuthVerify(store *Store, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	authTokensMu.Lock()
 	expiry, exists := authTokens[payload.Token]
@@ -4017,6 +4645,8 @@ func handleAuthChangePassword(store *Store, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var payload struct {
 		CurrentPassword string `json:"currentPassword"`
 		NewPassword     string `json:"newPassword"`
@@ -4025,7 +4655,6 @@ func handleAuthChangePassword(store *Store, w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// Verify current password
 	valid, err := store.VerifyPassword(payload.CurrentPassword)
@@ -4055,6 +4684,95 @@ func handleAuthChangePassword(store *Store, w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// handleAdminBackup streams a consistent hot-backup of the bbolt
+// database to the client, auth-guarded. The snapshot is produced via
+// Store.Snapshot, which internally uses bbolt's Tx.WriteTo inside a
+// read-only transaction — no server downtime, no risk of capturing a
+// torn page, and no need for docker compose stop.
+//
+// Migration workflow:
+//
+//	# On old host — grab a hot snapshot (requires admin token)
+//	curl -fsSL -H "Authorization: Bearer $TOKEN" \
+//	  http://old-host:8008/api/admin/backup \
+//	  -o pulse-metrics.db
+//
+//	# On new host — drop the file into the Docker volume and boot
+//	docker compose down
+//	cp pulse-metrics.db datatz/metrics.db
+//	docker compose up -d
+//
+// The endpoint is intentionally GET so it composes with curl/wget,
+// cron, and pipe-into-scp without extra tooling. The response
+// Content-Type is application/octet-stream so browsers save the file
+// rather than trying to render it, and Content-Disposition ships a
+// sensible filename that embeds a UTC timestamp for operator sanity.
+//
+// SECURITY: A stolen backup file is equivalent to possession of every
+// per-system secret, the admin password hash, and every piece of
+// dashboard configuration. Two layers of defence on top of the normal
+// admin-token gate:
+//
+//  1. Bearer-only — we refuse ?token=xxx query-string auth here, even
+//     though the shared isAuthenticated() helper accepts it. Query
+//     tokens get logged in nginx access logs, shell history, and
+//     referer headers, which is the last place the key to the kingdom
+//     should land. curl/cron/manual operators all have no reason to
+//     use anything other than Authorization: Bearer.
+//
+//  2. Audit logging — successful backup pulls are logged with the
+//     source IP so operators can spot unexpected snapshots after the
+//     fact, e.g. if a token leaked.
+func handleAdminBackup(store *Store, w http.ResponseWriter, r *http.Request) {
+	// Reject query-param tokens on this endpoint specifically.
+	if r.URL.Query().Get("token") != "" {
+		http.Error(w, "backup endpoint requires Authorization: Bearer header, not ?token= query param", http.StatusUnauthorized)
+		return
+	}
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	authTokensMu.Lock()
+	expiry, exists := authTokens[token]
+	authTokensMu.Unlock()
+	if !exists || time.Now().After(expiry) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	filename := fmt.Sprintf("pulse-backup-%s.db", ts)
+	log.Printf("📦 Admin backup requested from %s — streaming snapshot %s", getClientIP(r), filename)
+
+	// Write headers BEFORE beginning the stream. Once Snapshot starts
+	// writing, the response is committed and we cannot meaningfully
+	// emit a JSON error body any more — the client would see a mix of
+	// bbolt pages and HTTP error text. So if anything is going to fail
+	// noisily, we want it to be in the View-transaction setup, which
+	// raises before the first byte is written to w.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	// Advise proxies (including our own nginx) NOT to buffer — the DB
+	// can be several MB and buffering the whole body serves no purpose.
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Cache-Control", "no-store")
+
+	n, err := store.Snapshot(w)
+	if err != nil {
+		// If streaming has already begun, headers are committed and we
+		// can't switch to a JSON error; log it so operators notice the
+		// truncated file. If it failed before the first flush, Go's
+		// default behaviour is to emit a 500 — which is the correct
+		// outcome.
+		log.Printf("⚠️  Backup snapshot failed after %d bytes: %v", n, err)
+		return
+	}
+	log.Printf("✅ Admin backup streamed %d bytes to %s", n, getClientIP(r))
 }
 
 // isAuthenticated checks if request is authenticated

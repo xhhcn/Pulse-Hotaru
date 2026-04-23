@@ -329,66 +329,98 @@ const apiBase = apiBaseProp ?? '';
     return `emojione-v1:flag-for-${flagName}`;
   };
 
+  // Module-level cache for iconify SVG text, keyed by the full cache key
+  // (iconName + size). Every row re-render previously re-fetched every
+  // icon from api.iconify.design — with N systems × 2 icons (OS + flag)
+  // that was 2N external requests per SSE push. The cache collapses
+  // duplicates to a single network request per unique icon across the
+  // entire session.
+  //
+  // We store Promise<string|null> rather than the resolved text so
+  // concurrent calls for the same icon (common on first paint) only
+  // fire one fetch — all callers `await` the same in-flight promise.
+  // `null` is returned on fetch failure so we don't retry a broken icon
+  // on every render (transient outages do recover on next page load).
+  //
+  // The cache key encodes the requested `height=` param because
+  // iconify serves different viewBox sizes; re-using a 26px SVG where
+  // a 32px one was asked for is safe visually (SVGs scale) but the
+  // raw bytes differ — keying by size keeps the two callers consistent
+  // with their original behaviour.
+  const iconSvgCache = new Map();
+  const fetchIconSvg = (iconName, height) => {
+    const key = `${iconName}@${height}`;
+    let pending = iconSvgCache.get(key);
+    if (pending) return pending;
+    pending = (async () => {
+      try {
+        // encodeURI preserves the `:` separator used by iconify paths
+        // (e.g. "logos:intel") while escaping any unusual characters
+        // that might sneak in from backend-derived icon names.
+        const url = `https://api.iconify.design/${encodeURI(iconName)}.svg?height=${height}`;
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        return await response.text();
+      } catch (e) {
+        return null;
+      }
+    })();
+    iconSvgCache.set(key, pending);
+    return pending;
+  };
+
   const loadOSIcons = async () => {
     const iconElements = document.querySelectorAll('.os-icon');
-    for (const el of iconElements) {
+    await Promise.all(Array.from(iconElements).map(async (el) => {
       const iconName = el.dataset.icon;
-      if (!iconName) continue;
-      try {
-        // OS icon: use a reasonable default size, CSS classes will control the actual display size
-        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=26`);
-        if (response.ok) {
-          const svg = await response.text();
-          el.innerHTML = svg;
-          const svgEl = el.querySelector('svg');
-          if (svgEl) {
-            svgEl.setAttribute('class', 'block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]');
-            svgEl.style.margin = '0';
-            svgEl.style.padding = '0';
-            svgEl.style.display = 'block';
-            svgEl.style.verticalAlign = 'middle'; // Center align for consistent row height
-            svgEl.style.lineHeight = '1'; // Remove line height spacing
-            svgEl.style.width = '100%';
-            svgEl.style.height = '100%';
-            svgEl.style.maxWidth = '100%';
-            svgEl.style.maxHeight = '100%';
-          }
-        }
-      } catch (e) {
-        // Icon load failed silently
+      if (!iconName) return;
+      // Skip elements that already have an SVG rendered for the same
+      // icon — prevents flicker and avoids re-styling on every render.
+      if (el.dataset.iconLoaded === iconName && el.querySelector('svg')) return;
+      const svg = await fetchIconSvg(iconName, 26);
+      if (!svg) return;
+      el.innerHTML = svg;
+      el.dataset.iconLoaded = iconName;
+      const svgEl = el.querySelector('svg');
+      if (svgEl) {
+        svgEl.setAttribute('class', 'block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]');
+        svgEl.style.margin = '0';
+        svgEl.style.padding = '0';
+        svgEl.style.display = 'block';
+        svgEl.style.verticalAlign = 'middle';
+        svgEl.style.lineHeight = '1';
+        svgEl.style.width = '100%';
+        svgEl.style.height = '100%';
+        svgEl.style.maxWidth = '100%';
+        svgEl.style.maxHeight = '100%';
       }
-    }
+    }));
   };
 
   const loadFlagIcons = async () => {
     const flagElements = document.querySelectorAll('.flag-icon');
-    for (const el of flagElements) {
+    await Promise.all(Array.from(flagElements).map(async (el) => {
       const iconName = el.dataset.icon;
-      if (!iconName) continue;
-      try {
-        // Flag icon: use a reasonable default size, CSS classes will control the actual display size
-        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=32`);
-        if (response.ok) {
-          const svg = await response.text();
-          el.innerHTML = svg;
-          const svgEl = el.querySelector('svg');
-          if (svgEl) {
-            svgEl.setAttribute('class', 'block leading-none w-6 h-6 sm:w-8 sm:h-8');
-            svgEl.style.margin = '0';
-            svgEl.style.padding = '0';
-            svgEl.style.display = 'block';
-            svgEl.style.verticalAlign = 'middle'; // Center align for consistent row height
-            svgEl.style.lineHeight = '1'; // Remove line height spacing
-            svgEl.style.width = '100%';
-            svgEl.style.height = '100%';
-            svgEl.style.maxWidth = '100%';
-            svgEl.style.maxHeight = '100%';
-          }
-        }
-      } catch (e) {
-        // Flag icon load failed silently
+      if (!iconName) return;
+      if (el.dataset.iconLoaded === iconName && el.querySelector('svg')) return;
+      const svg = await fetchIconSvg(iconName, 32);
+      if (!svg) return;
+      el.innerHTML = svg;
+      el.dataset.iconLoaded = iconName;
+      const svgEl = el.querySelector('svg');
+      if (svgEl) {
+        svgEl.setAttribute('class', 'block leading-none w-6 h-6 sm:w-8 sm:h-8');
+        svgEl.style.margin = '0';
+        svgEl.style.padding = '0';
+        svgEl.style.display = 'block';
+        svgEl.style.verticalAlign = 'middle';
+        svgEl.style.lineHeight = '1';
+        svgEl.style.width = '100%';
+        svgEl.style.height = '100%';
+        svgEl.style.maxWidth = '100%';
+        svgEl.style.maxHeight = '100%';
       }
-    }
+    }));
   };
 
   // Detect CPU brand from CPU model string
@@ -592,6 +624,16 @@ const apiBase = apiBaseProp ?? '';
     }
   });
 
+  // Close dropdown on Escape for keyboard users. Only act when the
+  // dropdown is actually open so we don't steal Escape events that
+  // other widgets (e.g. the expanded-row tcping chart) might rely on.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (columnsDropdown && !columnsDropdown.classList.contains('hidden')) {
+      columnsDropdown.classList.add('hidden');
+    }
+  });
+
   // Sort option buttons
   document.querySelectorAll('.sort-option').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -624,11 +666,16 @@ const apiBase = apiBaseProp ?? '';
     
     // Create a temporary hidden span to measure text width accurately
     const tempSpan = document.createElement('span');
+    // Match the global body font stack (global.css line 12) so measurements
+    // reflect what Inter actually renders. Using a generic sans-serif here
+    // would cause the measurement to silently drift from the real row width
+    // (different glyph metrics → first column too wide or too narrow → the
+    // very column-jitter we went to great lengths to eliminate).
     tempSpan.style.cssText = `
       position: absolute;
       visibility: hidden;
       white-space: nowrap;
-      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 12px;
       font-weight: 500;
       letter-spacing: normal;
@@ -775,6 +822,67 @@ const apiBase = apiBaseProp ?? '';
     return String(text).replace(/[&<>"']/g, m => map[m]);
   }
 
+  // Backgrounds used by "spr:<label>" / "spy:<label>" / "spb:<label>" tags.
+  //
+  // Three user-selectable gradient families, one per prefix. The `sp*`
+  // namespace marks all three as "special coloured badges"; the final
+  // letter (r/y/b) picks which of the three pre-tuned gradient families
+  // paints the badge, letting the operator emphasize a tag as warm /
+  // neutral / cool without changing the label wording.
+  //
+  // Why a 3-letter `sp*` namespace rather than bare `r:` / `y:` / `b:`:
+  // a bare single-letter prefix is brittle — a future business tag like
+  // `b:backup` or `r:region-us` would accidentally light up with a
+  // gradient. `spr:` / `spy:` / `spb:` reserves a dedicated namespace
+  // that is unlikely to collide with real-world tag words.
+  //
+  // Shared design rules across all three families (keep in sync):
+  //   • Saturation band: Tailwind **600**. Deep enough that white text
+  //     keeps > 3:1 contrast on every stop (no text-shadow needed),
+  //     light enough to still read as a coloured badge rather than a
+  //     muddy pill. 600 also visually matches the grey UI tags next to
+  //     it in weight, which was a hard-won result of earlier tuning.
+  //   • Stop count: **3** only. Each stop gets ~9 px of a ~28 px short
+  //     badge ("vip", "pro"), which is the maximum the eye reads as
+  //     smooth flow rather than discrete bands.
+  //   • Direction: 90deg horizontal, so the spectrum is laid across
+  //     the badge's width rather than diagonally compressed into a
+  //     middle-hue blob on short labels.
+  //   • Family choice: every family starts on its prefix-named hue
+  //     (r → red, y → yellow/amber, b → blue) and travels roughly 60°
+  //     of hue in a direction that keeps all three stops in one tonal
+  //     story (not a full rainbow). That is the compromise that
+  //     satisfied earlier feedback: rainbow feel without banding, and
+  //     tonal coherence so the badge reads as "one coloured object"
+  //     not "three stripes".
+  const RAINBOW_GRADIENTS = {
+    // r: warm sunset — red → orange → pink. Energetic / warning-adjacent
+    // feel but still decorative (pink end pulls it away from pure alert
+    // red). Good for "hot", "priority", "danger"-flavoured labels.
+    r: 'linear-gradient(90deg, ' +
+      '#dc2626 0%, '   + // red-600
+      '#ea580c 50%, '  + // orange-600
+      '#db2777 100%'   + // pink-600
+      ')',
+    // y: golden meadow — amber → green → teal. Warm-to-cool neutral
+    // bridge; feels "natural" / "balanced". Good for "standard",
+    // "staff", "maintenance"-flavoured labels that are neither warning
+    // nor premium.
+    y: 'linear-gradient(90deg, ' +
+      '#ca8a04 0%, '   + // amber-600 (deep gold, still legible on white)
+      '#16a34a 50%, '  + // green-600
+      '#0d9488 100%'   + // teal-600
+      ')',
+    // b: cosmic — blue → purple → fuchsia. Cool iridescent / "premium"
+    // feel in line with Apple achievements / GitHub Sponsor badges.
+    // Good for "vip", "pro", "enterprise"-flavoured labels.
+    b: 'linear-gradient(90deg, ' +
+      '#2563eb 0%, '   + // blue-600
+      '#9333ea 50%, '  + // purple-600
+      '#c026d3 100%'   + // fuchsia-600
+      ')',
+  };
+
   const renderRow = (item, showTCPing = true) => {
     // Determine if system is offline/paused (alert = true means offline/paused)
     const isOffline = item.alert || false;
@@ -788,7 +896,7 @@ const apiBase = apiBaseProp ?? '';
         <div class="flex items-center gap-1 min-h-[20px]">
           <span class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${isOffline ? 'bg-red-400' : 'bg-emerald-400'} shrink-0"></span>
           <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] whitespace-nowrap">${safeName}</span>
-          <button class="copy-btn text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#d4d4d4] dark:hover:text-[#d4d4d4] hover:text-[#151515] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" data-system-name="${safeNameAttr}" title="Copy system name">
+          <button class="copy-btn text-[#525252] dark:text-[#737373] hover:text-[#151515] dark:hover:text-[#d4d4d4] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" data-system-name="${safeNameAttr}" title="Copy system name">
             <svg class="copy-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             <svg class="check-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M20 6L9 17l-5-5"/></svg>
           </button>
@@ -802,15 +910,15 @@ const apiBase = apiBaseProp ?? '';
             }
             // SECURITY: Escape location to prevent XSS
             const safeLocation = escapeHtml(item.location);
-            return `<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${safeLocation}</span>`;
-          })() : '<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">-</span>'}
+            return `<span class="text-[10px] sm:text-xs text-[#404040] dark:text-[#a3a3a3]">${safeLocation}</span>`;
+          })() : '<span class="text-[10px] sm:text-xs text-[#404040] dark:text-[#a3a3a3]">-</span>'}
     </div>
         <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress(item.cpu || 0, false, isOffline)}</div>
         <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress(item.memory || 0, false, isOffline)}</div>
         <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress((item.disk || 0), (item.disk || 0) > 65, isOffline)}</div>
         <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] h-5 flex items-center">${((item.net_in_mb_s || 0) + (item.net_out_mb_s || 0)).toFixed(2)} MB/s</div>
         <div class="h-5 flex items-center justify-center w-full" title="${escapeHtmlAttr(item.os || '-')}">
-          ${item.os_icon ? `<span class="os-icon block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]" data-icon="${escapeHtmlAttr(item.os_icon)}"></span>` : `<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${escapeHtml(item.os || '-')}</span>`}
+          ${item.os_icon ? `<span class="os-icon block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]" data-icon="${escapeHtmlAttr(item.os_icon)}"></span>` : `<span class="text-[10px] sm:text-xs text-[#404040] dark:text-[#a3a3a3]">${escapeHtml(item.os || '-')}</span>`}
     </div>
     </div>
       <!-- Expandable details section -->
@@ -873,6 +981,59 @@ const apiBase = apiBaseProp ?? '';
                     <span class="speed-value">${formattedSpeed}</span>
                   </span>
                   `;
+                } else if (
+                  typeof tag === 'string' &&
+                  tag.length > 4 &&
+                  tag[3] === ':' &&
+                  (tag[0] === 's' || tag[0] === 'S') &&
+                  (tag[1] === 'p' || tag[1] === 'P') &&
+                  (tag[2] === 'r' || tag[2] === 'R' ||
+                   tag[2] === 'y' || tag[2] === 'Y' ||
+                   tag[2] === 'b' || tag[2] === 'B') &&
+                  tag.slice(4).trim().length > 0
+                ) {
+                  // Coloured-prefix tag: "spr:<label>" / "spy:<label>" /
+                  // "spb:<label>". The third letter of the prefix (r/y/b,
+                  // case-insensitive) selects which of the three
+                  // pre-tuned gradient families (RAINBOW_GRADIENTS)
+                  // paints the badge; the remainder of the tag (after
+                  // the colon, with surrounding whitespace trimmed for
+                  // display) is the visible label.
+                  //
+                  // Guards on the else-if:
+                  //   • length > 4 — requires at least one character
+                  //     after the colon, so "spr:" alone never matches.
+                  //   • tag.slice(4).trim() non-empty — protects against
+                  //     "spr:   " rendering as a blank coloured pill.
+                  //   • per-character case-insensitive prefix check so
+                  //     "Spr:VIP" / "SPR:VIP" also pick up the gradient;
+                  //     matches the spirit of the admin placeholder's
+                  //     free-form input.
+                  //
+                  // Style: gradient is set via inline style because
+                  // Tailwind's JIT scanner only picks up class names
+                  // that appear LITERALLY in the source and cannot
+                  // compile in a runtime-assembled multi-stop gradient.
+                  // Layout classes (`rounded-md px-2 py-0.5 text-[10px]
+                  // sm:text-xs font-medium`) match the regular-tag
+                  // branch below, so a spr:/spy:/spb: badge is
+                  // pixel-identical in height, padding, corner radius
+                  // and font weight to a Python / traffic:* badge. The
+                  // only differences are the coloured gradient
+                  // background and white text (required for contrast;
+                  // grey would be illegible on every gradient stop).
+                  // No text-shadow, no box-shadow, no border — the
+                  // 600-band gradients are dark enough on their own
+                  // that white text reads cleanly.
+                  const colorKey = tag[2].toLowerCase(); // 'r' | 'y' | 'b'
+                  const gradient = RAINBOW_GRADIENTS[colorKey];
+                  const label = tag.slice(4).trim();
+                  const safeLabel = escapeHtml(label);
+                  return `
+                  <span class="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] sm:text-xs font-medium text-white" style="background-image: ${gradient};" data-color-tag="${colorKey}" data-color-tag-label="${escapeHtmlAttr(label)}">
+                    ${safeLabel}
+                  </span>
+                  `;
                 }
                 
                 // Regular tag
@@ -886,39 +1047,39 @@ const apiBase = apiBaseProp ?? '';
             ` : ''}
             <!-- CPU Info -->
             <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2" style="min-height: 16px; line-height: 16px;">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="cpuInformation">CPU:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="cpuInformation">CPU:</div>
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="cpu_model">${escapeHtml(item.cpu_model || '-')}</div>
             </div>
             <!-- Memory Info -->
             <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="memoryInfo">Memory:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="memoryInfo">Memory:</div>
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="memory_info">${escapeHtml(item.memory_info || '-')}</div>
             </div>
             <!-- Swap Info -->
             <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="swapPartition">Swap:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="swapPartition">Swap:</div>
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="swap_info">${escapeHtml(item.swap_info || '-')}</div>
             </div>
             <!-- Disk Info -->
             <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="diskInformation">Disk:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="diskInformation">Disk:</div>
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="disk_info">${escapeHtml(item.disk_info || '-')}</div>
             </div>
             ${showTrafficInfo ? `
             <!-- Real-time Traffic -->
             <div class="flex items-center gap-1.5 sm:gap-2" data-traffic-row="speed">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="realtimeTraffic">Traffic:</div>
-              ${(!item.cpu_model && !item.memory_info) ? `
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="realtimeTraffic">Traffic:</div>
+              ${(!item.cpu_model && !item.memory_info && !item.disk_info) ? `
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="speed">-</div>
               ` : `
               <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="speed">
                 <span class="flex items-center gap-0.5" data-detail-speed="in">
-                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-600 dark:text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
                   <span>${formatTrafficSpeed(item.net_in_mb_s || 0)}</span>
                 </span>
                 <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
                 <span class="flex items-center gap-0.5" data-detail-speed="out">
-                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-600 dark:text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
                   <span>${formatTrafficSpeed(item.net_out_mb_s || 0)}</span>
                 </span>
               </div>
@@ -926,18 +1087,18 @@ const apiBase = apiBaseProp ?? '';
             </div>
             <!-- Total Traffic -->
             <div class="flex items-center gap-1.5 sm:gap-2" data-traffic-row="total">
-              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="totalTraffic">Total:</div>
-              ${(!item.cpu_model && !item.memory_info) ? `
+              <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3] shrink-0" data-translate-detail="totalTraffic">Total:</div>
+              ${(!item.cpu_model && !item.memory_info && !item.disk_info) ? `
               <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-placeholder="total">-</div>
               ` : `
               <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="total">
                 <span class="flex items-center gap-0.5" data-detail-total="in">
-                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-600 dark:text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
                   <span>${formatTotalTraffic(item.total_net_in_bytes || 0)}</span>
                 </span>
                 <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
                 <span class="flex items-center gap-0.5" data-detail-total="out">
-                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                  <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-600 dark:text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
                   <span>${formatTotalTraffic(item.total_net_out_bytes || 0)}</span>
                 </span>
               </div>
@@ -950,15 +1111,15 @@ const apiBase = apiBaseProp ?? '';
       <div class="px-3 sm:px-4 md:px-6 pb-2 sm:pb-3" data-tcping-chart-container="${safeId}" style="width: 100%;">
         <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#151515] dark:bg-[#151515] bg-white p-2 sm:p-3">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2">
-            <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]" data-translate-detail="tcpingLatency">TCPing Latency (24h)</div>
+            <div class="text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#a3a3a3]" data-translate-detail="tcpingLatency">TCPing Latency (24h)</div>
             <!-- Statistics display -->
             <div class="flex gap-3 sm:gap-4 text-[10px] sm:text-xs" data-tcping-stats="${safeId}">
               <div class="flex items-center gap-1">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="avgLatency">Avg:</span>
+                <span class="text-[#525252] dark:text-[#a3a3a3]" data-translate-detail="avgLatency">Avg:</span>
                 <span class="font-medium text-[#262626] dark:text-[#f5f5f5]" data-tcping-avg="${safeId}">-</span>
           </div>
               <div class="flex items-center gap-1">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="packetLoss">Loss:</span>
+                <span class="text-[#525252] dark:text-[#a3a3a3]" data-translate-detail="packetLoss">Loss:</span>
                 <span class="font-medium text-[#262626] dark:text-[#f5f5f5]" data-tcping-loss="${safeId}">-</span>
         </div>
         </div>
@@ -970,17 +1131,17 @@ const apiBase = apiBaseProp ?? '';
             <!-- Loading state -->
             <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded" data-tcping-loading="${item.id}" style="height: 200px; min-height: 200px;">
               <div class="flex flex-col items-center gap-2">
-                <div class="w-6 h-6 border-2 border-[#404040] dark:border-[#404040] border-[#d4d4d4] border-t-transparent dark:border-t-transparent rounded-full animate-spin"></div>
-                <span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="loading">Loading...</span>
+                <div class="w-6 h-6 border-2 border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin"></div>
+                <span class="text-xs text-[#525252] dark:text-[#a3a3a3]" data-translate-detail="loading">Loading...</span>
         </div>
       </div>
             <!-- No data state -->
             <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded hidden" data-tcping-no-data="${safeId}" style="height: 200px; min-height: 200px;">
               <div class="flex flex-col items-center gap-2">
-                <svg class="w-8 h-8 text-[#404040] dark:text-[#404040]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-8 h-8 text-[#737373] dark:text-[#a3a3a3]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                 </svg>
-                <span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="noData">No data</span>
+                <span class="text-xs text-[#525252] dark:text-[#a3a3a3]" data-translate-detail="noData">No data</span>
     </div>
   </div>
             <canvas data-tcping-chart="${safeId}" style="width: 100%; height: 200px; min-height: 200px;" class="opacity-0 transition-opacity duration-300" data-tcping-canvas="${safeId}"></canvas>
@@ -1107,13 +1268,13 @@ const apiBase = apiBaseProp ?? '';
       const lang = getCurrentLanguage();
       body.innerHTML = `
         <div class="flex flex-col items-center justify-center py-12 text-center">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-[#404040] dark:text-[#404040] text-[#d4d4d4] mb-3">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-[#737373] dark:text-[#a3a3a3] mb-3">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
             <line x1="8" y1="21" x2="16" y2="21"/>
             <line x1="12" y1="17" x2="12" y2="21"/>
           </svg>
-          <p class="text-sm font-medium text-[#737373] dark:text-[#737373] text-[#404040]">${translations.noSystemsFound[lang]}</p>
-          <p class="text-xs text-[#404040] dark:text-[#525252] text-[#737373] mt-1">${translations.systemsWillAppear[lang]}</p>
+          <p class="text-sm font-medium text-[#525252] dark:text-[#a3a3a3]">${translations.noSystemsFound[lang]}</p>
+          <p class="text-xs text-[#737373] dark:text-[#a3a3a3] mt-1">${translations.systemsWillAppear[lang]}</p>
     </div>
   `;
     }
@@ -1307,11 +1468,11 @@ const apiBase = apiBaseProp ?? '';
           } else {
             // SECURITY: Escape HTML to prevent XSS
             const escapedLocation = (item.location || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-            locationCell.innerHTML = `<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${escapedLocation}</span>`;
+            locationCell.innerHTML = `<span class="text-xs text-[#404040] dark:text-[#a3a3a3]">${escapedLocation}</span>`;
             locationCell.title = item.location || '';
           }
         } else {
-          locationCell.innerHTML = '<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">-</span>';
+          locationCell.innerHTML = '<span class="text-xs text-[#404040] dark:text-[#a3a3a3]">-</span>';
           locationCell.title = '-';
         }
       }
@@ -1413,7 +1574,7 @@ const apiBase = apiBaseProp ?? '';
         } else {
           // SECURITY: Escape HTML to prevent XSS
           const escapedOS = (item.os || '-').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-          osCell.innerHTML = `<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${escapedOS}</span>`;
+          osCell.innerHTML = `<span class="text-xs text-[#404040] dark:text-[#a3a3a3]">${escapedOS}</span>`;
         }
       }
     }
@@ -1467,7 +1628,7 @@ const apiBase = apiBaseProp ?? '';
         
         // Update traffic rows if show_traffic is enabled
         if (showTrafficInfo) {
-          const hasData = !!(item.cpu_model || item.memory_info);
+          const hasData = !!(item.cpu_model || item.memory_info || item.disk_info);
           
           // Handle speed row transition between placeholder and values
           const speedPlaceholder = detailsSection.querySelector('[data-traffic-placeholder="speed"]');
@@ -1480,12 +1641,12 @@ const apiBase = apiBaseProp ?? '';
               const valuesHtml = `
                 <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="speed">
                   <span class="flex items-center gap-0.5" data-detail-speed="in">
-                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-600 dark:text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
                     <span>${formatTrafficSpeed(item.net_in_mb_s || 0)}</span>
                   </span>
                   <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
                   <span class="flex items-center gap-0.5" data-detail-speed="out">
-                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-600 dark:text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
                     <span>${formatTrafficSpeed(item.net_out_mb_s || 0)}</span>
                   </span>
                 </div>`;
@@ -1521,12 +1682,12 @@ const apiBase = apiBaseProp ?? '';
               const valuesHtml = `
                 <div class="flex items-center text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]" data-traffic-values="total">
                   <span class="flex items-center gap-0.5" data-detail-total="in">
-                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-emerald-600 dark:text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>
                     <span>${formatTotalTraffic(item.total_net_in_bytes || 0)}</span>
                   </span>
                   <span class="text-[#525252] dark:text-[#737373] mx-1">|</span>
                   <span class="flex items-center gap-0.5" data-detail-total="out">
-                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                    <svg class="w-[10px] h-[10px] sm:w-3 sm:h-3 text-blue-600 dark:text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
                     <span>${formatTotalTraffic(item.total_net_out_bytes || 0)}</span>
                   </span>
                 </div>`;
@@ -1562,6 +1723,29 @@ const apiBase = apiBaseProp ?? '';
   const tcpingActiveTargets = new Map(); // systemId -> { target: address, targetName: name }
   // Map to track loading state for each system to allow cancellation
   const tcpingLoadingStates = new Map(); // systemId -> { loading: boolean, cancelled: boolean }
+
+  // Map: systemId -> "target1@ts1|target2@ts2|..." signature of the last
+  // tcping_data we rendered. Used by the SSE update handler to decide whether
+  // a metric_updated event actually brought a fresh tcping sample, or is just
+  // the 3-second state broadcast carrying the same tcping_data as before.
+  // See the update handler below for the exact rationale.
+  const tcpingDataSignatures = new Map();
+
+  function computeTCPingSignature(system) {
+    if (!system || !system.tcping_data) return '';
+    const keys = Object.keys(system.tcping_data).sort();
+    const parts = [];
+    for (const k of keys) {
+      const v = system.tcping_data[k];
+      if (!v) continue;
+      // Timestamp on TCPingTargetData advances only when the client actually
+      // pushed a new sample for this target — i.e. exactly at the
+      // admin-configured interval. If every timestamp matches what we
+      // rendered last time, there is no new tcping point to draw.
+      parts.push(k + '@' + (v.timestamp || ''));
+    }
+    return parts.join('|');
+  }
   
   // Global cache for TCPing config (preloaded on page load)
   let cachedTCPingConfig = null;
@@ -1595,6 +1779,11 @@ const apiBase = apiBaseProp ?? '';
     
     // Clear loading state
     tcpingLoadingStates.delete(systemId);
+
+    // Clear tcping signature cache so the next time this row is expanded,
+    // the first metric_updated event is recognized as a genuine change
+    // and the chart is populated.
+    tcpingDataSignatures.delete(systemId);
     
     // Reset canvas to ensure clean state for next initialization
     const container = document.querySelector(`[data-tcping-chart-container="${systemId}"]`);
@@ -1647,6 +1836,73 @@ const apiBase = apiBaseProp ?? '';
     return result;
   }
   
+  // React to a server-pushed "tcping_config_updated" SSE event.
+  //
+  // Without this handler the browser only ever fetched the tcping config
+  // once (at page load) and then served it from cachedTCPingConfig for
+  // the lifetime of the tab. After admin deletes / renames a target:
+  //   * the cached config still lists the deleted target,
+  //   * every expanded row keeps rendering a tab + dataset for it,
+  //   * and the one last tcping_data entry that was in SystemMetric
+  //     before the cleanup landed looked to the user like "a leftover
+  //     first point that never goes away".
+  //
+  // The fix is to invalidate the cache, re-fetch the fresh config, and
+  // repaint every currently-expanded tcping chart. For rows that aren't
+  // expanded we don't need to do anything — they'll read the new cache
+  // naturally the first time the user opens them.
+  let tcpingConfigUpdatePending = false;
+  async function handleTCPingConfigUpdated() {
+    if (tcpingConfigUpdatePending) return;
+    tcpingConfigUpdatePending = true;
+    try {
+      // 1) Force-refresh the cached config. After this await the fresh
+      //    config is already stored in cachedTCPingConfig for all the
+      //    code paths that read it directly.
+      const fresh = await loadTCPingConfig(true);
+
+      // 2) Per-system caches (tcpingConfigs, tcpingDataSignatures) also
+      //    need to be invalidated; otherwise the "signature unchanged"
+      //    fast path in the metric_updated handler would keep skipping
+      //    the redraw.
+      tcpingConfigs.clear();
+      tcpingDataSignatures.clear();
+
+      // 3) Repaint every currently-expanded row. If the fresh config is
+      //    empty (admin removed the last target) we also make sure the
+      //    chart container is hidden.
+      const expandedSections = document.querySelectorAll('.system-details:not(.hidden)');
+      expandedSections.forEach(detailsSection => {
+        const systemId = detailsSection.dataset.detailsId;
+        if (!systemId) return;
+
+        // Tear down the existing chart / tab state first so nothing from
+        // the old target set can survive the redraw.
+        cleanupTCPingChart(systemId);
+
+        const container = document.querySelector(`[data-tcping-chart-container="${systemId}"]`);
+        if (!container) return;
+
+        if (!fresh || !Array.isArray(fresh.targets) || fresh.targets.length === 0) {
+          // Config is now empty — hide the tcping panel entirely.
+          container.style.display = 'none';
+          return;
+        }
+
+        // Config still has targets — rebuild tabs from the fresh list
+        // and re-initialise the chart.
+        initializeTCPingTabs(systemId).then(() => {
+          initializeTCPingChart(systemId);
+        }).catch(() => {
+          // Swallow — a missing DOM node simply means the row was
+          // collapsed in between the SSE arrival and our async work.
+        });
+      });
+    } finally {
+      tcpingConfigUpdatePending = false;
+    }
+  }
+
   // Preload TCPing config on page load
   function preloadTCPingConfig() {
     loadTCPingConfig().then(config => {
@@ -1731,9 +1987,9 @@ const apiBase = apiBaseProp ?? '';
       
       // Set initial state based on previous selection
       if (isActive) {
-        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
+        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#151515] dark:text-[#f5f5f5]';
       } else {
-        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#525252] dark:text-[#a3a3a3] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
       }
       
       tab.textContent = target.name || target.address;
@@ -1747,7 +2003,7 @@ const apiBase = apiBaseProp ?? '';
         
         if (isCurrentlyActive) {
           // Clicking the active tab: deselect it and show all targets
-          tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+          tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#525252] dark:text-[#a3a3a3] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
           
           // Clear active target to show all targets with distinct colors
           tcpingActiveTargets.delete(systemId);
@@ -1758,10 +2014,10 @@ const apiBase = apiBaseProp ?? '';
           // Clicking an inactive tab: select it
           // Update all tabs to inactive state
           tabsContainer.querySelectorAll('button').forEach(btn => {
-            btn.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+            btn.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#525252] dark:text-[#a3a3a3] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
           });
           // Set clicked tab as active
-          tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
+          tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#151515] dark:text-[#f5f5f5]';
         
         // Update current active target for this system
         tcpingActiveTargets.set(systemId, {
@@ -3099,13 +3355,26 @@ const apiBase = apiBaseProp ?? '';
     
     // Initial render - if no existing data, render everything
     if (currentData.size === 0) {
-      // Hide loading indicator - width already adjusted by loadData
+      // Hide the loading placeholder FIRST, then populate the body in
+      // the same synchronous tick. This ordering matters: if we did it
+      // the other way around, there would be one paint frame in which
+      // both the pulse bars and the real (opacity:0) rows occupy
+      // layout, stacking the loading-indicator's 200 px min-height on
+      // top of the row heights and causing the rest of the page
+      // (footer, surrounding gaps) to briefly shift downward. By
+      // hiding the placeholder first the body's natural flow height
+      // takes over immediately, and because both operations happen
+      // inside one microtask the browser only commits a single layout.
       if (loadingIndicator) loadingIndicator.style.display = 'none';
-      
+
       body.innerHTML = items.map(item => renderRow(item, tcpingConfigured)).join('');
       currentData = newData;
-      
-      // Add staggered entrance animation for initial load
+
+      // Row-level stagger-in. Each row animates at the ALREADY-settled
+      // column width (locked in STEP 1 of renderDataInternal), so the
+      // fade-up is a pure opacity+translateY transition with zero
+      // horizontal motion — the user sees rows "rise into place",
+      // never "slide sideways".
       const systemRows = body.querySelectorAll('.system-row');
       systemRows.forEach((row, index) => {
         row.style.opacity = '0';
@@ -3318,91 +3587,216 @@ const apiBase = apiBaseProp ?? '';
     }
   };
 
-  // Fetch data from backend - ONLY source of truth
+  // renderData is the single, self-serialized render path for the table.
+  //
+  // Any number of callers (initial load, user filter/sort, SSE push, admin
+  // mutations, refresh button, …) may invoke it concurrently. To keep DOM
+  // updates atomic, renderData guards itself with an in-flight flag and a
+  // "latest-wins" pending slot. If a second call arrives while one is still
+  // running, its payload is stored in `pendingRenderData`, overwriting any
+  // earlier pending payload. When the current render finishes, the loop
+  // drains the pending slot and runs one more render with the newest data.
+  //
+  // This gives three important guarantees:
+  //   1. DOM mutations never interleave from two concurrent renders.
+  //   2. Rapid bursts of events collapse into at most 2 renders (current +
+  //      latest pending), regardless of how many events fired.
+  //   3. The freshest state always wins — a later event never gets shadowed
+  //      by an earlier one that finishes render later.
+  //
+  // Because every SSE event we consume carries the FULL authoritative
+  // systems list, simply overwriting pendingRenderData is always safe —
+  // the newer payload fully supersedes the older one.
+  let isRenderRunning = false;
+  let pendingRenderData = null;
+  async function renderData(data) {
+    if (!Array.isArray(data)) return;
+
+    if (isRenderRunning) {
+      // Latest-wins: drop any earlier pending payload in favour of this one.
+      pendingRenderData = data;
+      return;
+    }
+
+    isRenderRunning = true;
+    try {
+      let current = data;
+      // Drain pending slot before returning — if new renders are requested
+      // while the current one is in progress, we serve the newest one next
+      // before releasing the lock.
+      while (current) {
+        try {
+          await renderDataInternal(current);
+        } catch (err) {
+          if (loadingIndicator) {
+            loadingIndicator.innerHTML = `
+              <div class="text-center">
+                <p class="text-sm text-red-500 dark:text-red-400">Failed to render data</p>
+                <p class="text-xs text-[#737373] dark:text-[#a3a3a3] mt-1">${err.message}</p>
+              </div>
+            `;
+          }
+        }
+        current = pendingRenderData;
+        pendingRenderData = null;
+      }
+    } finally {
+      isRenderRunning = false;
+    }
+  }
+
+  // Latch set the first time we actually render ANY data (either from an
+  // SSE push or a fallback loadData fetch). Used by the initial-load watcher
+  // below to decide whether to fall back to a one-shot GET.
+  let initialDataRendered = false;
+
+  // Internal render implementation — assumed to be called serially from
+  // renderData() only. Never call this directly.
+  async function renderDataInternal(data) {
+    initialDataRendered = true;
+    if (data.length === 0) {
+      showEmpty();
+      // Materialise the header (it ships as display:none during the
+      // pulse phase — see STEP 2 below for the full rationale). Even
+      // though there are no rows to measure, we still want the header
+      // visible so the empty-state message is framed by the proper
+      // column labels. The default 160 px --first-col-width is
+      // appropriate here because no row ever forces it wider.
+      const headerRow = document.getElementById('system-table-header-row');
+      if (headerRow) {
+        headerRow.style.display = 'grid';
+        void headerRow.offsetHeight;
+        headerRow.style.opacity = '1';
+      }
+      return;
+    }
+
+    // STEP 1 — Lock the column width BEFORE any pixels are painted that
+    // depend on it. calculateServerNameColumnWidth measures every name
+    // via an off-screen span, so the resulting --first-col-width is the
+    // final value; it will only grow from here if/when a longer name
+    // registers in a later SSE frame (which is a steady-state update,
+    // not an initial-load concern). applyServerNameColumnWidth ends
+    // with a forced reflow, so by the time this line returns the CSS
+    // variable has been committed to the computed style tree.
+    const preCalculatedWidth = calculateServerNameColumnWidth(data);
+    applyServerNameColumnWidth(preCalculatedWidth);
+
+    // STEP 2 — On the very first render, materialise the header.
+    //
+    // The header row ships with inline `display: none; opacity: 0` so
+    // it is completely absent from layout during the pulse phase —
+    // crucially, the user never sees a header at the wrong (default
+    // 160 px) column width. STEP 1 above has already measured every
+    // server name and committed the correct `--first-col-width` to
+    // the style tree via a forced reflow, so the moment we flip the
+    // header back to `display: grid` its columns are drawn at their
+    // final, data-driven widths. A second forced reflow here makes
+    // sure the display switch is committed BEFORE we touch opacity,
+    // otherwise the browser is free to batch the two style changes
+    // and skip the opacity transition entirely (rendering the header
+    // as an abrupt pop-in). With the reflow in place the sequence
+    // the user sees is: pulse rows breathing → pulse vanishes → the
+    // table header fades in at its correct width → rows slot in
+    // underneath at the same, settled column positions. No part of
+    // the header is ever visible at the wrong width.
+    if (currentData.size === 0) {
+      const headerRow = document.getElementById('system-table-header-row');
+      if (headerRow) {
+        headerRow.style.display = 'grid';
+        void headerRow.offsetHeight;
+        headerRow.style.opacity = '1';
+      }
+
+      // STEP 3 — Wait one paint frame before handing off to render().
+      //
+      // STEP 1 already forced a synchronous reflow, so the width is
+      // authoritative in the style tree. But the *paint* of that new
+      // width (i.e. the pixels the user actually sees) happens on the
+      // next frame. By yielding one rAF here we guarantee that the
+      // fresh column width has been rasterised to the screen before the
+      // row-level `data-row-in` keyframe starts. The net effect for the
+      // user is: nothing moves during the row fade-up — rows simply
+      // materialise at their final, correct column positions.
+      //
+      // Cost: ~16 ms on a 60 Hz display. That is well below the
+      // perception threshold and does not lengthen the feel of the load
+      // (the pulsing placeholder bars in LoadingState keep filling the
+      // space during this frame).
+      await new Promise(resolve => requestAnimationFrame(() => resolve()));
+    }
+
+    // Apply filter first, then sorting
+    const filteredData = filterSystems(data);
+    const sortedData = sortSystems(filteredData);
+    await render(sortedData);
+  }
+
+  // loadData is kept as the entry point for the cases where the browser
+  // legitimately needs to fetch state on its own:
+  //   * initial page load (before any SSE event has arrived)
+  //   * user actions (filter / sort / refresh button / legacy signal events)
+  //
+  // The real-time realtime path (every 3 s, plus admin mutations) is the
+  // SSE `metric_updated` event which embeds the systems array directly and
+  // calls renderData() without any fetch.
   async function loadData() {
     try {
       const data = await fetchSystemMetrics(apiBase);
-      
-      if (data.length === 0) {
-        showEmpty();
-        // Show header even when empty
-        const headerRow = document.getElementById('system-table-header-row');
-        if (headerRow) {
-          headerRow.style.opacity = '1';
-        }
-      } else {
-        // CRITICAL: Always calculate and apply column width first
-        const preCalculatedWidth = calculateServerNameColumnWidth(data);
-        applyServerNameColumnWidth(preCalculatedWidth);
-        
-        const isFirstLoad = currentData.size === 0;
-        
-        if (isFirstLoad) {
-          // Force immediate style recalculation
-          const root = document.getElementById('monitor-root');
-          if (root) {
-            void root.offsetHeight; // Trigger reflow
-          }
-          
-          // Hide initial loading spinner
-          const initialLoading = document.getElementById('initial-loading');
-          if (initialLoading) {
-            initialLoading.style.display = 'none';
-          }
-          
-          // Show skeleton rows with correct column width
-          const skeletonRows = document.getElementById('skeleton-rows');
-          if (skeletonRows) {
-            skeletonRows.style.display = 'block';
-          }
-          
-          // Show header with correct width
-          const headerRow = document.getElementById('system-table-header-row');
-          if (headerRow) {
-            headerRow.style.transition = 'opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
-            headerRow.style.opacity = '1';
-          }
-          
-          // Wait a moment to show skeleton (provides visual feedback)
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-        
-        // Apply filter first, then sorting
-        const filteredData = filterSystems(data);
-        const sortedData = sortSystems(filteredData);
-        await render(sortedData);
-      }
+      await renderData(data);
     } catch (err) {
       if (loadingIndicator) {
         loadingIndicator.innerHTML = `
           <div class="text-center">
-            <p class="text-sm text-red-400">Failed to connect to backend</p>
-            <p class="text-xs text-[#525252] dark:text-[#525252] text-[#737373] mt-1">${err.message}</p>
+            <p class="text-sm text-red-500 dark:text-red-400">Failed to connect to backend</p>
+            <p class="text-xs text-[#737373] dark:text-[#a3a3a3] mt-1">${err.message}</p>
           </div>
         `;
       }
-      // Show header even on error
+      // Materialise the header at the default 160 px --first-col-width
+      // so the error message has the proper column frame around it.
+      // The display:none→grid + reflow + opacity trick mirrors the
+      // happy-path STEP 2, so the failure UI fades in with the same
+      // curve as success.
       const headerRow = document.getElementById('system-table-header-row');
       if (headerRow) {
+        headerRow.style.display = 'grid';
+        void headerRow.offsetHeight;
         headerRow.style.opacity = '1';
       }
     }
   }
 
-  // Debounce loadData to prevent duplicate updates
+  // debouncedRenderData collapses rapid-fire SSE events into a single render
+  // with an 80 ms window. This is primarily a CPU optimisation — renderData
+  // is already self-serialising, but we avoid scheduling 10 microtasks in a
+  // row when several SSE frames arrive back-to-back.
+  let renderTimeout = null;
+  const debouncedRenderData = (data) => {
+    // Pre-populate the latest-wins slot so the next renderData call — which
+    // may be the one we schedule below, or one triggered by a user action —
+    // always picks up this payload.
+    pendingRenderData = data;
+    if (renderTimeout) return;
+    renderTimeout = setTimeout(() => {
+      renderTimeout = null;
+      const d = pendingRenderData;
+      pendingRenderData = null;
+      if (d) renderData(d);
+    }, 80);
+  };
+
+  // Legacy fallback: older signal-only events (e.g. order_updated) still fall
+  // back to a fetch + render. This is only used for events that do NOT carry
+  // the systems array; the common metric_updated path never hits here.
   let loadDataTimeout = null;
-  let isLoadDataRunning = false; // Flag to prevent concurrent loadData calls
+  let isLoadDataRunning = false;
   const debouncedLoadData = () => {
-    // If loadData is already running, skip scheduling
-    if (isLoadDataRunning) {
-      return;
-    }
-    
+    if (isLoadDataRunning) return;
     if (loadDataTimeout) {
       clearTimeout(loadDataTimeout);
     }
     loadDataTimeout = setTimeout(async () => {
-      // Double check before executing (in case loadData started between scheduling and execution)
       if (isLoadDataRunning) {
         loadDataTimeout = null;
         return;
@@ -3414,15 +3808,57 @@ const apiBase = apiBaseProp ?? '';
         isLoadDataRunning = false;
         loadDataTimeout = null;
       }
-    }, 200); // 200ms debounce - prevents rapid consecutive calls
+    }, 200);
   };
 
   // Connect to SSE for real-time updates
+  //
+  // Reliability strategy:
+  //   * Exponential backoff with jitter on reconnect, to avoid a thundering
+  //     herd when the backend restarts and many browser tabs reconnect at once.
+  //   * A liveness watchdog that forces a reconnect if we haven't seen any
+  //     SSE traffic in 45 s. The server sends either an update (every ~3 s)
+  //     or a keepalive ping (every 15 s), so 45 s of silence is a strong
+  //     signal that the TCP stream is half-open (mobile network switch,
+  //     NAT idle timeout, etc.) and needs to be re-established proactively —
+  //     EventSource alone can take several minutes to notice.
+  let sseReconnectAttempt = 0;
+  let sseWatchdogTimer = null;
+  const SSE_WATCHDOG_MS = 45_000;
+
+  function markSSEAlive() {
+    if (sseWatchdogTimer) {
+      clearTimeout(sseWatchdogTimer);
+    }
+    sseWatchdogTimer = setTimeout(() => {
+      // No activity (not even the 15 s server keepalive) for 45 s — force
+      // a reconnect. Using the error path reuses the same backoff logic.
+      if (eventSource) {
+        try { eventSource.close(); } catch (_) {}
+        eventSource = null;
+      }
+      scheduleSSEReconnect();
+    }, SSE_WATCHDOG_MS);
+  }
+
+  function scheduleSSEReconnect() {
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s, + up to 1s jitter.
+    const base = Math.min(30_000, 1000 * Math.pow(2, sseReconnectAttempt));
+    const jitter = Math.floor(Math.random() * 1000);
+    const delay = base + jitter;
+    sseReconnectAttempt++;
+    setTimeout(connectSSE, delay);
+  }
+
   function connectSSE() {
     // Close existing connection and remove all event listeners
     if (eventSource) {
       eventSource.close();
       eventSource = null;
+    }
+    if (sseWatchdogTimer) {
+      clearTimeout(sseWatchdogTimer);
+      sseWatchdogTimer = null;
     }
 
     // Get token from URL parameter (for share links) or admin token
@@ -3441,34 +3877,120 @@ const apiBase = apiBaseProp ?? '';
     }
 
     eventSource = new EventSource(sseUrl);
+    markSSEAlive();
 
     eventSource.addEventListener('connected', (e) => {
-      // Connected to update stream
+      // Successfully (re)connected — reset the backoff counter so the next
+      // unrelated disconnect starts over at 1 s.
+      sseReconnectAttempt = 0;
+      markSSEAlive();
     });
 
-    // Store the handler function so we can remove it if needed
+    // onmessage fires for untyped messages AND for the server keepalive
+    // stream; use it purely to reset the watchdog. Typed events have their
+    // own listeners below.
+    eventSource.onmessage = () => {
+      markSSEAlive();
+    };
+
+    // Store the handler function so we can remove it if needed.
+    //
+    // Backend-push model:
+    //   * metric_updated events now embed the full systems list in
+    //     `update.systems`. When present, the browser renders directly from
+    //     that data and does NOT issue GET /api/metrics. This eliminates the
+    //     redundant fetch round-trip and makes the server the single source
+    //     of truth for what each tab displays.
+    //   * metric_deleted / order_updated remain signal-only events. They
+    //     don't carry data on the wire, so we keep the legacy fallback of
+    //     fetching once before rendering for those two. (Newer server
+    //     versions also emit a full-data metric_updated right after the
+    //     signal, which will arrive within a few ms and supersede the
+    //     fetched result.)
     const updateHandler = (e) => {
+      markSSEAlive();
       try {
         const update = JSON.parse(e.data);
-        
-        // Reload data when any update is received (incremental update will handle changes)
-        if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
-          // Use debounced loadData to prevent duplicate updates from rapid SSE events
+
+        if (update.type === 'metric_updated') {
+          if (Array.isArray(update.systems)) {
+            // Backend-pushed full state — render directly, no GET.
+            debouncedRenderData(update.systems);
+          } else {
+            // Legacy signal-only event from an older server — fall back.
+            debouncedLoadData();
+          }
+        } else if (update.type === 'order_updated' || update.type === 'metric_deleted') {
+          // Signal-only events → fetch once to converge. (On newer servers
+          // the following metric_updated will land within milliseconds and
+          // refresh again with embedded data; that's harmless.)
           debouncedLoadData();
-          
-          // Update tcping charts for visible expanded rows (incremental update only)
-          // Note: Due to our single-expand policy, there should only be max 1 expanded section
-          const expandedSections = document.querySelectorAll('.system-details:not(.hidden)');
+        } else if (update.type === 'tcping_config_updated') {
+          // Admin changed the tcping config (added/removed/renamed a
+          // target). Our cachedTCPingConfig is now stale, and any
+          // currently-expanded chart is drawing a target set that no
+          // longer matches reality. Drop the cache, re-fetch the fresh
+          // config, and redraw tabs + chart for every expanded row so
+          // deleted targets disappear immediately (no "ghost first
+          // point" left over) and newly added targets show up without
+          // a page reload.
+          handleTCPingConfigUpdated();
+          return;
+        } else {
+          return; // unknown event type — ignore
+        }
+
+        // Refresh tcping charts for visible expanded rows, but ONLY when the
+        // underlying tcping_data has actually changed.
+        //
+        // Why this matters: metric_updated events are broadcast every 3 s
+        // (the service uptime / CPU / RAM cadence), while tcping latency is
+        // sampled at the admin-configured interval (default 60 s, can be
+        // 10 s / 30 s / etc.). Calling updateTCPingChart on EVERY 3 s frame
+        // would cause the chart to re-fetch history and redraw 3–20× more
+        // often than there is actual new data, producing visible flicker
+        // and wasted HTTP traffic. Instead we hash the tcping_data
+        // timestamps of each expanded system and only refresh when that
+        // signature changes — giving us "exactly as often as there is new
+        // tcping data", which IS the admin-configured interval.
+        // If a tcping_config_updated just landed, handleTCPingConfigUpdated
+        // is already tearing down and rebuilding every expanded chart.
+        // Racing a second redraw from this branch would double-fetch the
+        // history and risk creating two Chart.js instances on the same
+        // canvas, so defer to the in-flight rebuild.
+        if (tcpingConfigUpdatePending) {
+          return;
+        }
+        const expandedSections = document.querySelectorAll('.system-details:not(.hidden)');
+        if (expandedSections.length > 0) {
+          // Build a quick lookup only when we actually need it.
+          const systemsById = (update && Array.isArray(update.systems))
+            ? new Map(update.systems.map(s => [s.id, s]))
+            : null;
           expandedSections.forEach(detailsSection => {
             const systemId = detailsSection.dataset.detailsId;
-            if (systemId) {
-              // Check if this system is not currently loading (to avoid conflicts)
-              const loadingState = tcpingLoadingStates.get(systemId);
-              if (!loadingState || !loadingState.loading) {
-                // Use incremental update for all targets chart
-                updateTCPingChart(systemId, null, null, true);
-              }
+            if (!systemId) return;
+
+            const loadingState = tcpingLoadingStates.get(systemId);
+            if (loadingState && loadingState.loading) return;
+
+            const systemData = systemsById ? systemsById.get(systemId) : null;
+            if (!systemData) {
+              // Legacy signal-only event (no systems array) — fall back to a
+              // single refresh so user edits propagate at least once.
+              updateTCPingChart(systemId, null, null, true);
+              return;
             }
+
+            const newSig = computeTCPingSignature(systemData);
+            const oldSig = tcpingDataSignatures.get(systemId) || '';
+            if (newSig === oldSig) {
+              // No tcping target has produced a new timestamp — nothing
+              // fresh to draw. Skip the fetch entirely.
+              return;
+            }
+            tcpingDataSignatures.set(systemId, newSig);
+            updateTCPingChart(systemId, null, null, true);
           });
         }
       } catch (err) {
@@ -3480,11 +4002,14 @@ const apiBase = apiBaseProp ?? '';
 
     eventSource.onerror = (err) => {
       if (eventSource) {
-      eventSource.close();
+        eventSource.close();
         eventSource = null;
       }
-      // Reconnect after 5 seconds
-      setTimeout(connectSSE, 5000);
+      if (sseWatchdogTimer) {
+        clearTimeout(sseWatchdogTimer);
+        sseWatchdogTimer = null;
+      }
+      scheduleSSEReconnect();
     };
   }
 
@@ -3513,31 +4038,35 @@ const apiBase = apiBaseProp ?? '';
     filterInputHandlersSetup = true;
   }
 
-  // Initial load - wait for DOM to be ready
+  // Initial bootstrap. The data source is 100% server-push: when the SSE
+  // connection opens, the server immediately sends an authoritative snapshot
+  // and then pushes every 3 s plus on every admin mutation. The browser
+  // therefore has ZERO self-initiated polling; the only thing we add here is
+  // a one-shot safety net in case the SSE stream fails to deliver within a
+  // short grace window (proxy that strips SSE, firewall, or server hiccup),
+  // in which case we fall back to a single GET /api/metrics.
+  const INITIAL_SSE_FALLBACK_MS = 2500;
+  async function bootstrap() {
+    setupFilterInput();
+    await loadTrafficSetting();
+    connectSSE();
+    updateTranslations();
+    preloadTCPingConfig();
+
+    // One-shot fallback: if no render has happened by the deadline, pull
+    // once so the page isn't stuck on "loading". On a healthy connection
+    // the SSE initial snapshot fires within ~100–200 ms and this timer
+    // never triggers.
+    setTimeout(() => {
+      if (!initialDataRendered) {
+        loadData();
+      }
+    }, INITIAL_SSE_FALLBACK_MS);
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', async () => {
-      setupFilterInput();
-      // Load traffic setting before rendering rows
-      await loadTrafficSetting();
-      loadData();
-      connectSSE();
-      // Initial translation update
-      updateTranslations();
-      // Preload TCPing config for faster tab display
-      preloadTCPingConfig();
-    });
+    document.addEventListener('DOMContentLoaded', bootstrap);
   } else {
-    (async () => {
-      setupFilterInput();
-      // Load traffic setting before rendering rows
-      await loadTrafficSetting();
-      loadData();
-      connectSSE();
-      // Initial translation update
-      updateTranslations();
-      // Preload TCPing config for faster tab display
-      preloadTCPingConfig();
-    })();
+    bootstrap();
   }
 
   // Recalculate column width on window resize (with debounce)
@@ -3565,17 +4094,6 @@ const apiBase = apiBaseProp ?? '';
     --first-col-width: 160px;
   }
   
-  /* Loading → Loaded smooth transition (matches project theme) */
-  #loading-indicator {
-    /* Fade out with same easing as page animations */
-    transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-                transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  
-  #loading-indicator.fade-out {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
   
   @keyframes data-row-in {
     from {

@@ -11,8 +11,25 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Pulse Monitor admin console — manage clients, policies, and backups." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="Admin · Pulse Monitor" />
+    <meta property="og:description" content="Pulse Monitor admin console." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pulse Monitor" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Admin · Pulse Monitor" />
+    <meta name="twitter:description" content="Pulse Monitor admin console." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Admin - Pulse Monitor</title>
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
+    <title>Admin · Pulse Monitor</title>
     <!-- View Transitions API styling for smooth theme switching -->
     <style>
       /* View Transitions API support for smooth cross-fade */
@@ -224,7 +241,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       })();
     </script>
   </head>
-  <body class="min-h-screen overflow-x-hidden bg-[#151515] dark:bg-[#151515] bg-white text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]">
+  <body class="min-h-screen overflow-x-hidden bg-[#fafafa] dark:bg-[#151515] text-[#151515] dark:text-[#f5f5f5]">
     <div id="auth-check" class="hidden min-h-screen flex flex-col">
       <div class="px-2 sm:px-4 md:px-6 animate-navbar">
         <NavBar isAdmin={true} />
@@ -232,12 +249,21 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 pb-2 sm:pb-4 animate-content">
         <AdminDashboard apiBase={apiBase} />
       </main>
-      <Footer />
+      <div class="px-2 sm:px-4 md:px-6">
+        <Footer />
+      </div>
     </div>
-    <div id="login-redirect" class="min-h-screen flex items-center justify-center">
+    <!--
+      Auth-gate overlay — see index.astro for the full rationale.
+      TL;DR: `fixed inset-0` + opacity transition so the spinner cross-
+      fades out while the admin content fades in beneath, instead of
+      snapping out of the layout and leaving a one-frame blank gap
+      before `.animate-content` (delay: 0.1s) begins its entrance.
+    -->
+    <div id="login-redirect" class="fixed inset-0 z-50 flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] transition-opacity duration-200 ease-out">
       <div class="text-center animate-page-in">
-        <div class="w-8 h-8 border-2 border-[#404040] dark:border-[#404040] border-[#d4d4d4] border-t-transparent dark:border-t-transparent rounded-full animate-spin-smooth mx-auto mb-4"></div>
-        <p class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">Checking authentication...</p>
+        <div class="w-8 h-8 border-[3px] border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin-smooth mx-auto mb-4"></div>
+        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">Checking authentication...</p>
       </div>
     </div>
   </body>
@@ -311,9 +337,20 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       if (res.ok) {
         const data = await res.json();
         if (data.valid) {
-          // Token is valid, show admin page
+          // Token is valid — cross-fade the overlay out so the admin
+          // dashboard appears smoothly beneath. `.animate-content` on
+          // <main> has a 100 ms animation-delay, and the overlay's
+          // `transition: opacity 200ms` keeps the spinner visible
+          // through that window so the user never sees an empty frame.
+          // `pointer-events: none` drops the overlay out of the hit-
+          // testing path immediately so clicks land on the NavBar /
+          // content while the fade is in progress, instead of being
+          // swallowed by the still-present (but fading) `z-50` layer.
+          // `.hidden` is deferred until after the transition completes.
           authCheck.classList.remove('hidden');
-          loginRedirect.classList.add('hidden');
+          loginRedirect.style.pointerEvents = 'none';
+          loginRedirect.style.opacity = '0';
+          setTimeout(() => loginRedirect.classList.add('hidden'), 220);
           
           // Set token in all API requests
           const originalFetch = window.fetch;

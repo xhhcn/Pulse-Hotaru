@@ -7,6 +7,9 @@ services:
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
+    # Match supervisord's stopwaitsecs=30 plus slack so the backend has
+    # time to flush + close bbolt cleanly before docker SIGKILLs us.
+    stop_grace_period: 45s
     networks:
       - pulse-network
 

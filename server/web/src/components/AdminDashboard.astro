@@ -11,25 +11,28 @@ const apiBase = apiBaseProp ?? '';
     <div class="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <h2 id="system-list-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="systemList">Service List</h2>
       <div class="flex items-center gap-1.5 sm:gap-2">
-        <button id="add-system-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600" title="" data-title-en="Add Service" data-title-zh="添加服务">
+        <button id="add-system-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600" title="Add Service" aria-label="Add Service" data-title-en="Add Service" data-title-zh="添加服务">
           <Icon name="plus" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="privacy-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600" title="" data-title-en="Privacy Settings" data-title-zh="隐私设置">
+        <button id="privacy-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600" title="Privacy Settings" aria-label="Privacy Settings" data-title-en="Privacy Settings" data-title-zh="隐私设置">
           <Icon name="shield" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="navbar-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-purple-400 dark:hover:text-purple-400 hover:text-purple-600" title="" data-title-en="Customization Settings" data-title-zh="自定义设置">
+        <button id="navbar-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-purple-400 dark:hover:text-purple-400 hover:text-purple-600" title="Customization Settings" aria-label="Customization Settings" data-title-en="Customization Settings" data-title-zh="自定义设置">
           <Icon name="palette" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="tcping-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600" title="" data-title-en="TCPing Settings" data-title-zh="TCPing 设置">
+        <button id="tcping-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600" title="TCPing Settings" aria-label="TCPing Settings" data-title-en="TCPing Settings" data-title-zh="TCPing 设置">
           <Icon name="settings" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="refresh-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="" data-title-en="Refresh" data-title-zh="刷新">
+        <button id="refresh-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Refresh" aria-label="Refresh" data-title-en="Refresh" data-title-zh="刷新">
           <Icon name="refresh-cw" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="change-password-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-amber-400 dark:hover:text-amber-400 hover:text-amber-600" title="" data-title-en="Change Password" data-title-zh="修改密码">
+        <button id="backup-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600 disabled:pointer-events-none disabled:opacity-60" title="Download Backup" aria-label="Download Backup" data-title-en="Download Backup" data-title-zh="下载备份">
+          <Icon name="download" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </button>
+        <button id="change-password-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-amber-400 dark:hover:text-amber-400 hover:text-amber-600" title="Change Password" aria-label="Change Password" data-title-en="Change Password" data-title-zh="修改密码">
           <Icon name="lock" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="logout-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600" title="" data-title-en="Logout" data-title-zh="退出登录">
+        <button id="logout-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600" title="Logout" aria-label="Logout" data-title-en="Logout" data-title-zh="退出登录">
           <Icon name="log-out" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
       </div>
@@ -37,7 +40,7 @@ const apiBase = apiBaseProp ?? '';
 
     <div id="systems-list" class="space-y-3 max-h-[600px] overflow-y-auto scrollbar-hide" data-draggable-list>
       <div class="flex items-center justify-center py-12">
-        <div id="loading-systems-text" class="text-sm text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="loadingSystems">Loading systems...</div>
+        <div id="loading-systems-text" class="text-sm text-[#525252] dark:text-[#737373]" data-translate="loadingSystems">Loading systems...</div>
       </div>
     </div>
   </div>
@@ -47,14 +50,14 @@ const apiBase = apiBaseProp ?? '';
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="add-new-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="addNewSystem">Add New System</h2>
-        <button id="close-add-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-add-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="add-system-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="systemName">System Name</span> <span class="text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="systemName">System Name</span> <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             type="text"
             name="name"
@@ -64,11 +67,11 @@ const apiBase = apiBaseProp ?? '';
             data-placeholder-zh="我的服务器"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="displayNameForThisSystem">Display name for this system</p>
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="displayNameForThisSystem">Display name for this system</p>
         </div>
 
         <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
-          <p class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+          <p class="text-xs text-[#525252] dark:text-[#a3a3a3]">
             <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
           </p>
         </div>
@@ -99,7 +102,7 @@ const apiBase = apiBaseProp ?? '';
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="edit-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="editSystem">Edit System</h2>
-        <button id="close-edit-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-edit-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
@@ -108,7 +111,7 @@ const apiBase = apiBaseProp ?? '';
         <input type="hidden" name="original-id" value="" />
         
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="systemName">System Name</span> <span class="text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="systemName">System Name</span> <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             type="text"
             name="name"
@@ -121,19 +124,19 @@ const apiBase = apiBaseProp ?? '';
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="tags">Tags</span> <span class="text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]" data-translate="tagsCommaSeparated">(comma-separated)</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="tags">Tags</span> <span class="text-xs text-[#737373] dark:text-[#737373]" data-translate="tagsCommaSeparated">(comma-separated)</span></label>
           <input
             type="text"
             name="tags"
             id="edit-tags-input"
-            placeholder="Python, traffic:in, speed:in"
+            placeholder="Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]" data-translate="tagsHint">Enter tags separated by commas (e.g., Python, traffic:in, speed:in, Production)</p>
+          <p class="mt-1 text-xs text-[#737373] dark:text-[#a3a3a3]" data-translate="tagsHint">Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro)</p>
         </div>
 
         <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
-          <p class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+          <p class="text-xs text-[#525252] dark:text-[#a3a3a3]">
             <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
           </p>
         </div>
@@ -165,16 +168,16 @@ const apiBase = apiBaseProp ?? '';
       <div class="mb-4">
         <div class="mb-3 flex items-center gap-3">
           <div class="rounded-full bg-red-500/10 p-2">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-400">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 dark:text-red-400">
               <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
             </svg>
           </div>
           <h2 id="delete-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="deleteSystem">Delete System</h2>
         </div>
-        <p class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">
           <span data-translate="areYouSureYouWantToDelete">Are you sure you want to delete</span> <span class="font-medium text-[#262626] dark:text-[#d4d4d4]" id="delete-system-name"></span>?
         </p>
-        <p class="mt-3 text-xs text-red-400/80">
+        <p class="mt-3 text-xs text-red-500/90 dark:text-red-400/80">
           ⚠️ <span data-translate="thisActionCannotBeUndone">This action cannot be undone.</span>
         </p>
       </div>
@@ -202,7 +205,7 @@ const apiBase = apiBaseProp ?? '';
       <!-- Header - Fixed -->
       <div class="flex items-center justify-between p-4 sm:p-6 pb-0 shrink-0">
         <h2 id="tcping-config-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="tcpingSettings">TCPing Settings</h2>
-        <button id="close-tcping-config-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-tcping-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
@@ -211,8 +214,8 @@ const apiBase = apiBaseProp ?? '';
       <div class="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 pt-4 scrollbar-hide">
         <form id="tcping-config-form" class="space-y-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
-              <span data-translate="pollingInterval">Polling Interval</span> <span class="text-red-400">*</span>
+            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]">
+              <span data-translate="pollingInterval">Polling Interval</span> <span class="text-red-500 dark:text-red-400">*</span>
             </label>
             <div class="flex items-center gap-2">
               <input
@@ -223,14 +226,14 @@ const apiBase = apiBaseProp ?? '';
                 required
                 class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <span class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0" data-translate="seconds">seconds</span>
+              <span class="text-sm text-[#525252] dark:text-[#a3a3a3] shrink-0" data-translate="seconds">seconds</span>
             </div>
-            <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="pollingIntervalDesc">How often to send tcping requests to clients</p>
+            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="pollingIntervalDesc">How often to send tcping requests to clients</p>
           </div>
 
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
-              <span data-translate="tcpingTargets">TCPing Targets</span> <span class="text-red-400">*</span>
+            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]">
+              <span data-translate="tcpingTargets">TCPing Targets</span> <span class="text-red-500 dark:text-red-400">*</span>
             </label>
             <div id="tcping-targets-container" class="space-y-2 sm:space-y-2">
               <!-- Targets will be dynamically added here -->
@@ -242,7 +245,7 @@ const apiBase = apiBaseProp ?? '';
             >
               <span data-translate="addTarget">+ Add Target</span>
             </button>
-            <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="targetFormatDesc">Format: name and address (e.g., Google DNS, 8.8.8.8:53)</p>
+            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="targetFormatDesc">Format: name and address (e.g., Google DNS, 8.8.8.8:53)</p>
           </div>
 
           <div id="tcping-config-message" class="hidden text-sm"></div>
@@ -272,14 +275,14 @@ const apiBase = apiBaseProp ?? '';
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="change-password-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="changePassword">Change Password</h2>
-        <button id="close-change-password-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-change-password-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="change-password-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="currentPassword">Current Password</span> <span class="text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="currentPassword">Current Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             type="password"
             name="currentPassword"
@@ -292,7 +295,7 @@ const apiBase = apiBaseProp ?? '';
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="newPassword">New Password</span> <span class="text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="newPassword">New Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             type="password"
             name="newPassword"
@@ -302,11 +305,11 @@ const apiBase = apiBaseProp ?? '';
             data-placeholder-zh="输入新密码（至少6个字符）"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="passwordMinLength">Password must be at least 6 characters long</p>
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="passwordMinLength">Password must be at least 6 characters long</p>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="confirmNewPassword">Confirm New Password</span> <span class="text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="confirmNewPassword">Confirm New Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
           <input
             type="password"
             name="confirmNewPassword"
@@ -344,14 +347,14 @@ const apiBase = apiBaseProp ?? '';
     <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 sm:p-7 shadow-2xl" data-modal-content style="scrollbar-width: none; -ms-overflow-style: none;">
       <div class="mb-5 flex items-center justify-between">
         <h2 id="navbar-config-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="customizationSettings">Customization Settings</h2>
-        <button id="close-navbar-config-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-navbar-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="navbar-config-form" class="space-y-5">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="navbarText">Navbar Text</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="navbarText">Navbar Text</span></label>
           <input
             type="text"
             name="text"
@@ -359,11 +362,11 @@ const apiBase = apiBaseProp ?? '';
             placeholder="Pulse"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="navbarTextHint">Custom text displayed in navbar (leave empty for default: Pulse)</p>
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="navbarTextHint">Custom text displayed in navbar (leave empty for default: Pulse)</p>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="navbarLogo">Navbar Logo</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="navbarLogo">Navbar Logo</span></label>
           <input
             type="text"
             name="logo"
@@ -371,11 +374,11 @@ const apiBase = apiBaseProp ?? '';
             placeholder="https://example.com/logo.svg or SVG code"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="navbarLogoHint">Logo URL or SVG code (leave empty for default logo)</p>
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="navbarLogoHint">Logo URL or SVG code (leave empty for default logo)</p>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="sharedSecret">Shared Secret</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="sharedSecret">Shared Secret</span></label>
           <div class="flex items-center gap-2">
             <input
               type="text"
@@ -391,18 +394,18 @@ const apiBase = apiBaseProp ?? '';
               <span data-translate="regenerate">Regenerate</span>
             </button>
           </div>
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="sharedSecretHint">This secret is shared by all clients for authentication</p>
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="sharedSecretHint">This secret is shared by all clients for authentication</p>
         </div>
 
         <!-- Show Traffic Toggle -->
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
           <div class="flex-1">
             <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showTrafficLabel">Show Traffic Info</label>
-            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="showTrafficDesc">Display real-time and total traffic in the detail dropdown section</p>
+            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="showTrafficDesc">Display real-time and total traffic in the detail dropdown section</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer ml-3">
             <input type="checkbox" id="show-traffic-toggle" name="show_traffic" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#404040] dark:bg-[#404040] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-purple-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
           </label>
         </div>
 
@@ -410,25 +413,25 @@ const apiBase = apiBaseProp ?? '';
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
           <div class="flex-1">
             <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showGlassLabel">Glassmorphism Effect</label>
-            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="showGlassDesc">Enable frosted glass visual effect on navbar and cards</p>
+            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="showGlassDesc">Enable frosted glass visual effect on navbar and cards</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer ml-3">
             <input type="checkbox" id="show-glass-toggle" name="show_glass" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#404040] dark:bg-[#404040] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-purple-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
           </label>
         </div>
 
         <!-- Custom CSS & JavaScript -->
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
           <textarea
             id="navbar-custom-code-input"
             rows="10"
             placeholder="/* Custom CSS */&#10;<style>&#10;body { font-family: 'Arial', sans-serif; }&#10;#all-systems-title { color: #ff6b6b; }&#10;</style>&#10;&#10;/* Inline JavaScript */&#10;<script>&#10;console.log('Custom code loaded!');&#10;</script>&#10;&#10;/* External Libraries */&#10;<script src=&quot;https://cdn.jsdelivr.net/...&quot;></script>"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] font-mono"
           ></textarea>
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="customCodeHint">Custom CSS and JavaScript will be applied to all pages. Use &lt;style&gt; for CSS or &lt;script&gt; for JS</p>
-          <p class="mt-2 text-xs text-[#737373] dark:text-[#737373] text-[#525252]">
+          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="customCodeHint">Custom CSS and JavaScript will be applied to all pages. Use &lt;style&gt; for CSS or &lt;script&gt; for JS</p>
+          <p class="mt-2 text-xs text-[#525252] dark:text-[#737373]">
             <strong data-translate="customCodeSecurityWarning">⚠️ Security Warning: Custom code is publicly accessible. Do NOT include sensitive information (API keys, passwords, tokens).</strong>
           </p>
         </div>
@@ -497,7 +500,7 @@ const apiBase = apiBaseProp ?? '';
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="privacy-config-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="privacySettings">Privacy Settings</h2>
-        <button id="close-privacy-config-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+        <button id="close-privacy-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
@@ -507,24 +510,24 @@ const apiBase = apiBaseProp ?? '';
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
           <div class="flex-1">
             <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="enablePrivacyMode">Enable Privacy Mode</label>
-            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="privacyModeDesc">When enabled, login page will appear before index page. Admin page does not require login.</p>
+            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="privacyModeDesc">When enabled, login page will appear before index page. Admin page does not require login.</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="privacy-enabled" name="enabled" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#404040] dark:bg-[#404040] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-orange-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
           </label>
         </div>
 
         <!-- Temporary Share Section -->
         <div id="share-section" class="space-y-3 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate="temporaryShare">Temporary Share</label>
-            <p class="text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="temporaryShareDesc">Generate a temporary share link that allows access without login. Login page will appear before admin page for share links.</p>
+            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="temporaryShare">Temporary Share</label>
+            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="temporaryShareDesc">Generate a temporary share link that allows access without login. Login page will appear before admin page for share links.</p>
           </div>
 
           <!-- Current Share Link -->
           <div id="current-share-link-container" class="hidden">
-            <label class="mb-1 block text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate="currentShareLink">Current Share Link</label>
+            <label class="mb-1 block text-xs font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="currentShareLink">Current Share Link</label>
             <div class="flex items-center gap-2">
               <input
                 type="text"
@@ -538,12 +541,12 @@ const apiBase = apiBaseProp ?? '';
                 class="rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-xs font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
                 data-translate="copy">Copy</button>
             </div>
-            <p id="token-expires-info" class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]"></p>
+            <p id="token-expires-info" class="mt-1 text-xs text-[#525252] dark:text-[#737373]"></p>
           </div>
 
           <!-- Generate New Share Link -->
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate="expirationHours">Expiration (Hours)</label>
+            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="expirationHours">Expiration (Hours)</label>
             <input
               type="number"
               id="token-expires-hours"
@@ -553,7 +556,7 @@ const apiBase = apiBaseProp ?? '';
               value="1"
               class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
-            <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="expirationHoursHint">Number of hours until the share link expires (1-720, max 30 days)</p>
+            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="expirationHoursHint">Number of hours until the share link expires (1-720, max 30 days)</p>
           </div>
 
           <button
@@ -706,6 +709,30 @@ const apiBase = apiBaseProp ?? '';
     }, 150);
   }
 
+  // Close the topmost visible modal on Escape.
+  //
+  // All nine admin modals (add / edit / delete / tcping / navbar /
+  // regenerate-secret / privacy / change-password) share the
+  // [data-modal] marker and are hidden via the "hidden" class. We
+  // look them up *live* on every keypress (not at init time) because
+  // openModalWithAnimation moves the modal node under <body>, which
+  // means a cached querySelectorAll from init would still work but
+  // any future modal added to the markup would be missed.
+  //
+  // If multiple modals happen to be visible (e.g. the regenerate-
+  // secret confirmation opened on top of the navbar-config modal),
+  // we close only the last one in DOM order — the one visually on
+  // top — and leave the underlying modal open. This matches the
+  // user expectation of "Escape closes the thing I just opened".
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const openModals = Array.from(document.querySelectorAll('[data-modal]'))
+      .filter((m) => !m.classList.contains('hidden'));
+    if (openModals.length === 0) return;
+    const topModal = openModals[openModals.length - 1];
+    closeModalWithAnimation(topModal);
+  });
+
   // Format bytes to human readable format (B, KiB, MiB, GiB, TiB)
   function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
@@ -718,55 +745,112 @@ const apiBase = apiBaseProp ?? '';
     return `${formatted} ${sizes[i]}`;
   }
 
-  // Get CPU brand icon based on CPU model
+  // Get CPU brand icon based on CPU model.
+  //
+  // Detection order matters:
+  //   1. Apple Silicon is technically ARM but we want the Apple logo, so it
+  //      must be matched BEFORE the generic ARM rules below.
+  //   2. Intel / AMD come next — the safe, well-known x86_64 vendors.
+  //   3. Everything else falls through to a broad ARM family detector that
+  //      covers Ampere Altra, AWS Graviton (Neoverse), Raspberry Pi
+  //      (Broadcom BCM / Cortex-A), Rockchip / Allwinner SBCs, Qualcomm
+  //      Snapdragon, Samsung Exynos, HiSilicon Kirin, MediaTek Dimensity,
+  //      as well as plain "aarch64" / "ARMv8" kernel strings that Linux
+  //      reports on generic ARM servers.
   function getCPUBrandIcon(cpuModel) {
     if (!cpuModel) return null;
     const modelLower = cpuModel.toLowerCase();
+    if (modelLower.includes('apple')) {
+      return 'logos:apple';
+    }
     if (modelLower.includes('intel')) {
       return 'logos:intel';
-    } else if (modelLower.includes('amd') || modelLower.includes('epyc') || modelLower.includes('ryzen')) {
+    }
+    if (modelLower.includes('amd') || modelLower.includes('epyc') || modelLower.includes('ryzen')) {
       return 'logos:amd';
+    }
+    if (
+      modelLower.includes('arm') ||
+      modelLower.includes('aarch64') ||
+      modelLower.includes('cortex') ||
+      modelLower.includes('neoverse') ||
+      modelLower.includes('ampere') ||
+      modelLower.includes('graviton') ||
+      modelLower.includes('snapdragon') ||
+      modelLower.includes('kirin') ||
+      modelLower.includes('exynos') ||
+      modelLower.includes('mediatek') ||
+      modelLower.includes('dimensity') ||
+      modelLower.includes('rockchip') ||
+      modelLower.includes('allwinner') ||
+      modelLower.includes('broadcom bcm')
+    ) {
+      return 'logos:arm';
     }
     return null;
   }
 
-  // Load CPU brand icons
+  // Module-level cache for iconify SVG text, keyed by icon name.
+  // The admin list re-renders on every admin refresh or drag reorder,
+  // and previously each render re-fetched the CPU brand logo for every
+  // visible row — with ~20 rows that was 20 external requests to
+  // api.iconify.design per render. The cache collapses duplicates to
+  // a single network request per unique icon across the session.
+  // Storing Promise<string|null> means concurrent callers for the same
+  // icon share one in-flight fetch, and a failed fetch caches `null`
+  // so we don't retry a broken icon on every subsequent render.
+  const cpuIconSvgCache = new Map();
+  const fetchCpuIconSvg = (iconName) => {
+    let pending = cpuIconSvgCache.get(iconName);
+    if (pending) return pending;
+    pending = (async () => {
+      try {
+        // encodeURI preserves ":" in iconify paths (e.g. "logos:intel")
+        // while still escaping any unexpected characters.
+        const url = `https://api.iconify.design/${encodeURI(iconName)}.svg?height=32`;
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        return await response.text();
+      } catch (e) {
+        return null;
+      }
+    })();
+    cpuIconSvgCache.set(iconName, pending);
+    return pending;
+  };
+
   const loadCPUBrandIcons = async () => {
     const cpuIconElements = document.querySelectorAll('.cpu-brand-icon');
-    for (const el of cpuIconElements) {
+    await Promise.all(Array.from(cpuIconElements).map(async (el) => {
       const iconName = el.dataset.icon;
-      if (!iconName) continue;
-      try {
-        // CPU brand icon: 32px to match two IP rows height (16px + 16px)
-        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=32`);
-        if (response.ok) {
-          const svg = await response.text();
-          el.innerHTML = svg;
-          const svgEl = el.querySelector('svg');
-          if (svgEl) {
-            svgEl.setAttribute('class', 'block leading-none');
-            svgEl.style.margin = '0';
-            svgEl.style.padding = '0';
-            svgEl.style.display = 'block';
-            svgEl.style.verticalAlign = 'middle';
-            svgEl.style.lineHeight = '0';
-            svgEl.style.height = '32px';
-            svgEl.style.width = 'auto';
-            // Ensure parent container doesn't affect row height
-            el.style.margin = '0';
-            el.style.padding = '0';
-            el.style.lineHeight = '0';
-            el.style.display = 'flex';
-            el.style.alignItems = 'center';
-            el.style.justifyContent = 'center';
-            el.style.height = '32px';
-            el.style.overflow = 'visible';
-          }
-        }
-      } catch (e) {
-        // Icon load failed silently
+      if (!iconName) return;
+      // Skip elements already showing the correct icon to avoid
+      // re-styling on every render (causes flicker on slow clients).
+      if (el.dataset.iconLoaded === iconName && el.querySelector('svg')) return;
+      const svg = await fetchCpuIconSvg(iconName);
+      if (!svg) return;
+      el.innerHTML = svg;
+      el.dataset.iconLoaded = iconName;
+      const svgEl = el.querySelector('svg');
+      if (svgEl) {
+        svgEl.setAttribute('class', 'block leading-none');
+        svgEl.style.margin = '0';
+        svgEl.style.padding = '0';
+        svgEl.style.display = 'block';
+        svgEl.style.verticalAlign = 'middle';
+        svgEl.style.lineHeight = '0';
+        svgEl.style.height = '32px';
+        svgEl.style.width = 'auto';
+        el.style.margin = '0';
+        el.style.padding = '0';
+        el.style.lineHeight = '0';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.style.height = '32px';
+        el.style.overflow = 'visible';
       }
-    }
+    }));
   };
 
   const apiBase = getApiBase();
@@ -1037,9 +1121,10 @@ const apiBase = apiBaseProp ?? '';
             <div class="flex items-center gap-3 min-h-[28px] relative" style="z-index: 1;">
             <!-- Edit Button -->
             <button 
-              class="edit-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              class="edit-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
               data-system='${escapeHtmlAttr(JSON.stringify(system))}'
               title="Edit system"
+              aria-label="Edit system"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -1053,7 +1138,7 @@ const apiBase = apiBaseProp ?? '';
               <div class="flex flex-col gap-1 flex-shrink-0" style="flex-shrink: 1; min-width: 0; max-width: 250px;">
                 <span class="system-name text-sm font-semibold text-[#262626] dark:text-[#f5f5f5]" style="word-break: break-word; overflow-wrap: break-word; display: block;">${escapeHtml(system.name || '')}</span>
                 <!-- Other Info (Virtualization Type, OS) -->
-                <div class="flex flex-wrap gap-2 text-xs text-[#737373] dark:text-[#737373] text-[#404040] min-h-[16px]">
+                <div class="flex flex-wrap gap-2 text-xs text-[#404040] dark:text-[#737373] min-h-[16px]">
                   ${system.virtualization_type ? `<span class="system-virtualization-type">${escapeHtml(system.virtualization_type)}</span>` : ''}
                   ${system.os ? `<span class="system-os">• ${escapeHtml(system.os)}</span>` : ''}
                   ${!system.virtualization_type && !system.os ? '<span class="invisible">-</span>' : ''}
@@ -1066,9 +1151,9 @@ const apiBase = apiBaseProp ?? '';
                 ${system.ipv4 ? `
                 <!-- IPv4 Row -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv4:</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
                   <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(system.ipv4 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv4 || '')}" title="Copy IPv4">
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv4 || '')}" title="Copy IPv4" aria-label="Copy IPv4 address">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1082,9 +1167,9 @@ const apiBase = apiBaseProp ?? '';
                 ${system.ipv6 ? `
                 <!-- IPv6 Row -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
                   <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(system.ipv6 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv6 || '')}" title="Copy IPv6">
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv6 || '')}" title="Copy IPv6" aria-label="Copy IPv6 address">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1097,8 +1182,8 @@ const apiBase = apiBaseProp ?? '';
                 ` : (system.ipv4 && !system.ipv6) ? `
                 <!-- IPv6 Row (placeholder) -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
-                  <span class="text-[#737373] dark:text-[#737373] text-[#404040]">-</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
+                  <span class="text-[#404040] dark:text-[#737373]">-</span>
                 </div>
                 ` : ''}
               </div>
@@ -1109,12 +1194,12 @@ const apiBase = apiBaseProp ?? '';
               <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
                 ${system.total_net_in_bytes ? `
                 <div class="flex items-center min-h-[22px]">
-                  <span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#525252]">In: ${formatBytes(system.total_net_in_bytes)}</span>
+                  <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${formatBytes(system.total_net_in_bytes)}</span>
                 </div>
                 ` : '<div class="min-h-[22px]"></div>'}
                 ${system.total_net_out_bytes ? `
                 <div class="flex items-center min-h-[22px]">
-                  <span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#525252]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
+                  <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
                 </div>
                 ` : '<div class="min-h-[22px]"></div>'}
               </div>
@@ -1123,9 +1208,10 @@ const apiBase = apiBaseProp ?? '';
 
             <!-- Copy Linux Install Command Button (mingcute:linux-fill) -->
             <button 
-              class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600 self-center"
+              class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600 self-center"
               data-system-id="${system.id}"
               title="Copy Linux install command"
+              aria-label="Copy Linux install command"
             >
               <svg class="linux-icon" width="16" height="16" viewBox="0 0 24 24">
                 <g fill="none" fill-rule="evenodd"><path d="m12.594 23.258l-.012.002l-.071.035l-.02.004l-.014-.004l-.071-.036q-.016-.004-.024.006l-.004.01l-.017.428l.005.02l.01.013l.104.074l.015.004l.012-.004l.104-.074l.012-.016l.004-.017l-.017-.427q-.004-.016-.016-.018m.264-.113l-.014.002l-.184.093l-.01.01l-.003.011l.018.43l.005.012l.008.008l.201.092q.019.005.029-.008l.004-.014l-.034-.614q-.005-.019-.02-.022m-.715.002a.02.02 0 0 0-.027.006l-.006.014l-.034.614q.001.018.017.024l.015-.002l.201-.093l.01-.008l.003-.011l.018-.43l-.003-.012l-.01-.01z"/><path fill="currentColor" d="M8.264 15.29a1 1 0 0 1 .822.522l1.892 3.493a1.809 1.809 0 0 1-1.856 2.65l-3.93-.582a1 1 0 0 1-.672-1.563l.623-.89l-.174-.984a1 1 0 0 1 .811-1.159l.985-.173l.623-.89a1 1 0 0 1 .876-.425Zm6.347-.024a1 1 0 0 1 .858-.043l.116.057l.94.543l.966-.259a1 1 0 0 1 1.188.596l.037.111l.259.966l.94.543a1 1 0 0 1 .154 1.623l-.103.078l-3.315 2.188a1.809 1.809 0 0 1-2.805-1.46l.003-.158l.238-3.965a1 1 0 0 1 .524-.82M12 2a4 4 0 0 1 4 4v1c0 1.214.502 2.267 1.166 3.354l.736 1.165c.1.16.195.315.28.457c.32.541.628 1.14.788 1.781a7 7 0 0 1 .194 1.358a2 2 0 0 0-1.932-.516l-.565.151l-.582-.336a2 2 0 0 0-2.996 1.613l-.238 3.965c-.021.345.022.684.121 1.003l-.269.005h-.406q-.114 0-.226-.004c.22-.71.152-1.492-.214-2.167l-1.891-3.493a2 2 0 0 0-3.397-.195l-.385.55l-.33.058a5.4 5.4 0 0 1 .024-1.16c.037-.285.086-.567.152-.832c.198-.792.535-1.459.857-2.02l.437-.74C7.74 10.28 8 9.722 8 9V6a4 4 0 0 1 4-4m-1.438 5.778l-.822.41c.224.597.572 1.156.897 1.6l.204.269l.184.225l.081.094l.25-.141l.329-.197c.176-.109.368-.232.566-.367c.604-.412 1.225-.91 1.662-1.427l-2.316-.58a1.5 1.5 0 0 0-1.035.114"/></g>
@@ -1137,9 +1223,10 @@ const apiBase = apiBaseProp ?? '';
 
             <!-- Copy Windows Install Command Button (mingcute:windows-fill) -->
             <button 
-              class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
               data-system-id="${system.id}"
               title="Copy Windows install command"
+              aria-label="Copy Windows install command"
             >
               <svg class="windows-icon" width="16" height="16" viewBox="0 0 24 24">
                 <g fill="none"><path d="m12.593 23.258l-.011.002l-.071.035l-.02.004l-.014-.004l-.071-.035q-.016-.005-.024.005l-.004.01l-.017.428l.005.02l.01.013l.104.074l.015.004l.012-.004l.104-.074l.012-.016l.004-.017l-.017-.427q-.004-.016-.017-.018m.265-.113l-.013.002l-.185.093l-.01.01l-.003.011l.018.43l.005.012l.008.007l.201.093q.019.005.029-.008l.004-.014l-.034-.614q-.005-.018-.02-.022m-.715.002a.02.02 0 0 0-.027.006l-.006.014l-.034.614q.001.018.017.024l.015-.002l.201-.093l.01-.008l.004-.011l.017-.43l-.003-.012l-.01-.01z"/><path fill="currentColor" d="M21 13v7.434a1.5 1.5 0 0 1-1.553 1.499l-.133-.011L12 21.008V13zm-11 0v7.758l-5.248-.656A2 2 0 0 1 3 18.117V13zm9.314-10.922a1.5 1.5 0 0 1 1.68 1.355l.006.133V11h-9V2.992zM10 3.242V11H3V5.883a2 2 0 0 1 1.752-1.985z"/></g>
@@ -1151,10 +1238,11 @@ const apiBase = apiBaseProp ?? '';
 
             <!-- Delete Button -->
             <button 
-              class="delete-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 self-center"
+              class="delete-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 self-center"
               data-system-id="${escapeHtmlAttr(system.id || '')}"
               data-system-name="${escapeHtmlAttr(system.name || '')}"
               title="Delete system"
+              aria-label="Delete system"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
@@ -1385,9 +1473,9 @@ const apiBase = apiBaseProp ?? '';
             // Create new IPv4 row
             const ipv4RowHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0">IPv4:</span>
+                <span class="text-[#525252] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
                 <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
-                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
                   <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1414,16 +1502,16 @@ const apiBase = apiBaseProp ?? '';
             // No container exists, need to create it
             const ipv6Placeholder = (!item.ipv6) ? `
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
-                  <span class="text-[#737373] dark:text-[#737373] text-[#525252]">-</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
+                  <span class="text-[#525252] dark:text-[#737373]">-</span>
                 </div>
             ` : '';
             const ipContainerHTML = `
               <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv4:</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
                   <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1515,9 +1603,9 @@ const apiBase = apiBaseProp ?? '';
             // Create new IPv6 row (append at end)
             const ipv6RowHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0">IPv6:</span>
+                <span class="text-[#525252] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
                 <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
-                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
                   <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1539,9 +1627,9 @@ const apiBase = apiBaseProp ?? '';
             const ipContainerHTML = `
               <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
                   <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1588,8 +1676,8 @@ const apiBase = apiBaseProp ?? '';
             // Replace IPv6 row with placeholder
             const placeholderHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
-                <span class="text-[#737373] dark:text-[#737373] text-[#525252]">-</span>
+                <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
+                <span class="text-[#525252] dark:text-[#737373]">-</span>
               </div>
             `;
             const tempDiv = document.createElement('div');
@@ -1607,8 +1695,8 @@ const apiBase = apiBaseProp ?? '';
           if (ipv4RowExists) {
             const placeholderHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
-                <span class="text-[#737373] dark:text-[#737373] text-[#525252]">-</span>
+                <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
+                <span class="text-[#525252] dark:text-[#737373]">-</span>
               </div>
             `;
             const tempDiv = document.createElement('div');
@@ -1642,12 +1730,12 @@ const apiBase = apiBaseProp ?? '';
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
           </div>
@@ -1673,7 +1761,7 @@ const apiBase = apiBaseProp ?? '';
           } else if (inRow) {
             // Create the span if it doesn't exist
             netInSpan = document.createElement('span');
-            netInSpan.className = 'system-total-net-in text-[#737373] dark:text-[#737373] text-[#525252]';
+            netInSpan.className = 'system-total-net-in text-[#525252] dark:text-[#737373]';
             netInSpan.textContent = `In: ${formattedIn}`;
             inRow.appendChild(netInSpan);
           }
@@ -1703,12 +1791,12 @@ const apiBase = apiBaseProp ?? '';
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
           </div>
@@ -1734,7 +1822,7 @@ const apiBase = apiBaseProp ?? '';
           } else if (outRow) {
             // Create the span if it doesn't exist
             netOutSpan = document.createElement('span');
-            netOutSpan.className = 'system-total-net-out text-[#737373] dark:text-[#737373] text-[#525252]';
+            netOutSpan.className = 'system-total-net-out text-[#525252] dark:text-[#737373]';
             netOutSpan.textContent = `Out: ${formattedOut}`;
             outRow.appendChild(netOutSpan);
           }
@@ -1756,10 +1844,16 @@ const apiBase = apiBaseProp ?? '';
     }
   }
 
+  // Latched on the first successful render so the initial SSE-first bootstrap
+  // below can decide whether to fall back to a one-shot GET.
+  let initialSystemsRendered = false;
+
   // Smart render with incremental updates
   async function renderSystems(data) {
     const container = document.getElementById('systems-list');
     if (!container) return;
+
+    initialSystemsRendered = true;
 
     if (!Array.isArray(data) || data.length === 0) {
       container.innerHTML = `
@@ -2101,12 +2195,12 @@ const apiBase = apiBaseProp ?? '';
           if (linuxIcon && checkIcon) {
             linuxIcon.style.display = 'none';
             checkIcon.style.display = 'block';
-            newBtn.classList.add('text-green-400');
+            newBtn.classList.add('text-green-600', 'dark:text-green-400');
             newBtn.title = 'Copied!';
             setTimeout(() => {
               linuxIcon.style.display = 'block';
               checkIcon.style.display = 'none';
-              newBtn.classList.remove('text-green-400');
+              newBtn.classList.remove('text-green-600', 'dark:text-green-400');
               newBtn.title = originalTitle;
             }, 1500);
           }
@@ -2151,12 +2245,12 @@ const apiBase = apiBaseProp ?? '';
           if (windowsIcon && checkIcon) {
             windowsIcon.style.display = 'none';
             checkIcon.style.display = 'block';
-            newBtn.classList.add('text-green-400');
+            newBtn.classList.add('text-green-600', 'dark:text-green-400');
             newBtn.title = 'Copied!';
             setTimeout(() => {
               windowsIcon.style.display = 'block';
               checkIcon.style.display = 'none';
-              newBtn.classList.remove('text-green-400');
+              newBtn.classList.remove('text-green-600', 'dark:text-green-400');
               newBtn.title = originalTitle;
             }, 1500);
           }
@@ -2206,14 +2300,16 @@ const apiBase = apiBaseProp ?? '';
         throw new Error('Invalid data format received');
       }
 
-      // Backend already returns data sorted by order field
-      await renderSystems(data);
+      // Backend already returns data sorted by order field. Funnel every
+      // render through the serialiser so concurrent loadSystems + SSE
+      // updates cannot interleave DOM mutations.
+      await renderSystemsSerialized(data);
     } catch (err) {
       console.error('Failed to load systems:', err);
       container.innerHTML = `
         <div class="text-center py-12">
-          <p class="text-sm text-red-400">Failed to load systems</p>
-          <p class="text-xs text-[#737373] dark:text-[#737373] mt-2">${err.message || 'Unknown error'}</p>
+          <p class="text-sm text-red-500 dark:text-red-400">Failed to load systems</p>
+          <p class="text-xs text-[#737373] dark:text-[#a3a3a3] mt-2">${err.message || 'Unknown error'}</p>
         </div>
       `;
     }
@@ -2622,7 +2718,7 @@ const apiBase = apiBaseProp ?? '';
       const systemName = formData.get('name')?.trim();
       if (!systemName) {
         if (messageEl) {
-          messageEl.className = 'text-sm text-red-400';
+          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
           messageEl.textContent = '❌ Service Name is required';
           messageEl.classList.remove('hidden');
         }
@@ -2681,7 +2777,7 @@ const apiBase = apiBaseProp ?? '';
         }
       } catch (err) {
         if (messageEl) {
-          messageEl.className = 'text-sm text-red-400';
+          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
           messageEl.textContent = '❌ Failed to add system: ' + err.message;
           messageEl.classList.remove('hidden');
         }
@@ -2808,6 +2904,80 @@ const apiBase = apiBaseProp ?? '';
     });
   }
 
+  // Download Backup button — one-click consistent hot snapshot of the
+  // bbolt database straight to the operator's Downloads folder. Zero
+  // downtime on the server; the file is byte-for-byte identical to the
+  // one scripts/backup.sh would fetch via the CLI, so it can be fed
+  // straight to scripts/restore.sh or pulse-migrate on any new host.
+  //
+  // A plain <a href="/api/admin/backup"> won't work because the admin
+  // token lives in localStorage (not a cookie), so we fetch with the
+  // Authorization: Bearer header and synthesise a blob download.
+  const backupBtn = document.getElementById('backup-btn');
+  if (backupBtn) {
+    backupBtn.addEventListener('click', async () => {
+      const token = localStorage.getItem('admin_auth_token');
+      if (!token) {
+        window.location.href = '/login?redirect=/admin';
+        return;
+      }
+      if (backupBtn.dataset.busy === '1') return;
+      backupBtn.dataset.busy = '1';
+      backupBtn.setAttribute('disabled', 'true');
+      const iconEl = backupBtn.querySelector('svg');
+      if (iconEl) iconEl.classList.add('animate-pulse');
+
+      const pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+      const d = new Date();
+      const tsFallback = d.getUTCFullYear()
+        + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T'
+        + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()) + 'Z';
+      let filename = 'pulse-backup-' + tsFallback + '.db';
+
+      let errorMessage = '';
+      try {
+        const res = await fetch(apiBase + '/api/admin/backup', {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (res.status === 401) {
+          localStorage.removeItem('admin_auth_token');
+          window.location.href = '/login?redirect=/admin';
+          return;
+        }
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const disp = res.headers.get('Content-Disposition') || '';
+        const fnMatch = disp.match(/filename=([^;]+)/);
+        if (fnMatch && fnMatch[1]) {
+          filename = fnMatch[1].replace(/^"|"$/g, '').trim();
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+      } catch (err) {
+        console.error('[backup]', err);
+        errorMessage = (err && err.message) ? err.message : String(err);
+      }
+
+      backupBtn.removeAttribute('disabled');
+      delete backupBtn.dataset.busy;
+      if (iconEl) iconEl.classList.remove('animate-pulse');
+      if (errorMessage) {
+        const lang = (document.documentElement.getAttribute('lang') || 'en').indexOf('zh') === 0 ? 'zh' : 'en';
+        const prefix = lang === 'zh' ? '下载备份失败：' : 'Failed to download backup: ';
+        alert(prefix + errorMessage);
+      }
+    });
+  }
+
   // Helper to reset change password form
   function resetChangePasswordForm() {
     if (changePasswordForm) changePasswordForm.reset();
@@ -2857,21 +3027,21 @@ const apiBase = apiBaseProp ?? '';
       if (!currentPassword || !newPassword || !confirmNewPassword) {
         changePasswordFormMessage.textContent = 'Please fill in all fields';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
         return;
       }
 
       if (newPassword.length < 6) {
         changePasswordFormMessage.textContent = 'New password must be at least 6 characters';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
         return;
       }
 
       if (newPassword !== confirmNewPassword) {
         changePasswordFormMessage.textContent = 'New passwords do not match';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
         return;
       }
 
@@ -2915,8 +3085,8 @@ const apiBase = apiBaseProp ?? '';
       } catch (err) {
         changePasswordFormMessage.textContent = err.message || 'Failed to change password';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.remove('text-emerald-400');
-        changePasswordFormMessage.classList.add('text-red-400');
+        changePasswordFormMessage.classList.remove('text-emerald-600', 'dark:text-emerald-400', 'text-emerald-400');
+        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
       } finally {
         // Re-enable submit button
         if (submitBtn) {
@@ -2961,7 +3131,7 @@ const apiBase = apiBaseProp ?? '';
       />
       <button
         type="button"
-        class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 shrink-0"
+        class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 shrink-0"
         title="Remove target"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
@@ -3288,27 +3458,27 @@ const apiBase = apiBaseProp ?? '';
             if (config.token_expired === true) {
               // Token is already expired according to server
               tokenExpiresInfo.textContent = 'Expired';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
             } else {
               // Calculate time difference using server time
               const timeDiff = expiresDate.getTime() - serverTime.getTime();
               if (timeDiff > 1000) {
                 // Token is still valid (more than 1 second remaining)
                 tokenExpiresInfo.textContent = `Expires: ${formatDate(config.token_expires)}`;
-                tokenExpiresInfo.className = 'mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
                 
                 // Set up a timer to update the status when it actually expires
                 // Use the calculated time difference
                 setTimeout(() => {
                   if (tokenExpiresInfo) {
                     tokenExpiresInfo.textContent = 'Expired';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
                   }
                 }, timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
                 tokenExpiresInfo.textContent = 'Expired';
-                tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
               }
             }
           }
@@ -3383,7 +3553,7 @@ const apiBase = apiBaseProp ?? '';
       const estimatedExpires = new Date();
       estimatedExpires.setSeconds(estimatedExpires.getSeconds() + seconds);
       tokenExpiresInfo.textContent = `Expires: ${formatDate(estimatedExpires.toISOString())} (estimated)`;
-      tokenExpiresInfo.className = 'mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]';
+      tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
     }
 
     // Store temporarily in form data (will be sent to server)
@@ -3504,30 +3674,30 @@ const apiBase = apiBaseProp ?? '';
             if (isNaN(expiresDate.getTime())) {
               // Invalid expiration date from server
               tokenExpiresInfo.textContent = 'Invalid expiration date';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
             } else if (responseData.config.token_expired === true) {
               // Token is already expired according to server
               tokenExpiresInfo.textContent = 'Expired';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
             } else {
               // Calculate time difference using server time
               const timeDiff = expiresDate.getTime() - serverTime.getTime();
               if (timeDiff > 1000) {
                 // Token is still valid (more than 1 second remaining)
                 tokenExpiresInfo.textContent = `Expires: ${formatDate(responseData.config.token_expires)}`;
-                tokenExpiresInfo.className = 'mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
                 
                 // Set up timer to update when expired (using server time difference)
                 setTimeout(() => {
                   if (tokenExpiresInfo) {
                     tokenExpiresInfo.textContent = 'Expired';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
                   }
                 }, timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
                 tokenExpiresInfo.textContent = 'Expired';
-                tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
               }
             }
           }
@@ -3563,7 +3733,7 @@ const apiBase = apiBaseProp ?? '';
         }
       }
       if (messageEl) {
-        messageEl.className = 'text-sm text-red-400';
+        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
         messageEl.textContent = '❌ Failed to save privacy config: ' + err.message;
         messageEl.classList.remove('hidden');
       }
@@ -3683,7 +3853,7 @@ const apiBase = apiBaseProp ?? '';
         }
       }
       if (messageEl) {
-        messageEl.className = 'text-sm text-red-400';
+        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
         messageEl.textContent = '❌ Failed to save navbar config: ' + err.message;
         messageEl.classList.remove('hidden');
       }
@@ -3754,7 +3924,7 @@ const apiBase = apiBaseProp ?? '';
         const error = await res.text();
         if (messageEl) {
           messageEl.textContent = `Failed to save: ${error}`;
-          messageEl.className = 'text-sm text-red-400';
+          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
           messageEl.classList.remove('hidden');
         }
       }
@@ -3762,7 +3932,7 @@ const apiBase = apiBaseProp ?? '';
       const messageEl = document.getElementById('tcping-config-message');
       if (messageEl) {
         messageEl.textContent = `Error: ${err.message}`;
-        messageEl.className = 'text-sm text-red-400';
+        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
         messageEl.classList.remove('hidden');
       }
     } finally {
@@ -3773,7 +3943,8 @@ const apiBase = apiBaseProp ?? '';
     }
   });
 
-  // Debounce loadSystems to prevent duplicate updates
+  // Debounce loadSystems to prevent duplicate updates (kept for legacy paths
+  // that fetch before rendering — SSE metric_updated now skips this entirely).
   let loadSystemsTimeout = null;
   const debouncedLoadSystems = () => {
     if (loadSystemsTimeout) {
@@ -3785,39 +3956,181 @@ const apiBase = apiBaseProp ?? '';
     }, 100); // 100ms debounce - prevents rapid consecutive calls
   };
 
-  // Connect to SSE for real-time updates from other clients or agents
+  // Single self-serialised render path for the admin table.
+  //
+  // Multiple callers can request a render concurrently (SSE push, user
+  // actions, refresh button, admin mutation responses). To keep DOM updates
+  // atomic we wrap renderSystems with an in-flight flag and a latest-wins
+  // "pending" slot. If a new render is requested while one is running, its
+  // data is held and processed immediately after the current render ends,
+  // with any intermediate payloads dropped. This guarantees two concurrent
+  // callers never interleave DOM mutations and the freshest data always wins.
+  let isRenderSystemsRunning = false;
+  let pendingSystemsData = null;
+  async function renderSystemsSerialized(data) {
+    if (!Array.isArray(data)) return;
+    if (isRenderSystemsRunning) {
+      pendingSystemsData = data;
+      return;
+    }
+    isRenderSystemsRunning = true;
+    try {
+      let current = data;
+      while (current) {
+        try {
+          await renderSystems(current);
+        } catch (err) {
+          console.error('renderSystems failed:', err);
+        }
+        current = pendingSystemsData;
+        pendingSystemsData = null;
+      }
+    } finally {
+      isRenderSystemsRunning = false;
+    }
+  }
+
+  // debouncedRenderSystems is an 80 ms coalescer for rapid SSE events, on top
+  // of the serialiser above. The coalesce is purely a CPU optimisation — the
+  // serialiser would already give the right correctness properties alone.
+  let renderSystemsTimeout = null;
+  const debouncedRenderSystems = (data) => {
+    pendingSystemsData = data;
+    if (renderSystemsTimeout) return;
+    renderSystemsTimeout = setTimeout(() => {
+      renderSystemsTimeout = null;
+      const d = pendingSystemsData;
+      pendingSystemsData = null;
+      if (d) renderSystemsSerialized(d);
+    }, 80);
+  };
+
+  // Connect to SSE for real-time updates from other clients or agents.
+  //
+  // Same reliability strategy as the public dashboard:
+  //   * Exponential backoff with jitter on reconnect (no thundering herd).
+  //   * 45 s liveness watchdog: server emits either an update event (~3 s) or
+  //     a keepalive comment (~15 s), so 45 s of silence means the TCP stream
+  //     is half-open and we should reconnect proactively.
+  let sseReconnectAttempt = 0;
+  let sseWatchdogTimer = null;
+  const SSE_WATCHDOG_MS = 45_000;
+
+  function markSSEAlive() {
+    if (sseWatchdogTimer) {
+      clearTimeout(sseWatchdogTimer);
+    }
+    sseWatchdogTimer = setTimeout(() => {
+      if (eventSource) {
+        try { eventSource.close(); } catch (_) {}
+        eventSource = null;
+      }
+      scheduleSSEReconnect();
+    }, SSE_WATCHDOG_MS);
+  }
+
+  function scheduleSSEReconnect() {
+    const base = Math.min(30_000, 1000 * Math.pow(2, sseReconnectAttempt));
+    const jitter = Math.floor(Math.random() * 1000);
+    sseReconnectAttempt++;
+    setTimeout(connectSSE, base + jitter);
+  }
+
   function connectSSE() {
     if (eventSource) {
       eventSource.close();
     }
+    if (sseWatchdogTimer) {
+      clearTimeout(sseWatchdogTimer);
+      sseWatchdogTimer = null;
+    }
 
-    eventSource = new EventSource(`${apiBase}/api/events`);
+    // CRITICAL: pass the admin token via the `admin_token` query parameter
+    // so the server subscribes us with the SSEViewAdmin view.
+    //
+    // EventSource does NOT support custom request headers, so we cannot send
+    // the admin token via `Authorization: Bearer` like we do for other API
+    // calls — the only way to identify ourselves at SSE time is the URL.
+    //
+    // Without this query parameter, the server would treat us as a public
+    // subscriber and broadcast the masked snapshot (Secret / IPv4 / IPv6
+    // stripped). That makes the admin page's "copy secret" button show an
+    // empty value, and IP / agent fields appear blank. With the token
+    // included, the server tags our subscription as admin and every
+    // metric_updated push contains the full, authoritative row.
+    const adminToken = localStorage.getItem('admin_auth_token');
+    let sseUrl = `${apiBase}/api/events`;
+    if (adminToken) {
+      sseUrl += `?admin_token=${encodeURIComponent(adminToken)}`;
+    }
+    eventSource = new EventSource(sseUrl);
+    markSSEAlive();
 
     eventSource.addEventListener('connected', (e) => {
-      // Admin connected to update stream
+      // (Re)connected — reset backoff so a future independent disconnect
+      // starts over at 1 s.
+      sseReconnectAttempt = 0;
+      markSSEAlive();
     });
 
+    // onmessage fires for untyped messages AND keeps the watchdog happy for
+    // any server traffic; typed events have their own listeners below.
+    eventSource.onmessage = () => {
+      markSSEAlive();
+    };
+
+    // Backend-push model:
+    //   * metric_updated embeds the full systems list in `update.systems`.
+    //     Render directly from it — do NOT issue GET /api/metrics.
+    //   * metric_deleted is signal-only; fall back to a fetch so the
+    //     deletion propagates even if the paired metric_updated was
+    //     dropped by a slow middlebox.
+    //   * order updates are handled locally by drag & drop, so we ignore
+    //     order_updated here.
     eventSource.addEventListener('update', (e) => {
-      const update = JSON.parse(e.data);
-      
-      // Reload when metrics are updated or deleted (incremental update will handle changes)
-      // (order updates are handled locally by drag & drop)
-      if (update.type === 'metric_updated' || update.type === 'metric_deleted') {
-        // Use debounced loadSystems to prevent duplicate updates from rapid SSE events
+      markSSEAlive();
+      let update;
+      try {
+        update = JSON.parse(e.data);
+      } catch (_) {
+        return;
+      }
+
+      if (update.type === 'metric_updated') {
+        if (Array.isArray(update.systems)) {
+          debouncedRenderSystems(update.systems);
+        } else {
+          debouncedLoadSystems();
+        }
+      } else if (update.type === 'metric_deleted') {
         debouncedLoadSystems();
       }
     });
 
     eventSource.onerror = (err) => {
-      eventSource.close();
-      // Reconnect after 5 seconds
-      setTimeout(connectSSE, 5000);
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      if (sseWatchdogTimer) {
+        clearTimeout(sseWatchdogTimer);
+        sseWatchdogTimer = null;
+      }
+      scheduleSSEReconnect();
     };
   }
 
-  // Initial load
-    loadSystems();
+  // Initial bootstrap: SSE is the primary data source (server pushes an
+  // authoritative snapshot on connect and again on every admin mutation).
+  // The browser does NOT poll. A one-shot GET is issued only as a safety
+  // net if SSE hasn't delivered any data within a short grace window, so
+  // the admin UI is never stuck on "loading".
   connectSSE();
+  setTimeout(() => {
+    if (!initialSystemsRendered) {
+      loadSystems();
+    }
+  }, 2500);
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
@@ -3858,7 +4171,7 @@ const apiBase = apiBaseProp ?? '';
     'myServer': { en: 'My Server', zh: '我的服务器' },
     'tags': { en: 'Tags', zh: '标签' },
     'tagsCommaSeparated': { en: '(comma-separated)', zh: '（逗号分隔）' },
-    'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, traffic:in, speed:in, Production)', zh: '输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, Production）' },
+    'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro). Prefix with spr:/spy:/spb: for a red/amber/blue gradient badge.', zh: '输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。' },
     'cancel': { en: 'Cancel', zh: '取消' },
     'updateSystem': { en: 'Update System', zh: '更新服务' },
     'areYouSureYouWantToDelete': { en: 'Are you sure you want to delete', zh: '您确定要删除' },
@@ -3913,12 +4226,25 @@ const apiBase = apiBaseProp ?? '';
       }
     });
 
-    // Update title attributes
+    // Update title attributes. We also mirror the value onto aria-label so
+    // that screen-reader users hear the same localized description that
+    // sighted users see in the tooltip — these icon-only buttons have no
+    // visible text label to announce otherwise. The HTML ships with an
+    // English default for both attributes, so tooltips/ARIA remain usable
+    // even if this JS hasn't run yet (or failed to run due to an error
+    // earlier on the page).
     document.querySelectorAll('[data-title-en]').forEach(el => {
       const enTitle = el.getAttribute('data-title-en');
       const zhTitle = el.getAttribute('data-title-zh');
       if (enTitle && zhTitle) {
-        el.setAttribute('title', lang === 'zh' ? zhTitle : enTitle);
+        const value = lang === 'zh' ? zhTitle : enTitle;
+        el.setAttribute('title', value);
+        // Only sync aria-label if the element declared one in the source
+        // markup — we don't want to silently add ARIA names to elements
+        // that intentionally omitted them (e.g. labelled via nearby text).
+        if (el.hasAttribute('aria-label')) {
+          el.setAttribute('aria-label', value);
+        }
       }
     });
 

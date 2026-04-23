@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -57,10 +59,10 @@ type metricPayload struct {
 	CPU                float64 `json:"cpu"`
 	CPUModel           string  `json:"cpu_model,omitempty"`
 	Memory             float64 `json:"memory"`
-	MemoryInfo         string  `json:"memory_info,omitempty"`   // Format: "383.60 MiB / 1.88 GiB"
-	SwapInfo           string  `json:"swap_info,omitempty"`     // Format: "75.12 MiB / 975.00 MiB"
+	MemoryInfo         string  `json:"memory_info,omitempty"` // Format: "383.60 MiB / 1.88 GiB"
+	SwapInfo           string  `json:"swap_info,omitempty"`   // Format: "75.12 MiB / 975.00 MiB"
 	Disk               float64 `json:"disk"`
-	DiskInfo           string  `json:"disk_info,omitempty"`     // Format: "9.86 GiB / 18.58 GiB"
+	DiskInfo           string  `json:"disk_info,omitempty"` // Format: "9.86 GiB / 18.58 GiB"
 	NetInMBps          float64 `json:"net_in_mb_s"`
 	NetOutMBps         float64 `json:"net_out_mb_s"`
 	TotalNetInBytes    uint64  `json:"total_net_in_bytes,omitempty"`  // Total received bytes
@@ -70,33 +72,33 @@ type metricPayload struct {
 }
 
 var (
-	agentID       string
-	agentName     string
-	startTime     time.Time
-	serverBase    string
-	secret        string // Secret for authenticating metrics endpoint
-	
+	agentID    string
+	agentName  string
+	startTime  time.Time
+	serverBase string
+	secret     string // Secret for authenticating metrics endpoint
+
 	// Cache for data that doesn't change frequently
-	cpuModelCache          string
-	cpuModelCacheTime      time.Time
-	virtualizationTypeCache string
+	cpuModelCache               string
+	cpuModelCacheTime           time.Time
+	virtualizationTypeCache     string
 	virtualizationTypeCacheTime time.Time
-	cacheMutex             sync.RWMutex
-	cacheTTL               = 5 * time.Minute // Cache for 5 minutes
-	
+	cacheMutex                  sync.RWMutex
+	cacheTTL                    = 5 * time.Minute // Cache for 5 minutes
+
 	// Cache for static system info (computed once, never changes)
-	osInfoCache     *OSInfo
-	osInfoOnce      sync.Once
-	locationCache   string
-	locationOnce    sync.Once
-	
+	osInfoCache   *OSInfo
+	osInfoOnce    sync.Once
+	locationCache string
+	locationOnce  sync.Once
+
 	// Cache for IP addresses (changes rarely, refresh every 60 seconds)
-	ipv4Cache          string
-	ipv6Cache          string
-	ipCacheTime        time.Time
-	ipCacheMutex       sync.RWMutex
-	ipCacheTTL         = 60 * time.Second // Refresh IP every 60 seconds (IP rarely changes)
-	
+	ipv4Cache    string
+	ipv6Cache    string
+	ipCacheTime  time.Time
+	ipCacheMutex sync.RWMutex
+	ipCacheTTL   = 60 * time.Second // Refresh IP every 60 seconds (IP rarely changes)
+
 	// Shared HTTP client for connection reuse (important for cross-continent networks)
 	sharedHTTPClient     *http.Client
 	sharedHTTPClientOnce sync.Once
@@ -106,9 +108,16 @@ var (
 	securityWarningMutex    sync.Mutex
 
 	// Push mode: TCPing targets received from server (refreshed on every push response)
-	pushTCPingTargets      []string
-	pushTCPingIntervalSec  int = 60
-	pushTCPingMu           sync.RWMutex
+	pushTCPingTargets     []string
+	pushTCPingIntervalSec int = 60
+	pushTCPingMu          sync.RWMutex
+
+	// pushTCPingIntervalChanged is signalled (non-blocking) whenever the interval
+	// received from the server differs from what the TCPing loop is currently using.
+	// It lets startPushTCPingLoop cancel an in-flight sleep and pick up the new value
+	// immediately, instead of waiting out the old (potentially much longer) cycle.
+	// Capacity 1 + non-blocking send collapses bursts of updates into a single wakeup.
+	pushTCPingIntervalChanged = make(chan struct{}, 1)
 
 	// Pending TCPing results collected by startPushTCPingLoop, consumed by startPushLoop.
 	// Capped at maxPendingTCPingResults to prevent unbounded growth during server downtime.
@@ -130,15 +139,36 @@ var (
 	diskCacheTTL       = 30 * time.Second
 )
 
+// applyPushTCPingConfig centralises "update targets / interval and wake the TCPing
+// loop if the interval actually changed". Used by the three paths that receive a
+// fresh config from the server (initial register, periodic register, push response)
+// so they can't drift apart.
+func applyPushTCPingConfig(targets []string, intervalSecs int) {
+	pushTCPingMu.Lock()
+	pushTCPingTargets = targets
+	changed := false
+	if intervalSecs > 0 && intervalSecs != pushTCPingIntervalSec {
+		pushTCPingIntervalSec = intervalSecs
+		changed = true
+	}
+	pushTCPingMu.Unlock()
+	if changed {
+		select {
+		case pushTCPingIntervalChanged <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // ── macOS: background CPU sampler ────────────────────────────────────────────
 // gopsutil cpu.Percent() compiled with CGO_ENABLED=0 cannot read CPU ticks on
 // macOS: the Mach host_processor_info API is CGO-only and the nocgo stub
 // returns [0.0] without error. Instead we run "top -l 2 -n 0" in a background
 // goroutine; it blocks ~1 s to capture a real 1-second delta.
 var (
-	macOSCPUVal   float64
-	macOSCPUMu    sync.RWMutex
-	macOSCPUOnce  sync.Once
+	macOSCPUVal  float64
+	macOSCPUMu   sync.RWMutex
+	macOSCPUOnce sync.Once
 )
 
 func startMacOSCPULoop() {
@@ -258,11 +288,89 @@ func macOSSwapStats() (usedBytes, totalBytes uint64) {
 	return usedBytes, totalBytes
 }
 
-// ClientTCPingResult is one TCPing measurement to be sent to the server in push mode
+// macOSMarketingName maps a macOS major version to Apple's marketing
+// name ("Sonoma", "Sequoia", …). Returns "" for versions we don't have
+// a mapping for — the caller then falls back to just the number. The
+// table only needs the major version because Apple keeps the marketing
+// name stable across minor releases (14.0 through 14.x are all Sonoma).
+func macOSMarketingName(productVersion string) string {
+	major := productVersion
+	if i := strings.Index(productVersion, "."); i > 0 {
+		major = productVersion[:i]
+	}
+	switch major {
+	case "15":
+		return "Sequoia"
+	case "14":
+		return "Sonoma"
+	case "13":
+		return "Ventura"
+	case "12":
+		return "Monterey"
+	case "11":
+		return "Big Sur"
+	case "10":
+		// 10.15 Catalina / 10.14 Mojave / 10.13 High Sierra / 10.12 Sierra …
+		// The two-component check keeps us useful on legacy systems
+		// without bloating the table with every minor.
+		switch {
+		case strings.HasPrefix(productVersion, "10.15"):
+			return "Catalina"
+		case strings.HasPrefix(productVersion, "10.14"):
+			return "Mojave"
+		case strings.HasPrefix(productVersion, "10.13"):
+			return "High Sierra"
+		}
+	}
+	return ""
+}
+
+// appleSiliconNominalGHz returns the nominal max performance-core clock
+// for the given Apple Silicon chip name, or 0 if the name is not
+// recognised (e.g. an Intel Mac). The numbers come from Apple's published
+// specs for each M-series chip generation; they're deliberately ordered
+// longest-prefix-first so that "Apple M2 Max" matches the M2-family entry
+// before falling through to the bare "Apple M2" entry.
+//
+// Why a hard-coded table: on Apple Silicon there is no single sysctl that
+// reports the nominal clock — hw.cpufrequency, hw.cpufrequency_max and
+// machdep.tbfrequency are either 0, not present, or a timebase (not the
+// actual CPU clock). A curated table is small, keeps the display accurate,
+// and degrades gracefully to "no GHz" for chips we don't know about yet
+// (future M5, etc.) instead of lying.
+func appleSiliconNominalGHz(model string) float64 {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" || !strings.Contains(m, "apple") {
+		return 0
+	}
+	// Longest prefixes first so "Apple M2 Max" doesn't match "Apple M2"
+	// first and silently pick up the wrong clock.
+	switch {
+	case strings.Contains(m, "m4"):
+		return 4.40
+	case strings.Contains(m, "m3"):
+		return 4.05
+	case strings.Contains(m, "m2"):
+		return 3.50
+	case strings.Contains(m, "m1"):
+		return 3.20
+	}
+	return 0
+}
+
+// ClientTCPingResult is one TCPing measurement to be sent to the server in push mode.
+//
+// MeasuredAt is the moment the TCP dial completed on the client (UTC). Including it
+// lets the server stamp the history record with the real measurement time instead of
+// "whenever the next 3-second push happened to arrive", which previously produced
+// jittered 3/6/10-second gaps on charts for a cleanly-configured, e.g. 5-second,
+// polling interval. Empty / zero timestamps are treated as "use server time" for
+// backward compatibility with older clients.
 type ClientTCPingResult struct {
-	Target  string  `json:"target"`
-	Latency float64 `json:"latency"` // milliseconds; 0 if failed
-	Success bool    `json:"success"`
+	Target     string    `json:"target"`
+	Latency    float64   `json:"latency"` // milliseconds; 0 if failed
+	Success    bool      `json:"success"`
+	MeasuredAt time.Time `json:"measured_at,omitempty"`
 }
 
 // ClientPushResponse is the server's reply to a push request
@@ -343,8 +451,42 @@ func main() {
 
 	log.Printf("✅ TCP keepalive enabled (60s interval) for Windows compatibility")
 
-	if err := server.Serve(tcpListener); err != nil {
-		log.Fatalf("❌ Failed to start client server: %v", err)
+	// Serve in a goroutine so main() can react to shutdown signals below.
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := server.Serve(tcpListener); err != nil && err != http.ErrServerClosed {
+			serverErrCh <- err
+			return
+		}
+		serverErrCh <- nil
+	}()
+
+	// Graceful shutdown on SIGTERM/SIGINT. This matters on every platform but
+	// especially inside `docker stop`: without it, in-flight /metrics and
+	// /tcping responses get truncated mid-write and the server side logs them
+	// as transient failures (and double-counts toward offline detection).
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case <-sigChan:
+		log.Println("🛑 Shutdown signal received, draining in-flight requests...")
+	case err := <-serverErrCh:
+		if err != nil {
+			log.Fatalf("❌ Failed to start client server: %v", err)
+		}
+		return
+	}
+
+	// Give any in-flight /metrics or /tcping call up to 10 s to finish so the
+	// server side sees a clean 200 instead of a truncated connection. 10 s is
+	// comfortably below typical container stop-grace windows (30 s default).
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("⚠️  client server shutdown returned: %v", err)
+	} else {
+		log.Println("✅ Client server shut down cleanly")
 	}
 }
 
@@ -361,17 +503,17 @@ func getSharedHTTPClient() *http.Client {
 			Timeout: 30 * time.Second, // Increased to 30s for high-latency cross-continent networks
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
-					Timeout:   15 * time.Second, // Increased to 15s for slow connections (DNS + TCP)
+					Timeout:   15 * time.Second,  // Increased to 15s for slow connections (DNS + TCP)
 					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
 				}).DialContext,
-				MaxIdleConns:            50,                 // More idle connections for better reuse
-				MaxIdleConnsPerHost:     20,                 // More per-host connections
-				IdleConnTimeout:         180 * time.Second,  // Longer idle timeout
-				TLSHandshakeTimeout:     15 * time.Second,   // Increased to 15s for slow TLS (GFW interference)
-				ResponseHeaderTimeout:   10 * time.Second,   // Wait up to 10s for response headers
-				ExpectContinueTimeout:   5 * time.Second,
-				DisableCompression:      false, // Enable compression
-				DisableKeepAlives:       false, // Enable keep-alive (critical for connection reuse)
+				MaxIdleConns:          50,                // More idle connections for better reuse
+				MaxIdleConnsPerHost:   20,                // More per-host connections
+				IdleConnTimeout:       180 * time.Second, // Longer idle timeout
+				TLSHandshakeTimeout:   15 * time.Second,  // Increased to 15s for slow TLS (GFW interference)
+				ResponseHeaderTimeout: 10 * time.Second,  // Wait up to 10s for response headers
+				ExpectContinueTimeout: 5 * time.Second,
+				DisableCompression:    false, // Enable compression
+				DisableKeepAlives:     false, // Enable keep-alive (critical for connection reuse)
 			},
 		}
 	})
@@ -382,7 +524,7 @@ func getSharedHTTPClient() *http.Client {
 func logOncePerMinute(message string) {
 	securityWarningMutex.Lock()
 	defer securityWarningMutex.Unlock()
-	
+
 	now := time.Now()
 	if now.Sub(lastSecurityWarningTime) >= 1*time.Minute {
 		log.Println(message)
@@ -396,11 +538,11 @@ func registerWithServer() {
 	maxRetries := 10 // Increased from 5 to handle high-latency networks (e.g., China to overseas)
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(time.Duration(i+1) * time.Second) // Wait before retry
-		
+
 		// Create context with timeout for registration request
 		// Use 10-second timeout (shorter than HTTP client's 30s timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		
+
 		// Get public IP addresses (both IPv4 and IPv6)
 		// This ensures consistency and uses the real public IP, not private IP
 		ipv4, ipv6 := getIPAddresses()
@@ -408,7 +550,7 @@ func registerWithServer() {
 		if ipv4 == "" {
 			ipv4 = getLocalIP()
 		}
-		
+
 		payload := map[string]interface{}{
 			"id":   agentID,
 			"name": agentName,
@@ -419,46 +561,41 @@ func registerWithServer() {
 		if ipv6 != "" {
 			payload["ipv6"] = ipv6
 		}
-		
+
 		// Add secret if provided via environment variable
 		if secret := envOr("SECRET", ""); secret != "" {
 			payload["secret"] = secret
 		}
-		
+
 		data, _ := json.Marshal(payload)
-		
+
 		// Use shared HTTP client for connection reuse (critical for cross-continent networks)
 		httpClient := getSharedHTTPClient()
-		
+
 		req, err := http.NewRequestWithContext(ctx, "POST", serverBase+"/api/clients/register", strings.NewReader(string(data)))
 		if err != nil {
 			cancel()
 			continue
 		}
-		
+
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "PulseClient/1.0")
 		req.Header.Set("Connection", "keep-alive")
 		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
-		
+
 		resp, err := httpClient.Do(req)
 		cancel() // ✅ Always cancel context after request completes
 		if err != nil {
 			log.Printf("⚠️  Registration attempt %d/%d failed: %v", i+1, maxRetries, err)
 			continue
 		}
-		
+
 		if resp.StatusCode == http.StatusOK {
 			// Parse registration response to get initial TCPing targets for push mode
 			var regResp RegisterResponse
 			if body, readErr := ioutil.ReadAll(resp.Body); readErr == nil {
 				if jsonErr := json.Unmarshal(body, &regResp); jsonErr == nil {
-					pushTCPingMu.Lock()
-					pushTCPingTargets = regResp.TCPingTargets
-					if regResp.TCPingIntervalSecs > 0 {
-						pushTCPingIntervalSec = regResp.TCPingIntervalSecs
-					}
-					pushTCPingMu.Unlock()
+					applyPushTCPingConfig(regResp.TCPingTargets, regResp.TCPingIntervalSecs)
 				}
 			}
 			resp.Body.Close()
@@ -480,7 +617,7 @@ func getLocalIP() string {
 		return ""
 	}
 	defer conn.Close()
-	
+
 	// Safe type assertion to prevent panic
 	localAddr := conn.LocalAddr()
 	udpAddr, ok := localAddr.(*net.UDPAddr)
@@ -545,12 +682,7 @@ func startPeriodicRegistration() {
 			var regResp RegisterResponse
 			if body, readErr := ioutil.ReadAll(resp.Body); readErr == nil {
 				if jsonErr := json.Unmarshal(body, &regResp); jsonErr == nil {
-					pushTCPingMu.Lock()
-					pushTCPingTargets = regResp.TCPingTargets
-					if regResp.TCPingIntervalSecs > 0 {
-						pushTCPingIntervalSec = regResp.TCPingIntervalSecs
-					}
-					pushTCPingMu.Unlock()
+					applyPushTCPingConfig(regResp.TCPingTargets, regResp.TCPingIntervalSecs)
 				}
 			}
 		} else {
@@ -580,7 +712,7 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 			// Fallback: check query parameter
 			providedSecret = r.URL.Query().Get("secret")
 		}
-		
+
 		if providedSecret != secret {
 			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
@@ -594,7 +726,7 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Collect system metrics
 	metrics := collectSystemMetrics()
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
 }
@@ -637,7 +769,7 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 			// Fallback: check query parameter
 			providedSecret = r.URL.Query().Get("secret")
 		}
-		
+
 		if providedSecret != secret {
 			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
@@ -672,57 +804,59 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target address too long", http.StatusBadRequest)
 		return
 	}
-	
-	// Normalize target: if no port specified, add default port 80
+
+	// Parse host/port. Prefer net.SplitHostPort because it correctly handles
+	// IPv6 literals wrapped in brackets ("[::1]:443" → "::1", "443"), which a
+	// naive strings.SplitN(":", 2) would mangle into ("[", ":1]:443") and
+	// silently reject every IPv6 TCPing target with a 400 error.
 	var host, portStr string
-	if strings.Contains(target, ":") {
-		// Split host and port
-		parts := strings.SplitN(target, ":", 2)
-		if len(parts) != 2 {
-			http.Error(w, "invalid target format", http.StatusBadRequest)
-			return
-		}
-		host = strings.TrimSpace(parts[0])
-		portStr = strings.TrimSpace(parts[1])
+	if h, p, splitErr := net.SplitHostPort(target); splitErr == nil {
+		host = strings.TrimSpace(h)
+		portStr = strings.TrimSpace(p)
 	} else {
-		// No port specified, add default port 80
+		// No port in target (or malformed). Default to port 80 on the bare
+		// host. This matches the previous behaviour for ":"-free inputs; for
+		// bracketed IPv6 literals without a port ("[::1]") we strip brackets.
 		host = strings.TrimSpace(target)
+		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 		portStr = "80"
 	}
-	
+
 	// Validate host is not empty
 	if host == "" {
 		http.Error(w, "target host cannot be empty", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Validate port is a number and in valid range (1-65535)
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
 		http.Error(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
 		return
 	}
-	
-	// Reconstruct normalized target
-	target = fmt.Sprintf("%s:%d", host, port)
-	
-	// Additional validation: check for common injection patterns
-	// Allow valid characters for hostnames and IP addresses
-	// Hostname regex: alphanumeric, dots, hyphens, brackets (for IPv6)
-	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-\[\]:]+$`)
+
+	// Validate host characters BEFORE reconstructing the dial target so we
+	// still reject injection-looking inputs. Hostnames/IPv4/unbracketed IPv6
+	// all fit this set (colons in IPv6, dots, hyphens, alphanumerics).
+	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-:]+$`)
 	if !hostnameRegex.MatchString(host) {
 		http.Error(w, "invalid target host format", http.StatusBadRequest)
 		return
 	}
 
+	// Reconstruct a dial-ready target. net.JoinHostPort wraps IPv6 literals
+	// in brackets automatically ("::1" + "443" → "[::1]:443"), which is the
+	// format net.DialTimeout expects.
+	target = net.JoinHostPort(host, strconv.Itoa(port))
+
 	// Execute tcping to target specified by backend
 	latency, err := executeTCPing(target)
-	
+
 	response := TCPingResponse{
 		Success: err == nil,
 		Latency: latency,
 	}
-	
+
 	if err != nil {
 		response.Error = err.Error()
 		log.Printf("❌ TCPing to %s failed: %v", target, err)
@@ -872,12 +1006,7 @@ func startPushLoop() {
 			// syscall, so resp.Body is at EOF after Decode; no extra drain needed.
 			var pushResp ClientPushResponse
 			if decErr := json.NewDecoder(resp.Body).Decode(&pushResp); decErr == nil {
-				pushTCPingMu.Lock()
-				pushTCPingTargets = pushResp.TCPingTargets
-				if pushResp.TCPingIntervalSecs > 0 {
-					pushTCPingIntervalSec = pushResp.TCPingIntervalSecs
-				}
-				pushTCPingMu.Unlock()
+				applyPushTCPingConfig(pushResp.TCPingTargets, pushResp.TCPingIntervalSecs)
 			} else {
 				// Decode failed — drain remainder to enable connection reuse
 				ioutil.ReadAll(resp.Body) //nolint:errcheck
@@ -904,54 +1033,113 @@ func startPushLoop() {
 	}
 }
 
+// currentPushTCPingConfig returns a snapshot of the current targets and the
+// sanitised (> 0) measurement interval in seconds.
+func currentPushTCPingConfig() ([]string, int) {
+	pushTCPingMu.RLock()
+	targets := make([]string, len(pushTCPingTargets))
+	copy(targets, pushTCPingTargets)
+	interval := pushTCPingIntervalSec
+	pushTCPingMu.RUnlock()
+	if interval <= 0 {
+		interval = 60
+	}
+	return targets, interval
+}
+
+// measureTCPingOnce runs a concurrent TCPing dial for every configured target
+// and stamps each result with the real MeasuredAt timestamp. Results are queued
+// for startPushLoop to deliver on the next 3-second push cycle.
+func measureTCPingOnce(targets []string) {
+	if len(targets) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for _, target := range targets {
+		wg.Add(1)
+		go func(tgt string) {
+			defer wg.Done()
+			latency, err := executeTCPing(tgt)
+			result := ClientTCPingResult{
+				Target:     tgt,
+				Latency:    latency,
+				Success:    err == nil,
+				MeasuredAt: time.Now().UTC(),
+			}
+			pendingTCPingResultsMu.Lock()
+			if len(pendingTCPingResults) >= maxPendingTCPingResults {
+				// Drop oldest on overflow so long server outages do not grow the
+				// queue unboundedly.
+				pendingTCPingResults = pendingTCPingResults[1:]
+			}
+			pendingTCPingResults = append(pendingTCPingResults, result)
+			pendingTCPingResultsMu.Unlock()
+		}(target)
+	}
+	wg.Wait()
+}
+
 // startPushTCPingLoop runs TCPing for the targets received from the server and
 // queues the results for the next startPushLoop iteration.
-// Runs at the interval specified by the server (default 60 s).
+//
+// Cadence contract (this is what produces clean, admin-matching chart gaps):
+//
+//  1. WARM-UP: wait up to 5 s for the first registration/push to populate
+//     pushTCPingTargets and pushTCPingIntervalSec, or less if a config-changed
+//     signal arrives earlier. Any shorter and we risk measuring against empty
+//     targets; any longer and a small admin interval (e.g. 5 s) would look
+//     "late" on the first chart point.
+//
+//  2. MEASURE — produce one chart point at the current time.
+//
+//  3. TIME-DRIVEN WAIT — sleep exactly `interval` seconds before the next
+//     measurement. If the admin changes the interval mid-sleep the timer is
+//     reset to the NEW interval (fresh "N seconds from now"); we do NOT shoot
+//     an extra measurement just because the interval changed. This keeps the
+//     chart gap after a change equal to the new interval instead of producing
+//     a misleading "bonus" point right after the change.
+//
+// Net effect for any admin interval N:
+//   - First point: ≤ 5 s after client start (or sooner via signal shortcut).
+//   - Every subsequent point: exactly N seconds after the previous one, with
+//     the server-side timestamp taken from the client's MeasuredAt (so the
+//     3-second push cycle no longer quantises the chart).
+//   - Changing N from 5→100 or 60→5 in the admin page takes effect within
+//     one push cycle (≤ 3 s) without producing out-of-schedule points.
 func startPushTCPingLoop() {
-	// Wait longer than startPushLoop so registration response is processed first
-	time.Sleep(15 * time.Second)
+	// ── WARM-UP ────────────────────────────────────────────────────────
+	select {
+	case <-pushTCPingIntervalChanged:
+	case <-time.After(5 * time.Second):
+	}
 
 	for {
-		// Read current configuration
-		pushTCPingMu.RLock()
-		targets := make([]string, len(pushTCPingTargets))
-		copy(targets, pushTCPingTargets)
-		interval := pushTCPingIntervalSec
-		pushTCPingMu.RUnlock()
+		// ── MEASURE ────────────────────────────────────────────────────
+		targets, _ := currentPushTCPingConfig()
+		measureTCPingOnce(targets)
 
-		if interval <= 0 {
-			interval = 60
-		}
-
-		if len(targets) > 0 {
-			// Measure all targets concurrently (each has its own 3-second timeout)
-			var wg sync.WaitGroup
-			for _, target := range targets {
-				wg.Add(1)
-				go func(tgt string) {
-					defer wg.Done()
-					latency, err := executeTCPing(tgt)
-					result := ClientTCPingResult{
-						Target:  tgt,
-						Latency: latency,
-						Success: err == nil,
-					}
-					pendingTCPingResultsMu.Lock()
-					pendingTCPingResults = append(pendingTCPingResults, result)
-					pendingTCPingResultsMu.Unlock()
-				}(target)
+		// ── TIME-DRIVEN WAIT ───────────────────────────────────────────
+		// Inner loop keeps us on a strict "N seconds since last measurement"
+		// schedule. Interval changes restart the timer instead of jumping
+		// straight to another measurement.
+	wait:
+		for {
+			_, interval := currentPushTCPingConfig()
+			timer := time.NewTimer(time.Duration(interval) * time.Second)
+			select {
+			case <-pushTCPingIntervalChanged:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				// Loop around: re-read the new interval and start a fresh
+				// sleep. No measurement happens here — the next point will
+				// land exactly `new interval` seconds from now.
+				continue
+			case <-timer.C:
+				// Normal tick — proceed to the next measurement.
+				break wait
 			}
-			wg.Wait()
 		}
-
-		// Re-read interval in case it changed while we were measuring
-		pushTCPingMu.RLock()
-		interval = pushTCPingIntervalSec
-		pushTCPingMu.RUnlock()
-		if interval <= 0 {
-			interval = 60
-		}
-		time.Sleep(time.Duration(interval) * time.Second)
 	}
 }
 
@@ -959,12 +1147,12 @@ func startPushTCPingLoop() {
 func collectSystemMetrics() metricPayload {
 	// Get system uptime (not process uptime) from /proc/uptime
 	uptime := getSystemUptime()
-	
+
 	// Get system information
 	osInfo := getOSInfo()
 	ipv4, ipv6 := getIPAddresses()
 	location := getLocation() // Only country
-	
+
 	// Get system metrics
 	cpu := getCPUUsage()
 	cpuModel := getCPUModel()
@@ -975,7 +1163,7 @@ func collectSystemMetrics() metricPayload {
 	diskInfo := getDiskInfo()
 	netIn, netOut, totalNetInBytes, totalNetOutBytes := getNetworkStats()
 	virtualizationType := getVirtualizationType()
-	
+
 	return metricPayload{
 		ID:                 agentID,
 		Name:               agentName,
@@ -1012,13 +1200,30 @@ func getOSInfo() OSInfo {
 	osInfoOnce.Do(func() {
 		osName := runtime.GOOS
 		var name, icon string
-		
+
 		switch osName {
 		case "linux":
 			name = detectLinuxDistro()
 			icon = getOSIcon(name)
 		case "darwin":
+			// Enrich the bare "macOS" label with the product version,
+			// and — where we can tell — the marketing name (Sonoma,
+			// Sequoia, …). `sw_vers -productVersion` returns something
+			// like "14.4.1" even on Apple Silicon and has been stable
+			// since Mac OS X 10.3, so it's safe to rely on. Parsing is
+			// intentionally tolerant: if sw_vers fails or returns an
+			// unexpected format we fall back to the plain "macOS"
+			// string rather than logging noise.
 			name = "macOS"
+			if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
+				if v := strings.TrimSpace(string(out)); v != "" {
+					if mn := macOSMarketingName(v); mn != "" {
+						name = fmt.Sprintf("macOS %s %s", mn, v)
+					} else {
+						name = fmt.Sprintf("macOS %s", v)
+					}
+				}
+			}
 			icon = "devicon:apple"
 		case "windows":
 			name = "Windows"
@@ -1027,7 +1232,7 @@ func getOSInfo() OSInfo {
 			name = strings.Title(osName)
 			icon = "devicon:linux"
 		}
-		
+
 		osInfoCache = &OSInfo{Name: name, Icon: icon}
 	})
 	return *osInfoCache
@@ -1039,7 +1244,7 @@ func detectLinuxDistro() string {
 	if err == nil {
 		content := string(data)
 		contentLower := strings.ToLower(content)
-		
+
 		// Check for specific distributions (order matters - check specific ones first)
 		if strings.Contains(contentLower, "pop!_os") || strings.Contains(contentLower, "pop os") {
 			return "Pop!_OS"
@@ -1099,7 +1304,7 @@ func detectLinuxDistro() string {
 			return "Clear Linux"
 		}
 	}
-	
+
 	// Fallback: try reading /etc/issue
 	if data, err := ioutil.ReadFile("/etc/issue"); err == nil {
 		content := strings.ToLower(string(data))
@@ -1115,13 +1320,13 @@ func detectLinuxDistro() string {
 			return "Arch Linux"
 		}
 	}
-	
+
 	return "Linux"
 }
 
 func getOSIcon(osName string) string {
 	osLower := strings.ToLower(osName)
-	
+
 	// ICON POLICY: Only Ubuntu and Windows use "logos:" prefix, all other systems use "devicon:"
 	// Debian-based distributions
 	if strings.Contains(osLower, "ubuntu") {
@@ -1140,8 +1345,8 @@ func getOSIcon(osName string) string {
 		return "devicon:linux" // Parrot OS: no specific devicon, use generic
 	} else if strings.Contains(osLower, "debian") {
 		return "devicon:debian" // Debian: use devicon
-	
-	// Arch-based distributions
+
+		// Arch-based distributions
 	} else if strings.Contains(osLower, "manjaro") {
 		return "devicon:linux" // Manjaro: no specific devicon, use generic
 	} else if strings.Contains(osLower, "endeavour") {
@@ -1150,8 +1355,8 @@ func getOSIcon(osName string) string {
 		return "devicon:archlinux" // Garuda: use Arch logo
 	} else if strings.Contains(osLower, "arch") {
 		return "devicon:archlinux" // Arch Linux: use devicon
-	
-	// Red Hat-based distributions
+
+		// Red Hat-based distributions
 	} else if strings.Contains(osLower, "rocky") {
 		return "devicon:rockylinux" // Rocky Linux: use devicon
 	} else if strings.Contains(osLower, "alma") {
@@ -1164,8 +1369,8 @@ func getOSIcon(osName string) string {
 		return "devicon:oracle" // Oracle Linux: use devicon
 	} else if strings.Contains(osLower, "fedora") {
 		return "devicon:fedora" // Fedora: use devicon
-	
-	// Independent distributions
+
+		// Independent distributions
 	} else if strings.Contains(osLower, "opensuse") || strings.Contains(osLower, "suse") {
 		return "devicon:opensuse" // openSUSE: use devicon
 	} else if strings.Contains(osLower, "alpine") {
@@ -1185,7 +1390,7 @@ func getOSIcon(osName string) string {
 	} else if strings.Contains(osLower, "clear") {
 		return "devicon:linux" // Clear Linux: no specific devicon, use generic
 	}
-	
+
 	// Default Linux icon (Tux)
 	return "devicon:linux"
 }
@@ -1195,7 +1400,7 @@ func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
-	
+
 	// Check IPv4 private ranges
 	if ip4 := ip.To4(); ip4 != nil {
 		// Loopback: 127.0.0.0/8
@@ -1224,7 +1429,7 @@ func isPrivateIP(ip net.IP) bool {
 		}
 		return false
 	}
-	
+
 	// Check IPv6 private ranges
 	// Loopback: ::1
 	if ip.IsLoopback() {
@@ -1250,7 +1455,7 @@ func isPrivateIP(ip net.IP) bool {
 		ipv4 := net.IP(ip[12:16])
 		return isPrivateIP(ipv4)
 	}
-	
+
 	return false
 }
 
@@ -1405,15 +1610,15 @@ func scanInterfaceIPs() (ipv4, ipv6 string) {
 func getPublicIPv4() string {
 	services := []string{
 		// Plain-text IP-echo services — most reliable and fast
-		"https://api4.my-ip.io/ip",   // IPv4-forced endpoint
+		"https://api4.my-ip.io/ip", // IPv4-forced endpoint
 		"https://api.ipify.org",
 		"https://icanhazip.com",
-		"https://ipinfo.io/ip",       // ipinfo.io — accurate and widely available
-		"http://api.ipify.org",       // HTTP fallback (useful behind TLS-stripping proxies)
+		"https://ipinfo.io/ip", // ipinfo.io — accurate and widely available
+		"http://api.ipify.org", // HTTP fallback (useful behind TLS-stripping proxies)
 		"http://icanhazip.com",
 		"http://ip.sb",
-		"http://myip.ipip.net",       // China-friendly
-		"http://ip.3322.net",         // China-friendly
+		"http://myip.ipip.net", // China-friendly
+		"http://ip.3322.net",   // China-friendly
 		"http://ifconfig.me/ip",
 	}
 
@@ -1490,7 +1695,7 @@ func getPublicIPv4() string {
 // Useful for NAT machines that have native IPv6 but no direct IPv4.
 func getPublicIPv6() string {
 	services := []string{
-		"https://api6.my-ip.io/ip",  // IPv6-forced endpoint
+		"https://api6.my-ip.io/ip", // IPv6-forced endpoint
 		"https://ipv6.icanhazip.com",
 		"https://v6.ident.me",
 	}
@@ -1577,7 +1782,7 @@ func getLocation() string {
 			locationCache = strings.TrimSpace(location)
 			return
 		}
-		
+
 		// Try to detect from system timezone or IP (simplified)
 		// In production, use proper geolocation service
 		locationCache = ""
@@ -1587,9 +1792,9 @@ func getLocation() string {
 
 // CPU stats tracking for accurate calculation
 var (
-	lastCPUStats cpuStats
+	lastCPUStats     cpuStats
 	lastCPUStatsTime time.Time
-	cpuStatsMutex sync.Mutex
+	cpuStatsMutex    sync.Mutex
 )
 
 type cpuStats struct {
@@ -1621,16 +1826,22 @@ func getCPUUsage() float64 {
 		}
 		return 0.0
 	}
-	
+
 	cpuStatsMutex.Lock()
 	defer cpuStatsMutex.Unlock()
-	
+
 	// Read /proc/stat for accurate CPU usage (Linux)
 	data, err := ioutil.ReadFile("/proc/stat")
 	if err != nil {
+		// /proc/stat missing/unreadable — classic locked-down LXC symptom.
+		// Fall back to cgroup-reported CPU time, which isn't affected by
+		// procfs filtering because it lives under /sys/fs/cgroup.
+		if v, ok := getCgroupCPUUsage(); ok {
+			return v
+		}
 		return 0.0
 	}
-	
+
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "cpu ") {
@@ -1638,7 +1849,7 @@ func getCPUUsage() float64 {
 			if len(fields) < 8 {
 				continue
 			}
-			
+
 			// Parse CPU stats: user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
 			// Use strconv.ParseUint instead of fmt.Sscanf for ~10x faster integer parsing
 			parseField := func(s string) uint64 {
@@ -1662,25 +1873,35 @@ func getCPUUsage() float64 {
 			if len(fields) > 8 {
 				steal = parseField(fields[8])
 			}
-			
+
 			// Calculate total CPU time (excluding guest time to avoid double counting)
 			total := user + nice + system + idle + iowait + irq + softirq + steal
 			idleTotal := idle + iowait
-			
+
+			// /proc/stat present but all counters are zero — another lxcfs /
+			// procfs-filter symptom. The per-call data is unusable; switch
+			// to the cgroup sampler for this container.
+			if total == 0 {
+				if v, ok := getCgroupCPUUsage(); ok {
+					return v
+				}
+				return 0.0
+			}
+
 			currentStats := cpuStats{
 				Total: total,
 				Idle:  idleTotal,
 			}
-			
+
 			now := time.Now()
-			
+
 			// If we have previous stats, calculate usage percentage
 			if lastCPUStats.Total > 0 && !lastCPUStatsTime.IsZero() {
 				elapsed := now.Sub(lastCPUStatsTime).Seconds()
 				if elapsed > 0 {
 					totalDiff := float64(currentStats.Total) - float64(lastCPUStats.Total)
 					idleDiff := float64(currentStats.Idle) - float64(lastCPUStats.Idle)
-					
+
 					// Handle counter wrap-around
 					if totalDiff < 0 {
 						totalDiff = float64(currentStats.Total)
@@ -1688,7 +1909,7 @@ func getCPUUsage() float64 {
 					if idleDiff < 0 {
 						idleDiff = float64(currentStats.Idle)
 					}
-					
+
 					if totalDiff > 0 {
 						usage := ((totalDiff - idleDiff) / totalDiff) * 100.0
 						if usage < 0 {
@@ -1697,23 +1918,28 @@ func getCPUUsage() float64 {
 						if usage > 100 {
 							usage = 100
 						}
-						
+
 						// Update last stats
 						lastCPUStats = currentStats
 						lastCPUStatsTime = now
-						
+
 						return usage
 					}
 				}
 			}
-			
+
 			// First call or no previous stats - store current stats and return 0
 			lastCPUStats = currentStats
 			lastCPUStatsTime = now
 			return 0.0
 		}
 	}
-	
+
+	// /proc/stat was readable but did not contain a "cpu " aggregate line
+	// (some procfs filters blank out the content). Fall back to cgroup.
+	if v, ok := getCgroupCPUUsage(); ok {
+		return v
+	}
 	return 0.0
 }
 
@@ -1721,8 +1947,12 @@ func getMemoryUsage() float64 {
 	if runtime.GOOS == "darwin" {
 		pct, _, _, err := macOSMemoryStats()
 		if err == nil {
-			if pct < 0 { pct = 0 }
-			if pct > 100 { pct = 100 }
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 100 {
+				pct = 100
+			}
 			return pct
 		}
 		return 0.0
@@ -1731,28 +1961,44 @@ func getMemoryUsage() float64 {
 		vmStat, err := mem.VirtualMemory()
 		if err == nil {
 			percent := vmStat.UsedPercent
-			if percent < 0 { percent = 0 }
-			if percent > 100 { percent = 100 }
+			if percent < 0 {
+				percent = 0
+			}
+			if percent > 100 {
+				percent = 100
+			}
 			return percent
 		}
 		return 0.0
 	}
-	
-	// Read /proc/meminfo for accurate memory usage (Linux)
+
+	// Step 1 — Authoritative cgroup limit, if one is set. See the
+	// matching comment in getMemoryInfo for the full rationale; the
+	// short version is: when an explicit cgroup limit exists it's the
+	// only number that reliably reflects the container's real
+	// allocation, regardless of how /proc/meminfo is virtualised.
+	clamp := func(pct float64) float64 {
+		if pct < 0 {
+			return 0
+		}
+		if pct > 100 {
+			return 100
+		}
+		return pct
+	}
+	if u, t, ok := getCgroupMemoryStats(); ok && t > 0 {
+		return clamp(float64(u) / float64(t) * 100.0)
+	}
+
+	// Step 2 — /proc/meminfo.
 	data, err := ioutil.ReadFile("/proc/meminfo")
 	if err != nil {
-		// Fallback to free command
-		cmd := exec.Command("sh", "-c", "free | grep Mem | awk '{printf \"%.1f\", $3/$2 * 100.0}'")
-		output, err := cmd.Output()
-		if err == nil {
-			var mem float64
-			if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%f", &mem); err == nil {
-				return mem
-			}
+		if u, t, ok := resolveMemoryStats(); ok && t > 0 {
+			return clamp(float64(u) / float64(t) * 100.0)
 		}
 		return 0.0
 	}
-	
+
 	// Parse /proc/meminfo
 	var memTotal, memAvailable, memFree, buffers, cached uint64
 	lines := strings.Split(string(data), "\n")
@@ -1761,10 +2007,10 @@ func getMemoryUsage() float64 {
 		if len(fields) < 2 {
 			continue
 		}
-		
+
 		key := strings.TrimSuffix(fields[0], ":")
 		value := fields[1]
-		
+
 		switch key {
 		case "MemTotal":
 			fmt.Sscanf(value, "%d", &memTotal)
@@ -1778,31 +2024,26 @@ func getMemoryUsage() float64 {
 			fmt.Sscanf(value, "%d", &cached)
 		}
 	}
-	
+
 	if memTotal == 0 {
+		// /proc/meminfo zeroed-out (lxcfs quirk) — use the cgroup + sysinfo
+		// resolver so the % bar in the UI still reflects real usage.
+		if u, t, ok := resolveMemoryStats(); ok && t > 0 {
+			return clamp(float64(u) / float64(t) * 100.0)
+		}
 		return 0.0
 	}
-	
-	// Calculate used memory
-	// If MemAvailable is available (kernel 3.14+), use it for more accurate calculation
+
+	// Calculate used memory. Prefer MemAvailable (kernel 3.14+) which
+	// already accounts for reclaimable caches.
 	var memUsed uint64
 	if memAvailable > 0 {
 		memUsed = memTotal - memAvailable
 	} else {
-		// Fallback: MemTotal - MemFree - Buffers - Cached
 		memUsed = memTotal - memFree - buffers - cached
 	}
-	
-	// Calculate percentage
-	usage := (float64(memUsed) / float64(memTotal)) * 100.0
-	if usage < 0 {
-		usage = 0
-	}
-	if usage > 100 {
-		usage = 100
-	}
-	
-	return usage
+
+	return clamp(float64(memUsed) / float64(memTotal) * 100.0)
 }
 
 func getDiskUsage() float64 {
@@ -1880,7 +2121,7 @@ func computeDiskUsage() float64 {
 		}
 		return 0.0
 	}
-	
+
 	// Get disk usage percentage for LOCAL physical filesystems only (Linux)
 	// Only include /dev/* devices, exclude virtual/network filesystems, track unique devices
 	cmd := exec.Command("sh", "-c", `df -B1 -T 2>/dev/null | tail -n +2 | awk '
@@ -1911,7 +2152,7 @@ func computeDiskUsage() float64 {
 			}
 		}
 	}
-	
+
 	// Fallback: use df -h for root partition only
 	cmd = exec.Command("df", "-h", "/")
 	output, err = cmd.Output()
@@ -1941,7 +2182,7 @@ func getSystemUptime() int64 {
 		// Fallback: use process uptime
 		return int64(time.Since(startTime).Seconds())
 	}
-	
+
 	// Try to read from /proc/uptime (Linux)
 	data, err := ioutil.ReadFile("/proc/uptime")
 	if err == nil {
@@ -1949,13 +2190,29 @@ func getSystemUptime() int64 {
 		fields := strings.Fields(string(data))
 		if len(fields) > 0 {
 			var uptimeSeconds float64
-			if _, err := fmt.Sscanf(fields[0], "%f", &uptimeSeconds); err == nil {
+			if _, err := fmt.Sscanf(fields[0], "%f", &uptimeSeconds); err == nil && uptimeSeconds > 0 {
 				return int64(uptimeSeconds)
 			}
 		}
 	}
-	
-	// Fallback: use process uptime if /proc/uptime is not available
+
+	// /proc/uptime is unreadable (common in LXC containers with a broken
+	// lxcfs — ENOTCONN on the bind mount). Try PID 1 start time against
+	// sysinfo(2) uptime: this gives TRUE container uptime (not host
+	// uptime) because PID 1 is the container's init, which is spawned
+	// when the container boots.
+	if contUp, ok := readContainerUptime(); ok && contUp > 0 {
+		return contUp
+	}
+	// Last kernel-backed option: raw sysinfo(2) uptime (host-level, but
+	// still better than process uptime for a freshly-restarted agent).
+	if hostUp, ok := readSysinfoUptime(); ok && hostUp > 0 {
+		return hostUp
+	}
+
+	// Fallback: process uptime. This is only reached when both
+	// /proc/uptime and the sysinfo syscall fail, which is effectively
+	// never on a working Linux kernel.
 	return int64(time.Since(startTime).Seconds())
 }
 
@@ -1974,7 +2231,7 @@ type netInterfaceStats struct {
 func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint64) {
 	netStatsMutex.Lock()
 	defer netStatsMutex.Unlock()
-	
+
 	// Use gopsutil for cross-platform support
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		// Get network I/O statistics
@@ -1982,7 +2239,7 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 		if err != nil {
 			return 0.0, 0.0, 0, 0
 		}
-		
+
 		// Sum up all interfaces (excluding loopback)
 		for _, stat := range ioStats {
 			if stat.Name != "lo" && !strings.HasPrefix(stat.Name, "Loopback") {
@@ -1990,9 +2247,9 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 				totalTxBytes += stat.BytesSent
 			}
 		}
-		
+
 		now := time.Now()
-		
+
 		// Calculate rate if we have previous stats
 		if lastNetStats != nil && !lastNetStatsTime.IsZero() {
 			elapsed := now.Sub(lastNetStatsTime).Seconds()
@@ -2002,10 +2259,10 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 					prevRxBytes += stats.RxBytes
 					prevTxBytes += stats.TxBytes
 				}
-				
+
 				rxDiff := float64(totalRxBytes) - float64(prevRxBytes)
 				txDiff := float64(totalTxBytes) - float64(prevTxBytes)
-				
+
 				// Handle counter wrap-around
 				if rxDiff < 0 {
 					rxDiff = float64(totalRxBytes)
@@ -2013,12 +2270,12 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 				if txDiff < 0 {
 					txDiff = float64(totalTxBytes)
 				}
-				
+
 				inMBps = (rxDiff / elapsed) / (1024 * 1024)
 				outMBps = (txDiff / elapsed) / (1024 * 1024)
 			}
 		}
-		
+
 		// Update last stats (convert to our format)
 		currentStats := make(map[string]netInterfaceStats)
 		for _, stat := range ioStats {
@@ -2031,61 +2288,61 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 		}
 		lastNetStats = currentStats
 		lastNetStatsTime = now
-		
+
 		return inMBps, outMBps, totalRxBytes, totalTxBytes
 	}
-	
+
 	// Read current network stats from /proc/net/dev (Linux)
 	currentStats := make(map[string]netInterfaceStats)
 	data, err := ioutil.ReadFile("/proc/net/dev")
 	if err != nil {
 		return 0.0, 0.0, 0, 0
 	}
-	
+
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		// Skip header lines
 		if !strings.Contains(line, ":") {
 			continue
 		}
-		
+
 		// Parse line: "eth0: 123456 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
 		// Format: interface: rx_bytes rx_packets ... tx_bytes tx_packets ...
 		parts := strings.Split(line, ":")
 		if len(parts) != 2 {
 			continue
 		}
-		
+
 		interfaceName := strings.TrimSpace(parts[0])
 		// Skip loopback interface
 		if interfaceName == "lo" {
 			continue
 		}
-		
+
 		fields := strings.Fields(parts[1])
 		if len(fields) < 16 {
 			continue
 		}
-		
+
 		// Use strconv.ParseUint for faster integer parsing (avoids fmt.Sscanf overhead)
-		rxBytes, _ := strconv.ParseUint(fields[0], 10, 64)  // Receive bytes
-		txBytes, _ := strconv.ParseUint(fields[8], 10, 64)  // Transmit bytes
-		
+		rxBytes, _ := strconv.ParseUint(fields[0], 10, 64) // Receive bytes
+		txBytes, _ := strconv.ParseUint(fields[8], 10, 64) // Transmit bytes
+
 		currentStats[interfaceName] = netInterfaceStats{
 			RxBytes: rxBytes,
 			TxBytes: txBytes,
 		}
 	}
-	
+
 	// Calculate total bytes across all interfaces
 	// Note: totalRxBytes and totalTxBytes are already declared as named return values
 	for _, stats := range currentStats {
 		totalRxBytes += stats.RxBytes
 		totalTxBytes += stats.TxBytes
 	}
-	
+
 	now := time.Now()
-	
+
 	// If we have previous stats, calculate rate
 	if lastNetStats != nil && !lastNetStatsTime.IsZero() {
 		elapsed := now.Sub(lastNetStatsTime).Seconds()
@@ -2096,11 +2353,11 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 				prevRxBytes += stats.RxBytes
 				prevTxBytes += stats.TxBytes
 			}
-			
+
 			// Calculate rate (bytes per second to MB per second)
 			rxDiff := float64(totalRxBytes) - float64(prevRxBytes)
 			txDiff := float64(totalTxBytes) - float64(prevTxBytes)
-			
+
 			// Handle counter wrap-around (uint64 can wrap)
 			if rxDiff < 0 {
 				rxDiff = float64(totalRxBytes) // Assume wrap-around, use current value
@@ -2108,17 +2365,892 @@ func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint
 			if txDiff < 0 {
 				txDiff = float64(totalTxBytes) // Assume wrap-around, use current value
 			}
-			
+
 			inMBps = (rxDiff / elapsed) / (1024 * 1024)  // Convert bytes/s to MB/s
 			outMBps = (txDiff / elapsed) / (1024 * 1024) // Convert bytes/s to MB/s
 		}
 	}
-	
+
 	// Update last stats
 	lastNetStats = currentStats
 	lastNetStatsTime = now
-	
+
 	return inMBps, outMBps, totalRxBytes, totalTxBytes
+}
+
+// countCPUList parses a Linux cpuset-style list like "0-3,5,8-11" and returns
+// the total number of CPU indices it references. Returns 0 for an empty or
+// malformed string. Used to turn the contents of cpuset.cpus.effective into
+// a plain core count.
+func countCPUList(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	total := 0
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if dash := strings.Index(part, "-"); dash > 0 {
+			var lo, hi int
+			if _, err := fmt.Sscanf(part, "%d-%d", &lo, &hi); err == nil && hi >= lo {
+				total += hi - lo + 1
+			}
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(part, "%d", &n); err == nil && n >= 0 {
+			total++
+		}
+	}
+	return total
+}
+
+// getCgroupCPUCount returns the effective number of CPUs the current process
+// is allowed to use under Linux cgroups (v1 or v2). It considers BOTH sources
+// of CPU limiting and picks the stricter (smaller) positive value:
+//
+//   - cpu bandwidth (cfs_quota / cfs_period on v1, cpu.max on v2) — ceil'd up
+//     to a whole core, e.g. quota=200000 period=100000 → 2 cores, quota=50000
+//     period=100000 → 1 core (can't display "0.5 core" in the UI).
+//   - cpuset pinning (cpuset.cpus.effective) — the number of CPU indices the
+//     process is actually allowed to run on.
+//
+// Returns 0 when no cgroup-imposed limit is in effect or no recognised
+// cgroup file is readable (e.g. bare metal, or a container that hasn't been
+// given a CPU limit). Callers should fall back to their regular detection
+// path in that case.
+//
+// This is the only reliable way to know the CPU count inside an LXC/Docker
+// container that does not run lxcfs: lscpu, /proc/cpuinfo and gopsutil all
+// return the HOST's CPU topology, not the container's allocation.
+func getCgroupCPUCount() int {
+	fromQuota := 0
+	fromCpuset := 0
+
+	// ── cpu bandwidth ─────────────────────────────────────────────────
+	// cgroup v2 — single file "quota period"; "max" means unlimited.
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/cpu.max"); err == nil {
+		parts := strings.Fields(strings.TrimSpace(string(data)))
+		if len(parts) >= 2 && parts[0] != "max" {
+			var quota, period int64
+			fmt.Sscanf(parts[0], "%d", &quota)
+			fmt.Sscanf(parts[1], "%d", &period)
+			if quota > 0 && period > 0 {
+				n := int((quota + period - 1) / period) // ceil
+				if n > 0 {
+					fromQuota = n
+				}
+			}
+		}
+	} else {
+		// cgroup v1 — quota and period in separate files.
+		quotaData, qErr := ioutil.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+		periodData, pErr := ioutil.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+		if qErr == nil && pErr == nil {
+			var quota, period int64
+			fmt.Sscanf(strings.TrimSpace(string(quotaData)), "%d", &quota)
+			fmt.Sscanf(strings.TrimSpace(string(periodData)), "%d", &period)
+			if quota > 0 && period > 0 {
+				n := int((quota + period - 1) / period)
+				if n > 0 {
+					fromQuota = n
+				}
+			}
+		}
+	}
+
+	// ── cpuset (affinity) ─────────────────────────────────────────────
+	// v2 exposes the effective set at the unified hierarchy root; v1 keeps
+	// it under the cpuset controller. We try several paths because
+	// containers mount this hierarchy in slightly different ways.
+	cpusetPaths := []string{
+		"/sys/fs/cgroup/cpuset.cpus.effective", // v2 (preferred — post-restrictions)
+		"/sys/fs/cgroup/cpuset/cpuset.cpus",    // v1 legacy path
+		"/sys/fs/cgroup/cpuset.cpus",           // v2 fallback
+	}
+	for _, p := range cpusetPaths {
+		if data, err := ioutil.ReadFile(p); err == nil {
+			if n := countCPUList(string(data)); n > 0 {
+				fromCpuset = n
+				break
+			}
+		}
+	}
+
+	// Return the stricter non-zero limit. A container can have both, e.g.
+	// quota=2 cores + pinned to CPUs 4-7 (cpuset=4) → we must report 2.
+	switch {
+	case fromQuota > 0 && fromCpuset > 0:
+		if fromQuota < fromCpuset {
+			return fromQuota
+		}
+		return fromCpuset
+	case fromQuota > 0:
+		return fromQuota
+	case fromCpuset > 0:
+		return fromCpuset
+	}
+
+	// Proxmox LXC fallback — "cores: N" in /etc/vzdump/pct.conf. Proxmox
+	// often enforces core count via lxc.cgroup2.cpuset.cpus from the host,
+	// which — on unprivileged containers — doesn't propagate to the
+	// in-container cgroup view. This file is the admin's configured value.
+	if cfg, ok := proxmoxLXCConfigCached(); ok && cfg.Cores > 0 {
+		return cfg.Cores
+	}
+	return 0
+}
+
+// cgroup-based CPU usage tracking. We keep separate state from the
+// /proc/stat path so the two can be sampled independently without polluting
+// each other's rate calculations.
+var (
+	lastCgroupCPUNs   uint64
+	lastCgroupCPUTime time.Time
+	cgroupCPUMu       sync.Mutex
+)
+
+// readCgroupCPUNanos returns the total CPU time consumed by the current
+// cgroup, in nanoseconds. Supports both cgroup v2 (cpu.stat's "usage_usec"
+// field, converted from microseconds) and cgroup v1 (cpuacct.usage, which
+// is already in nanoseconds). Returns (0, false) if neither file is
+// readable — typically because the container is outside a cgroup hierarchy
+// or the cpuacct controller is not mounted.
+func readCgroupCPUNanos() (uint64, bool) {
+	// cgroup v2 — unified hierarchy.
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/cpu.stat"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "usage_usec" {
+				if v, err := strconv.ParseUint(fields[1], 10, 64); err == nil {
+					return v * 1000, true // µs → ns
+				}
+			}
+		}
+	}
+	// cgroup v1 — cpuacct controller.
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/cpuacct/cpuacct.usage"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			return v, true
+		}
+	}
+	// cgroup v1 "legacy" — some distros mount cpuacct under cpu,cpuacct.
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// getCgroupCPUUsage returns the CPU usage of the current cgroup as a
+// percentage across the cores available to this container. Requires two
+// samples spaced apart in wall time to compute a rate; the first call
+// primes state and returns (0, false). Subsequent calls return the usage
+// since the previous sample.
+//
+// We divide by (elapsed_ns * cpu_count) so "100%" means "all allocated
+// cores fully busy", matching how getCPUUsage on /proc/stat reports.
+//
+// This is the only reliable CPU usage source in a container whose
+// /proc/stat has been zeroed or hidden by lxcfs / procfs filtering.
+func getCgroupCPUUsage() (float64, bool) {
+	cgroupCPUMu.Lock()
+	defer cgroupCPUMu.Unlock()
+
+	curr, ok := readCgroupCPUNanos()
+	if !ok {
+		return 0, false
+	}
+	now := time.Now()
+
+	if lastCgroupCPUTime.IsZero() || lastCgroupCPUNs == 0 {
+		lastCgroupCPUNs = curr
+		lastCgroupCPUTime = now
+		return 0, false
+	}
+
+	elapsedNs := float64(now.Sub(lastCgroupCPUTime).Nanoseconds())
+	if elapsedNs <= 0 {
+		return 0, false
+	}
+
+	var deltaNs float64
+	if curr >= lastCgroupCPUNs {
+		deltaNs = float64(curr - lastCgroupCPUNs)
+	} else {
+		// Counter reset (container restart, cgroup re-parented) — skip
+		// this sample rather than return a bogus spike, and rebase.
+		lastCgroupCPUNs = curr
+		lastCgroupCPUTime = now
+		return 0, false
+	}
+
+	// Number of cores the container is allowed to use — prefer the
+	// cgroup-reported limit so utilisation is expressed per allocated core
+	// rather than per host core.
+	cores := getCgroupCPUCount()
+	if cores <= 0 {
+		cores = runtime.NumCPU()
+	}
+	if cores <= 0 {
+		cores = 1
+	}
+
+	usage := (deltaNs / (elapsedNs * float64(cores))) * 100.0
+	if usage < 0 {
+		usage = 0
+	}
+	if usage > 100 {
+		usage = 100
+	}
+
+	lastCgroupCPUNs = curr
+	lastCgroupCPUTime = now
+	return usage, true
+}
+
+// getCgroupMemoryStats reads the container's memory allocation directly from
+// the cgroup pseudo-filesystem. It exists because some LXC templates expose a
+// zeroed-out /proc/meminfo (lxcfs bug on unprivileged containers, lxcfs not
+// running, or an explicit mount of an empty file). In that case /proc/meminfo
+// is readable but MemTotal reports 0, which makes every "used / total" helper
+// return nothing usable.
+//
+// Returns (usedBytes, totalBytes, ok). ok is false when no cgroup memory file
+// is readable or the container has no explicit memory limit ("max" on v2,
+// "-1"/very-large sentinel on v1). Callers should treat !ok as "no
+// cgroup-imposed limit, fall back to host-level sources".
+//
+// We deliberately do NOT use a "max" sentinel for total: if the container
+// truly has no limit and /proc/meminfo is also broken, we can't honestly
+// report a total, so we return ok=false and let the caller decide.
+// cgroupMemoryReclaimable returns the total reclaimable pages tracked in
+// cgroup memory.stat, matching the kernel's definition of "memory that
+// looks used but can be evicted on demand". Subtracting this from
+// memory.current yields the container's working-set size — the same
+// number reported by `kubectl top`, Docker's stats, and (approximately)
+// the "used" column of `free -h` on bare metal.
+//
+// The fields we look at:
+//   - inactive_file      — clean page-cache that can be dropped
+//   - slab_reclaimable   — dcache / inode cache reclaimed on pressure
+//
+// Both exist in cgroup v2 stat; cgroup v1 has the same fields, optionally
+// prefixed with "total_" in hierarchical accounting. Reading them
+// independently lets us tolerate one being absent (older kernels).
+func cgroupMemoryReclaimable(statPath string) uint64 {
+	data, err := ioutil.ReadFile(statPath)
+	if err != nil {
+		return 0
+	}
+	// cgroup v1 hierarchical accounting exposes BOTH the per-cgroup field
+	// ("inactive_file") AND the recursive hierarchy sum ("total_inactive_file").
+	// In a leaf cgroup (every container) they are identical, so a naive
+	// sum double-counts and subtracts ~2× from the "used" figure.
+	//
+	// Prefer the hierarchical (total_*) value when present — it already
+	// covers the current cgroup and any future descendants, matching the
+	// kernel's MemAvailable definition. Fall back to the plain name only
+	// when the total_* variant isn't in the file (older cgroup v1 kernels
+	// without hierarchical accounting, or cgroup v2 which uses the plain
+	// names only).
+	var inactiveFile, totalInactiveFile uint64
+	var slabReclaim, totalSlabReclaim uint64
+	var haveInactiveTotal, haveSlabTotal bool
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		v, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "inactive_file":
+			inactiveFile = v
+		case "total_inactive_file":
+			totalInactiveFile = v
+			haveInactiveTotal = true
+		case "slab_reclaimable":
+			slabReclaim = v
+		case "total_slab_reclaimable":
+			totalSlabReclaim = v
+			haveSlabTotal = true
+		}
+	}
+	var reclaimable uint64
+	if haveInactiveTotal {
+		reclaimable += totalInactiveFile
+	} else {
+		reclaimable += inactiveFile
+	}
+	if haveSlabTotal {
+		reclaimable += totalSlabReclaim
+	} else {
+		reclaimable += slabReclaim
+	}
+	return reclaimable
+}
+
+func getCgroupMemoryStats() (used, total uint64, ok bool) {
+	readUint := func(s string) (uint64, bool) {
+		s = strings.TrimSpace(s)
+		if s == "" || s == "max" {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+
+	// ── cgroup v2 (unified hierarchy) ────────────────────────────────
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		if t, tok := readUint(string(data)); tok {
+			total = t
+		}
+	}
+	if total > 0 {
+		if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
+			if u, uok := readUint(string(data)); uok {
+				used = u
+			}
+		}
+		// Subtract reclaimable caches (inactive_file + slab_reclaimable)
+		// to match the kernel's working-set definition — this is what
+		// /proc/meminfo's MemAvailable uses, and what monitoring tools
+		// like `kubectl top` / Docker stats display as "used".
+		if r := cgroupMemoryReclaimable("/sys/fs/cgroup/memory.stat"); r > 0 && r < used {
+			used -= r
+		}
+		return used, total, true
+	}
+
+	// ── cgroup v1 ────────────────────────────────────────────────────
+	// limit_in_bytes reports a very large sentinel (~9223372036854771712, i.e.
+	// PAGE_COUNTER_MAX * PAGE_SIZE) when no limit is set — treat that as
+	// "unlimited" by comparing against host total if available, else ok=false.
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		if t, tok := readUint(string(data)); tok && t > 0 && t < (1<<62) {
+			total = t
+		}
+	}
+	if total > 0 {
+		if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.usage_in_bytes"); err == nil {
+			if u, uok := readUint(string(data)); uok {
+				used = u
+			}
+		}
+		if r := cgroupMemoryReclaimable("/sys/fs/cgroup/memory/memory.stat"); r > 0 && r < used {
+			used -= r
+		}
+		return used, total, true
+	}
+
+	return 0, 0, false
+}
+
+// readCgroupMemoryCurrent reads the container's *current* memory usage in
+// bytes, without requiring a memory limit to be set. Unlike
+// getCgroupMemoryStats (which insists on a non-"max" limit so a coherent
+// total can be reported), this helper succeeds even for unlimited
+// containers — useful when combined with a host-level total from sysinfo.
+func readCgroupMemoryCurrent() (uint64, bool) {
+	// cgroup v2
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			used := v
+			if r := cgroupMemoryReclaimable("/sys/fs/cgroup/memory.stat"); r > 0 && r < used {
+				used -= r
+			}
+			return used, true
+		}
+	}
+	// cgroup v1
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.usage_in_bytes"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			used := v
+			if r := cgroupMemoryReclaimable("/sys/fs/cgroup/memory/memory.stat"); r > 0 && r < used {
+				used -= r
+			}
+			return used, true
+		}
+	}
+	return 0, false
+}
+
+// proxmoxLXCConfig captures the authoritative resource allocation that
+// Proxmox records for an LXC container. Proxmox snapshots the container's
+// pct.conf into /etc/vzdump/pct.conf whenever a backup runs, and this
+// file is visible from inside the container — making it the only source
+// of the originally-configured limits when the live cgroup doesn't have
+// them (Proxmox sometimes sets memory/swap via lxc.cgroup directives
+// that don't show up as memory.max on all kernels).
+type proxmoxLXCConfig struct {
+	MemoryBytes uint64 // "memory: 512" → 512 MiB in bytes
+	SwapBytes   uint64 // "swap: 512"   → 512 MiB in bytes
+	Cores       int    // "cores: 1"
+	RootFSBytes uint64 // "rootfs: ... size=8G" → 8 GiB in bytes
+	found       bool
+}
+
+// parseProxmoxSize parses Proxmox size tokens like "8G", "512M", "2T",
+// "1024K" and returns the value in bytes. A bare number is interpreted
+// as megabytes (Proxmox convention for the "memory"/"swap" fields).
+func parseProxmoxSize(s string) uint64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	mult := uint64(1 << 20) // default: megabytes
+	last := s[len(s)-1]
+	num := s
+	switch last {
+	case 'T', 't':
+		mult = 1 << 40
+		num = s[:len(s)-1]
+	case 'G', 'g':
+		mult = 1 << 30
+		num = s[:len(s)-1]
+	case 'M', 'm':
+		mult = 1 << 20
+		num = s[:len(s)-1]
+	case 'K', 'k':
+		mult = 1 << 10
+		num = s[:len(s)-1]
+	}
+	if n, err := strconv.ParseFloat(strings.TrimSpace(num), 64); err == nil && n > 0 {
+		return uint64(n * float64(mult))
+	}
+	return 0
+}
+
+// readProxmoxLXCConfig parses /etc/vzdump/pct.conf — the snapshot of the
+// container's provisioned resources that Proxmox's vzdump leaves inside
+// the container. Returns (cfg, true) if the file exists and at least one
+// field parsed, otherwise (_, false).
+//
+// Sample file contents:
+//
+//	arch: amd64
+//	cores: 1
+//	memory: 512
+//	rootfs: local-zfs:subvol-100-disk-0,size=8G
+//	swap: 512
+//	unprivileged: 1
+func readProxmoxLXCConfig() (proxmoxLXCConfig, bool) {
+	data, err := ioutil.ReadFile("/etc/vzdump/pct.conf")
+	if err != nil {
+		return proxmoxLXCConfig{}, false
+	}
+	cfg := proxmoxLXCConfig{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		colon := strings.IndexByte(line, ':')
+		if colon <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:colon])
+		val := strings.TrimSpace(line[colon+1:])
+		switch key {
+		case "memory":
+			// Plain number = megabytes.
+			if n, err := strconv.ParseUint(val, 10, 64); err == nil && n > 0 {
+				cfg.MemoryBytes = n << 20
+				cfg.found = true
+			}
+		case "swap":
+			if n, err := strconv.ParseUint(val, 10, 64); err == nil && n > 0 {
+				cfg.SwapBytes = n << 20
+				cfg.found = true
+			}
+		case "cores":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.Cores = n
+				cfg.found = true
+			}
+		case "rootfs", "mp0", "mp1": // rootfs + first couple of mountpoints
+			// "local-zfs:subvol-100-disk-0,size=8G" → extract size=8G.
+			if idx := strings.Index(val, "size="); idx >= 0 {
+				tail := val[idx+len("size="):]
+				end := strings.IndexAny(tail, " ,")
+				if end >= 0 {
+					tail = tail[:end]
+				}
+				if b := parseProxmoxSize(tail); b > 0 && key == "rootfs" {
+					cfg.RootFSBytes = b
+					cfg.found = true
+				}
+			}
+		}
+	}
+	if !cfg.found {
+		return proxmoxLXCConfig{}, false
+	}
+	return cfg, true
+}
+
+// proxmoxCfgCache memoises the pct.conf read — it's tiny but we read
+// memory every 3 seconds and there's no need to stat/open the file that
+// often. The config itself almost never changes at runtime (it's only
+// refreshed on Proxmox backups).
+var (
+	proxmoxCfgOnce   sync.Once
+	proxmoxCfgCached proxmoxLXCConfig
+	proxmoxCfgOK     bool
+)
+
+func proxmoxLXCConfigCached() (proxmoxLXCConfig, bool) {
+	proxmoxCfgOnce.Do(func() {
+		proxmoxCfgCached, proxmoxCfgOK = readProxmoxLXCConfig()
+	})
+	return proxmoxCfgCached, proxmoxCfgOK
+}
+
+// readCgroupMemoryPeak returns the container's high-water memory usage in
+// bytes — the maximum resident set the container has ever reached during
+// its lifetime, as recorded by the kernel's memory controller. This is
+// available as memory.peak (cgroup v2, kernel ≥ 5.19) or
+// memory.max_usage_in_bytes (cgroup v1).
+//
+// When a container has no explicit memory limit (memory.max = "max"),
+// peak is the best signal we have of the container's "natural working
+// size" — it reflects what workloads have actually needed, rather than
+// inheriting the host's RAM. It's what Proxmox LXC administrators really
+// want to see on a rootless/unbounded container.
+func readCgroupMemoryPeak() (uint64, bool) {
+	// cgroup v2
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.peak"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && v > 0 {
+			return v, true
+		}
+	}
+	// cgroup v1
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.max_usage_in_bytes"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// containerMemoryCeiling returns a container-centric "total" memory
+// figure to display when no explicit cgroup limit is set. Strategy:
+//
+//  1. Start from memory.peak (kernel's recorded high-water mark).
+//  2. If peak is too close to current usage (< 20% headroom), pad it to
+//     provide at least 20% headroom — a container that peaked at exactly
+//     its current usage would otherwise look 100% full forever.
+//  3. Round the result up to the next common LXC allocation boundary
+//     (128 MiB / 256 MiB / 512 MiB / 1 GiB / 2 GiB / 4 GiB / 8 GiB / …)
+//     so the number resembles a provisioned size (e.g. 611 MiB → 1 GiB,
+//     matching what an admin would have typed into Proxmox).
+//  4. Never exceed the host total — a container can't actually use more
+//     than the physical RAM available.
+//
+// Returns (ceiling, true) on success, (0, false) if we have no peak
+// reading and the caller should fall back to host total.
+func containerMemoryCeiling(currentUsed, hostTotal uint64) (uint64, bool) {
+	peak, ok := readCgroupMemoryPeak()
+	if !ok || peak == 0 {
+		return 0, false
+	}
+	// Ensure at least 20% headroom above the larger of current/peak.
+	base := peak
+	if currentUsed > base {
+		base = currentUsed
+	}
+	withHeadroom := base + base/5
+	// Round up to the nearest "friendly" boundary — powers of 2 from
+	// 128 MiB up to 1 GiB, then multiples of 1 GiB.
+	boundaries := []uint64{
+		128 << 20, 256 << 20, 384 << 20, 512 << 20, 768 << 20, 1 << 30,
+	}
+	var ceil uint64
+	for _, b := range boundaries {
+		if withHeadroom <= b {
+			ceil = b
+			break
+		}
+	}
+	if ceil == 0 {
+		// Round up to next whole GiB.
+		const gib = uint64(1) << 30
+		ceil = ((withHeadroom + gib - 1) / gib) * gib
+	}
+	if hostTotal > 0 && ceil > hostTotal {
+		ceil = hostTotal
+	}
+	return ceil, ceil > 0
+}
+
+// resolveMemoryStats is the authoritative Linux memory source. It tries
+// every known channel in order of "most container-accurate first" →
+// "least container-accurate but never hidden":
+//
+//  1. cgroup memory.max + memory.current — container has explicit limit
+//     (most accurate for limited containers).
+//  2. cgroup memory.current + container ceiling derived from memory.peak
+//     — container has no explicit limit; both numbers are container-
+//     local (much better than showing the host's 500 GiB RAM on an LXC).
+//  3. cgroup memory.current + sysinfo host total — absolute fallback
+//     when memory.peak is unavailable (very old kernel).
+//  4. sysinfo(2) syscall only — last resort; reports host-level figures.
+//
+// Returns (used, total, ok). ok=false only when every source failed
+// (truly catastrophic — sysinfo virtually always succeeds on Linux).
+//
+// Crucially, this function never touches /proc/meminfo so it works on
+// containers where lxcfs has died (ENOTCONN on /proc/*), which is the
+// common failure mode on Proxmox LXC when the lxcfs daemon crashes or
+// isn't bind-mounted inside the container.
+func resolveMemoryStats() (used, total uint64, ok bool) {
+	if u, t, cgOK := getCgroupMemoryStats(); cgOK && t > 0 {
+		return u, t, true
+	}
+	hostTotal, hostUsed, _, _, siOK := readSysinfo()
+	curUsed, curOK := readCgroupMemoryCurrent()
+
+	// Proxmox LXC config — /etc/vzdump/pct.conf contains the *configured*
+	// memory limit even when the cgroup shows "max". This is the key
+	// source of "what the admin typed into Proxmox" when the live cgroup
+	// limit is unset (common on unprivileged LXCs whose limits are applied
+	// via lxc.cgroup2.memory.max in the LXC hookscript rather than as a
+	// cgroup file inside the container).
+	//
+	// CAVEAT: pct.conf is a *snapshot* from the last vzdump backup, so
+	// it can drift if the admin edits memory in the Proxmox UI after
+	// backup. We protect against that with two staleness checks, tuned
+	// to avoid false positives on legitimate small overshoots:
+	//
+	//   Primary signal  — memory.current > pct.conf limit × 1.1.
+	//   If the cgroup is RIGHT NOW using more than the claimed limit
+	//   (plus 10% slack for accounting noise), the config is stale.
+	//
+	//   Secondary signal — memory.peak > pct.conf limit × 2.
+	//   memory.peak is monotonic, so it captures historical overshoot.
+	//   BUT cgroup v2 lets kernel memory (slab, page tables, etc.)
+	//   briefly exceed memory.max without OOM during heavy file I/O;
+	//   on a real 512 MiB container we've measured peak rise to ~583 MiB
+	//   (14% overshoot) under load. A 10% threshold here would cause
+	//   false positives. We use 2× — an admin genuinely raising the
+	//   limit from 512 MiB to 1 GiB produces peak ≫ 1024 MiB, while
+	//   kernel noise never doubles the limit.
+	//
+	// When either signal fires, we skip pct.conf and fall through to
+	// the peak-based `containerMemoryCeiling` heuristic.
+	if cfg, pctOK := proxmoxLXCConfigCached(); pctOK && cfg.MemoryBytes > 0 {
+		slackLimit := cfg.MemoryBytes + cfg.MemoryBytes/10 // +10%
+		hardStaleLimit := cfg.MemoryBytes * 2              // +100%
+		peakBytes, peakOK := readCgroupMemoryPeak()
+		stale := false
+		if curOK && curUsed > slackLimit {
+			stale = true
+		} else if peakOK && peakBytes > hardStaleLimit {
+			stale = true
+		}
+		if !stale {
+			if curOK {
+				return curUsed, cfg.MemoryBytes, true
+			}
+			if siOK && hostUsed > 0 {
+				return hostUsed, cfg.MemoryBytes, true
+			}
+		}
+	}
+
+	if curOK {
+		// Derive a container-centric ceiling from memory.peak when no
+		// Proxmox config is available (or pct.conf is stale — see above).
+		if ceil, ok := containerMemoryCeiling(curUsed, hostTotal); ok {
+			return curUsed, ceil, true
+		}
+		if siOK && hostTotal > 0 {
+			return curUsed, hostTotal, true
+		}
+	}
+	if siOK && hostTotal > 0 {
+		return hostUsed, hostTotal, true
+	}
+	return 0, 0, false
+}
+
+// resolveSwapStats mirrors resolveMemoryStats for swap. Priority:
+//  1. cgroup swap limit + swap current.
+//  2. cgroup swap current + sysinfo host swap total.
+//  3. sysinfo swap.
+//
+// Returns (used=0, total=0, ok=true) legitimately when the host has no
+// swap at all (sysinfo reports 0) — callers should interpret that as
+// "no swap" rather than an error.
+func resolveSwapStats() (used, total uint64, ok bool) {
+	// Explicit cgroup swap limit (memory.swap.max is a real number) —
+	// authoritative, skip everything else.
+	if u, t, cgOK := getCgroupSwapStats(); cgOK && t > 0 {
+		return u, t, true
+	}
+	// cgroup v2 swap.current — container's actual swap usage regardless
+	// of limit. Reliable inside LXC when /proc/meminfo is masked.
+	var cgSwapUsed uint64
+	var cgSwapOK bool
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.swap.current"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			cgSwapUsed = v
+			cgSwapOK = true
+		}
+	}
+
+	// Ground-truth from sysinfo(2): the host's actual swap configuration.
+	// A container cannot have swap the host doesn't provide — if the host
+	// reports Totalswap=0, the container has no swap regardless of what
+	// any stale config file claims.
+	_, _, hostSwapTotal, hostSwapUsed, siOK := readSysinfo()
+
+	// If the host has NO swap at all, the container has none. This is the
+	// definitive test — trust the kernel, not a 6-month-old pct.conf
+	// snapshot that the admin may have edited away since.
+	if siOK && hostSwapTotal == 0 {
+		return 0, 0, true
+	}
+
+	// Proxmox LXC config fallback — "swap: N" (MiB). Only trust this when
+	// the kernel confirms swap is actually available on the host (we just
+	// checked hostSwapTotal > 0 above by falling through). This protects
+	// against stale pct.conf snapshots claiming swap that was later
+	// removed from the container.
+	if cfg, pctOK := proxmoxLXCConfigCached(); pctOK && cfg.SwapBytes > 0 && siOK && hostSwapTotal > 0 {
+		// Cap at host total — container can't have more swap than the host.
+		total := cfg.SwapBytes
+		if total > hostSwapTotal {
+			total = hostSwapTotal
+		}
+		if cgSwapOK {
+			return cgSwapUsed, total, true
+		}
+		return 0, total, true
+	}
+
+	if cgSwapOK && siOK && hostSwapTotal > 0 {
+		return cgSwapUsed, hostSwapTotal, true
+	}
+	if siOK {
+		// hostSwapTotal > 0 here (the == 0 branch returned above).
+		return hostSwapUsed, hostSwapTotal, true
+	}
+	return 0, 0, false
+}
+
+// getCgroupSwapStats reads container swap allocation from cgroup. Some LXC
+// templates report SwapTotal=0 in /proc/meminfo even when the container does
+// have a swap limit; this helper recovers the real numbers. Same semantics
+// as getCgroupMemoryStats: ok=false means no explicit limit / unreadable.
+func getCgroupSwapStats() (used, total uint64, ok bool) {
+	readUint := func(s string) (uint64, bool) {
+		s = strings.TrimSpace(s)
+		if s == "" || s == "max" {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+
+	// cgroup v2: memory.swap.max / memory.swap.current
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.swap.max"); err == nil {
+		if t, tok := readUint(string(data)); tok {
+			total = t
+		}
+	}
+	if total > 0 {
+		if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory.swap.current"); err == nil {
+			if u, uok := readUint(string(data)); uok {
+				used = u
+			}
+		}
+		return used, total, true
+	}
+
+	// cgroup v1: memsw.limit_in_bytes is combined (memory + swap). Swap-only
+	// limit = memsw_limit - memory_limit; swap-only used = memsw_usage - memory_usage.
+	var memswLimit, memswUsage, memLimit, memUsage uint64
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes"); err == nil {
+		if v, ok := readUint(string(data)); ok && v < (1<<62) {
+			memswLimit = v
+		}
+	}
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.memsw.usage_in_bytes"); err == nil {
+		if v, ok := readUint(string(data)); ok {
+			memswUsage = v
+		}
+	}
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		if v, ok := readUint(string(data)); ok && v < (1<<62) {
+			memLimit = v
+		}
+	}
+	if data, err := ioutil.ReadFile("/sys/fs/cgroup/memory/memory.usage_in_bytes"); err == nil {
+		if v, ok := readUint(string(data)); ok {
+			memUsage = v
+		}
+	}
+	if memswLimit > memLimit {
+		total = memswLimit - memLimit
+		if memswUsage > memUsage {
+			used = memswUsage - memUsage
+		}
+		return used, total, true
+	}
+
+	return 0, 0, false
+}
+
+// isLinuxContainer returns true when the current process is running inside
+// a Linux container runtime (LXC, Docker, containerd, podman, Kubernetes
+// pods, etc.). We need this because the agent's virtualisation detection
+// path otherwise classifies LXC as a physical server — LXC does not set
+// a hypervisor vendor flag, so the lscpu / /proc/cpuinfo probes miss it.
+//
+// Detection heuristics (any ONE positive signal flips us to "container"):
+//   - /.dockerenv exists (Docker, Podman, some CRI runtimes).
+//   - $container env var set by the container runtime (LXC sets "lxc",
+//     systemd-nspawn sets "systemd-nspawn", etc.).
+//   - /proc/1/cgroup or /proc/self/cgroup mentions a known container
+//     namespace path fragment.
+func isLinuxContainer() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if v := os.Getenv("container"); v != "" {
+		return true
+	}
+	containerHints := []string{"/docker", "/lxc", "lxc.payload", "/kubepods", "/containerd", "/podman", "libpod"}
+	for _, p := range []string{"/proc/1/cgroup", "/proc/self/cgroup"} {
+		data, err := ioutil.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		for _, hint := range containerHints {
+			if strings.Contains(content, hint) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Get CPU model information in format: "Model @ SpeedGHz Count Core"
@@ -2131,18 +3263,18 @@ func getCPUModel() string {
 		return cached
 	}
 	cacheMutex.RUnlock()
-	
+
 	var model, coreType string
 	var coreCount int
-	
+
 	// Use gopsutil for cross-platform support
 	if runtime.GOOS == "windows" {
 		// Windows: Use native WMI command as primary method (faster and more reliable)
-		
+
 		// Step 1: Get CPU model name
 		cmd := exec.Command("wmic", "cpu", "get", "Name", "/format:list")
 		output, err := cmd.Output()
-		
+
 		if err == nil && len(output) > 0 {
 			lines := strings.Split(string(output), "\n")
 			for _, line := range lines {
@@ -2156,11 +3288,11 @@ func getCPUModel() string {
 				}
 			}
 		}
-		
+
 		// Step 2: Get SYSTEM total logical processors (not per-CPU)
 		cmd = exec.Command("wmic", "computersystem", "get", "NumberOfLogicalProcessors", "/format:list")
 		output, err = cmd.Output()
-		
+
 		if err == nil && len(output) > 0 {
 			lines := strings.Split(string(output), "\n")
 			for _, line := range lines {
@@ -2175,34 +3307,19 @@ func getCPUModel() string {
 				}
 			}
 		}
-		
-		// Step 3: Get total physical cores (sum from all CPUs)
-		cmd = exec.Command("wmic", "cpu", "get", "NumberOfCores", "/format:list")
-		output, err = cmd.Output()
-		
-		var totalPhysicalCores int
-		if err == nil && len(output) > 0 {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "NumberOfCores=") {
-					coresStr := strings.TrimPrefix(line, "NumberOfCores=")
-					var cores int
-					if _, err := fmt.Sscanf(strings.TrimSpace(coresStr), "%d", &cores); err == nil && cores > 0 {
-						totalPhysicalCores += cores
-					}
-				}
-			}
-		}
-		
-		// Use logical core count (includes hyperthreading)
-		// Core type will be determined by virtualization check below
+
+		// Use logical core count (includes hyperthreading). We deliberately do
+		// NOT run `wmic cpu get NumberOfCores` here: its per-CPU physical-core
+		// count was previously summed into a local variable that nothing read,
+		// spawning a WMI subprocess every 5 min for no effect. The displayed
+		// count always uses the logical (SMT-inclusive) value below — the
+		// "Physical Core" suffix reflects the VPS/DS distinction, not SMT.
 		logicalCount, _ := cpu.Counts(true)
 		if logicalCount > coreCount && logicalCount > 0 {
 			coreCount = logicalCount
 		}
 		coreType = "Physical" // Will be corrected if VPS detected
-		
+
 		// If WMIC failed, try gopsutil as fallback
 		if model == "" {
 			// WMIC failed, trying gopsutil
@@ -2217,7 +3334,7 @@ func getCPUModel() string {
 				}
 			}
 		}
-		
+
 		// Final fallback: just core count
 		if model == "" {
 			logicalCount, err := cpu.Counts(true)
@@ -2250,19 +3367,35 @@ func getCPUModel() string {
 		if model == "" {
 			model = "Apple CPU"
 		}
-		// Core count: prefer gopsutil logical count, fall back to sysctl
+		// Core count on macOS: try three sources in order of reliability.
+		// On Apple Silicon running under Rosetta 2 or a sandbox, gopsutil's
+		// sysctl helpers can return 0 without an error, so we always do the
+		// native `sysctl hw.logicalcpu` as a backstop. runtime.NumCPU() is
+		// the final fallback — it reads the process's CPU affinity mask,
+		// which matches the machine's logical CPU count on macOS.
 		if count, err := cpu.Counts(true); err == nil && count > 0 {
 			coreCount = count
-		} else if out, err := exec.Command("sysctl", "-n", "hw.logicalcpu").Output(); err == nil {
-			fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &coreCount)
+		}
+		if coreCount == 0 {
+			if out, err := exec.Command("sysctl", "-n", "hw.logicalcpu").Output(); err == nil {
+				fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &coreCount)
+			}
+		}
+		if coreCount == 0 {
+			// Last-resort fallback. On macOS, NumCPU returns the number
+			// of logical CPUs the OS has made available to the Go
+			// runtime, which is what we want here.
+			if n := runtime.NumCPU(); n > 0 {
+				coreCount = n
+			}
 		}
 		// Default to Physical, will be corrected below if VPS
 		coreType = "Physical"
 	}
-	
+
 	// For ALL platforms: Detect virtualization and correct core type
 	virtType := getVirtualizationType()
-	
+
 	// On VPS, all cores should be marked as Virtual
 	// On physical server (DS), always Physical Core
 	if virtType == "VPS" {
@@ -2270,13 +3403,13 @@ func getCPUModel() string {
 	} else {
 		coreType = "Physical"
 	}
-	
+
 	// Check if model already contains frequency
 	// Intel CPUs usually have it (e.g., "Intel(R) Xeon(R) @ 2.10GHz")
 	// AMD CPUs usually don't (e.g., "AMD Ryzen 7 5800X")
 	hasFreq := strings.Contains(model, "GHz") || strings.Contains(model, "MHz")
 	var speed string
-	
+
 	// Get frequency if not in model name (typically AMD CPUs)
 	if !hasFreq && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
 		// For Windows/macOS, try to get frequency from gopsutil
@@ -2284,11 +3417,39 @@ func getCPUModel() string {
 		if err == nil && len(cpuInfo) > 0 && cpuInfo[0].Mhz > 0 {
 			speed = fmt.Sprintf("%.2f", float64(cpuInfo[0].Mhz)/1000.0)
 		}
+		// macOS-specific fallbacks. gopsutil's cpu.Info().Mhz reads
+		// sysctl hw.cpufrequency, which:
+		//   • returns a real value on Intel Macs,
+		//   • returns 0 on Apple Silicon (the sysctl is not populated —
+		//     Apple Silicon performance and efficiency cores run at
+		//     different, dynamically-scaled frequencies that don't fit
+		//     the "one nominal clock" model).
+		// So if we still have no speed on macOS, try:
+		//   1. sysctl hw.cpufrequency_max — the nominal max clock; still
+		//      works on some Intel Macs where the legacy key is missing.
+		//   2. A curated lookup by chip name for Apple Silicon. The clocks
+		//      are Apple's published nominal performance-core max and are
+		//      accurate to one decimal place for every shipping M-series
+		//      chip so far (M1/M2/M3/M4 families). This gives the user a
+		//      useful nominal-GHz reading even on Apple Silicon.
+		if speed == "" && runtime.GOOS == "darwin" {
+			if out, err := exec.Command("sysctl", "-n", "hw.cpufrequency_max").Output(); err == nil {
+				var hz uint64
+				if _, se := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &hz); se == nil && hz > 0 {
+					speed = fmt.Sprintf("%.2f", float64(hz)/1e9)
+				}
+			}
+		}
+		if speed == "" && runtime.GOOS == "darwin" {
+			if g := appleSiliconNominalGHz(model); g > 0 {
+				speed = fmt.Sprintf("%.2f", g)
+			}
+		}
 	}
-	
+
 	// Format output
 	var result string
-	
+
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		if speed != "" && coreCount > 0 {
 			// Add frequency and core count (for AMD or CPUs without frequency in model)
@@ -2299,24 +3460,37 @@ func getCPUModel() string {
 		} else {
 			result = model
 		}
-		
+
 		// Cache the result
 		cacheMutex.Lock()
 		cpuModelCache = result
 		cpuModelCacheTime = time.Now()
 		cacheMutex.Unlock()
-		
+
 		return result
 	}
-	
-	// Get CPU model name (Linux)
+
+	// Get CPU model name (Linux).
+	// Order of fallbacks (most common first):
+	//   1. /proc/cpuinfo "model name" line — x86/x86_64 Intel & AMD.
+	//   2. lscpu "Model name" — same info, but available on x86 distros that
+	//      have util-linux installed (most).
+	//   3. gopsutil cpu.Info() — wraps /proc/cpuinfo and understands ARM
+	//      layouts (Hardware / Processor / CPU implementer) that x86-only
+	//      regex above misses.
+	//   4. /proc/cpuinfo "Hardware" / "Processor" / "Model" — raw ARM fields
+	//      as an additional safety net if gopsutil returns empty ModelName.
+	//   5. runtime.NumCPU() with a generic "CPU" label — worst-case, so a
+	//      container/embedded system that somehow exposes none of the above
+	//      still produces a non-empty string. An empty cpu_model used to
+	//      cascade in the frontend and suppress Traffic/Total rows, so the
+	//      most important invariant here is: on Linux, NEVER return "".
 	cmd := exec.Command("sh", "-c", "grep -m1 'model name' /proc/cpuinfo | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
 	output, err := cmd.Output()
 	if err == nil {
 		model = strings.TrimSpace(string(output))
 	}
-	
-	// If model not found, try lscpu
+
 	if model == "" {
 		cmd = exec.Command("sh", "-c", "lscpu | grep 'Model name' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
 		output, err = cmd.Output()
@@ -2324,16 +3498,143 @@ func getCPUModel() string {
 			model = strings.TrimSpace(string(output))
 		}
 	}
-	
+
+	// Fallback via gopsutil — handles ARM /proc/cpuinfo layouts that don't
+	// carry a "model name" line (Raspberry Pi, Ampere Altra, etc.).
 	if model == "" {
-		return ""
+		if info, err := cpu.Info(); err == nil && len(info) > 0 {
+			model = strings.TrimSpace(info[0].ModelName)
+		}
 	}
-	
+
+	// x86 CPUID fallback — asks the silicon directly for its brand
+	// string, bypassing /proc entirely. This is the authoritative source
+	// on LXC containers with a broken lxcfs (ENOTCONN on /proc/cpuinfo)
+	// and AMD/Intel servers where /proc has been stripped for security.
+	// On ARM/other architectures this is a no-op stub; all other
+	// fallbacks below still apply.
+	if model == "" {
+		if brand := cpuBrandStringFromCPUID(); brand != "" {
+			model = brand
+		}
+	}
+
+	// Raw ARM-style /proc/cpuinfo probing as a secondary fallback.
+	if model == "" {
+		if data, err := ioutil.ReadFile("/proc/cpuinfo"); err == nil {
+			// Walk the file once, pick the first non-empty match among the
+			// candidate keys in priority order.
+			armKeys := []string{"Hardware", "Model", "Processor", "CPU part"}
+			fields := map[string]string{}
+			for _, line := range strings.Split(string(data), "\n") {
+				colon := strings.Index(line, ":")
+				if colon <= 0 {
+					continue
+				}
+				k := strings.TrimSpace(line[:colon])
+				v := strings.TrimSpace(line[colon+1:])
+				if v == "" {
+					continue
+				}
+				if _, exists := fields[k]; !exists {
+					fields[k] = v
+				}
+			}
+			for _, k := range armKeys {
+				if v := fields[k]; v != "" {
+					model = v
+					break
+				}
+			}
+		}
+	}
+
+	// ARM SBC fallback — Raspberry Pi, Rockchip boards, etc. expose the
+	// board / SoC model as a NUL-terminated string in the device-tree.
+	if model == "" {
+		if data, err := ioutil.ReadFile("/sys/firmware/devicetree/base/model"); err == nil {
+			s := strings.TrimRight(strings.TrimSpace(string(data)), "\x00")
+			if s != "" {
+				model = s
+			}
+		}
+	}
+
+	// DMI fallback — x86 systems expose the board/system vendor via DMI.
+	// This isn't the CPU model per se, but it's more descriptive than
+	// "x86_64 CPU" when /proc/cpuinfo and lscpu are fully stripped. Most
+	// LXC templates leave /sys/devices/virtual/dmi/id readable, so this
+	// commonly succeeds where the /proc/* paths don't.
+	if model == "" {
+		for _, p := range []string{
+			"/sys/devices/virtual/dmi/id/product_name",
+			"/sys/devices/virtual/dmi/id/sys_vendor",
+			"/sys/devices/virtual/dmi/id/board_name",
+		} {
+			if data, err := ioutil.ReadFile(p); err == nil {
+				s := strings.TrimSpace(string(data))
+				// Common uninformative placeholders put there by cloud /
+				// virtualisation vendors — reject rather than display.
+				lower := strings.ToLower(s)
+				if s != "" &&
+					!strings.Contains(lower, "to be filled") &&
+					!strings.Contains(lower, "not specified") &&
+					!strings.Contains(lower, "default string") &&
+					!strings.Contains(lower, "system product") &&
+					lower != "unknown" {
+					model = s
+					break
+				}
+			}
+		}
+	}
+
+	// Absolute last resort — we still want a non-empty string so the
+	// frontend doesn't treat this system as "placeholder / not yet reporting"
+	// and hide Traffic/Total in the details section. Combine architecture
+	// (uname -m) with the cgroup-aware core count so even a stripped-down
+	// LXC with an empty /proc/cpuinfo shows something like
+	// "aarch64 CPU @ 1 Core" instead of a bare "CPU 1 Core".
+	if model == "" {
+		arch := ""
+		if out, err := exec.Command("uname", "-m").Output(); err == nil {
+			arch = strings.TrimSpace(string(out))
+		}
+		if arch == "" {
+			arch = runtime.GOARCH // x86_64-ish fallback via the Go runtime
+		}
+
+		// Prefer cgroup-reported core count (accurate inside LXC with a
+		// CPU limit); fall back to runtime.NumCPU (which itself respects
+		// cgroups on modern Go) and finally to 1.
+		cores := getCgroupCPUCount()
+		if cores <= 0 {
+			cores = runtime.NumCPU()
+		}
+		if cores <= 0 {
+			cores = 1
+		}
+
+		if arch != "" {
+			model = fmt.Sprintf("%s CPU %d Core", arch, cores)
+		} else {
+			model = fmt.Sprintf("CPU %d Core", cores)
+		}
+
+		// Skip the core-count / virt-type formatting block below — we've
+		// already baked the core count into the label.
+		cacheMutex.Lock()
+		cpuModelCache = model
+		cpuModelCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return model
+	}
+
 	// Check if model already contains frequency
 	// Intel CPUs usually have it, AMD CPUs usually don't
 	hasFreqLinux := strings.Contains(model, "GHz") || strings.Contains(model, "MHz")
 	var speedLinux string
-	
+
 	// Get frequency if not in model name (typically AMD CPUs)
 	if !hasFreqLinux {
 		// Get CPU frequency (MHz) and convert to GHz
@@ -2345,7 +3646,7 @@ func getCPUModel() string {
 				speedLinux = fmt.Sprintf("%.2f", mhz/1000.0)
 			}
 		}
-		
+
 		// If speed not found, try lscpu
 		if speedLinux == "" {
 			cmd = exec.Command("sh", "-c", "lscpu | grep 'CPU MHz' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
@@ -2357,87 +3658,128 @@ func getCPUModel() string {
 				}
 			}
 		}
+
+		// Try /sys/devices/system/cpu/cpu0/cpufreq/* — in kHz.
+		if speedLinux == "" {
+			for _, p := range []string{
+				"/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq",
+				"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq",
+				"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
+			} {
+				if data, err := ioutil.ReadFile(p); err == nil {
+					if khz, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && khz > 0 {
+						speedLinux = fmt.Sprintf("%.2f", float64(khz)/1e6)
+						break
+					}
+				}
+			}
+		}
+
+		// Last resort: calibrate against the TSC (x86_64 only — returns 0
+		// on ARM etc.). This bypasses /proc and /sys entirely and works
+		// even inside LXC containers where lxcfs has masked every
+		// kernel-backed frequency source. Runs once per process (~80ms).
+		if speedLinux == "" {
+			if mhz := tscFrequencyMHz(); mhz > 0 {
+				speedLinux = fmt.Sprintf("%.2f", mhz/1000.0)
+			}
+		}
 	}
-	
-	
-	// Check if running in virtualization environment
-	isVirtualized := false
-	cmd = exec.Command("sh", "-c", "lscpu | grep 'Hypervisor vendor'")
-	output, err = cmd.Output()
-	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
-		isVirtualized = true
-	}
-	
-	// Get Thread(s) per core to detect hyperthreading
-	cmd = exec.Command("sh", "-c", "lscpu | grep '^Thread(s) per core:' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
-	output, err = cmd.Output()
-	threadsPerCore := 1
-	if err == nil {
-		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &threadsPerCore)
-	}
-	
-	// Get physical cores and virtual cores from lscpu
+
+	// Get physical cores and virtual cores from lscpu (note: inside an LXC
+	// container without lxcfs, lscpu reflects the HOST, not the container —
+	// we correct for that below using the cgroup limit).
 	cmd = exec.Command("sh", "-c", "lscpu | grep '^Core(s) per socket:' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
 	output, err = cmd.Output()
 	physicalCores := 0
 	if err == nil {
 		var sockets, coresPerSocket int
 		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coresPerSocket)
-		
+
 		// Get number of sockets
 		cmd = exec.Command("sh", "-c", "lscpu | grep '^Socket(s):' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
 		output, err = cmd.Output()
 		if err == nil {
 			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &sockets)
-	}
-		
+		}
+
 		physicalCores = sockets * coresPerSocket
 	}
-	
-	// Get total CPU count (virtual cores)
+
+	// Get total logical CPU count reported by lscpu (host-wide when inside
+	// a container without lxcfs — see cgroup override below).
 	cmd = exec.Command("sh", "-c", "lscpu | grep '^CPU(s):' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
 	output, err = cmd.Output()
 	virtualCores := 0
 	if err == nil {
 		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &virtualCores)
 	}
-	
-	// Determine core type and count
-	// VPS = Virtual Core, Physical Server (DS) = Physical Core
-	if isVirtualized {
-		// Running in virtualized environment - Virtual cores
-		coreCount = virtualCores
-		if coreCount == 0 {
-			coreCount = physicalCores
+
+	// ── Cgroup-aware override (LXC / Docker / k8s / podman / nspawn) ──
+	// Inside any container runtime the kernel exposes the HOST CPU
+	// topology to lscpu, gopsutil and /proc/cpuinfo. The only reliable
+	// source of the container's actual CPU allocation is the cgroup
+	// hierarchy. If a stricter limit is in effect (cfs_quota / cpuset),
+	// clamp virtualCores down to it so users see "2 Virtual Core" for a
+	// 2-core LXC instead of "48 Virtual Core" borrowed from the host.
+	if cgroupCount := getCgroupCPUCount(); cgroupCount > 0 {
+		if virtualCores == 0 || cgroupCount < virtualCores {
+			virtualCores = cgroupCount
 		}
+	}
+
+	// Core type is authoritative from getVirtualizationType() (which
+	// already consults isLinuxContainer as Method 1b and therefore
+	// correctly classifies LXC/Docker/k8s as VPS). Reuse the value
+	// computed at `virtType` above; do NOT re-run the container probe
+	// here or re-probe "Hypervisor vendor" via lscpu — both would be
+	// redundant with the work already done in getVirtualizationType.
+	if virtType == "VPS" {
 		coreType = "Virtual"
 	} else {
-		// Physical server - always Physical Core, even with hyperthreading
-		// Use total logical cores (includes hyperthreading)
-		if virtualCores > 0 {
-			coreCount = virtualCores
-		} else if physicalCores > 0 {
-			coreCount = physicalCores
-		} else {
-			// Last resort: count from /proc/cpuinfo
-			cmd = exec.Command("sh", "-c", "grep -c '^processor' /proc/cpuinfo")
-			output, err = cmd.Output()
-			if err == nil {
-				fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coreCount)
-			}
-		}
 		coreType = "Physical"
 	}
-	
-	// Format output
-	// Add frequency if not already in model name (AMD CPUs)
-	if speedLinux != "" && coreCount > 0 {
-		return fmt.Sprintf("%s @ %sGHz %d %s Core", model, speedLinux, coreCount, coreType)
-	} else if coreCount > 0 {
-		return fmt.Sprintf("%s %d %s Core", model, coreCount, coreType)
+
+	// Pick the final core count: prefer the (cgroup-clamped) logical
+	// count, fall back to physical cores, last resort count
+	// /proc/cpuinfo directly.
+	if virtualCores > 0 {
+		coreCount = virtualCores
+	} else if physicalCores > 0 {
+		coreCount = physicalCores
+	} else {
+		cmd = exec.Command("sh", "-c", "grep -c '^processor' /proc/cpuinfo")
+		output, err = cmd.Output()
+		if err == nil {
+			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coreCount)
+		}
+		// Even /proc/cpuinfo lies inside a container: apply the cgroup
+		// cap one more time so the last-resort path stays honest.
+		if cg := getCgroupCPUCount(); cg > 0 && (coreCount == 0 || cg < coreCount) {
+			coreCount = cg
+		}
 	}
-	
-	return model
+
+	// Format output.
+	// Add frequency if not already in model name (AMD CPUs).
+	// Cache the final string so the next poll (every 3 s) can early-return
+	// without re-running 5+ shell subprocesses — the CPU model is effectively
+	// immutable for the process lifetime. We only reached this point by
+	// running those shell probes already, so without caching we'd pay that
+	// cost on every metrics push.
+	var final string
+	if speedLinux != "" && coreCount > 0 {
+		final = fmt.Sprintf("%s @ %sGHz %d %s Core", model, speedLinux, coreCount, coreType)
+	} else if coreCount > 0 {
+		final = fmt.Sprintf("%s %d %s Core", model, coreCount, coreType)
+	} else {
+		final = model
+	}
+	cacheMutex.Lock()
+	cpuModelCache = final
+	cpuModelCacheTime = time.Now()
+	cacheMutex.Unlock()
+	return final
 }
 
 // Get virtualization type: "VPS" (Virtual Private Server) or "DS" (Dedicated Server)
@@ -2450,10 +3792,10 @@ func getVirtualizationType() string {
 		return cached
 	}
 	cacheMutex.RUnlock()
-	
+
 	// Windows virtualization detection
 	if runtime.GOOS == "windows" {
-		
+
 		// Method 1: Check ComputerSystem Model (most reliable for VM detection)
 		// Virtual machines have specific model names that physical servers never have
 		cmd := exec.Command("wmic", "computersystem", "get", "model", "/format:list")
@@ -2462,17 +3804,17 @@ func getVirtualizationType() string {
 			outputStr := strings.ToLower(string(output))
 			// Exact VM model names - these are ONLY used by virtual machines
 			vmModels := []string{
-				"vmware virtual platform",  // VMware
-				"vmware7,1",                // VMware Fusion
-				"virtual machine",          // Hyper-V VM
-				"virtualbox",               // VirtualBox
-				"kvm",                       // KVM
-				"qemu",                      // QEMU
-				"hvm domu",                 // Xen HVM
-				"bochs",                    // Bochs
-				"amazon ec2",               // AWS
-				"google compute engine",    // GCP
-				"droplet",                  // DigitalOcean
+				"vmware virtual platform", // VMware
+				"vmware7,1",               // VMware Fusion
+				"virtual machine",         // Hyper-V VM
+				"virtualbox",              // VirtualBox
+				"kvm",                     // KVM
+				"qemu",                    // QEMU
+				"hvm domu",                // Xen HVM
+				"bochs",                   // Bochs
+				"amazon ec2",              // AWS
+				"google compute engine",   // GCP
+				"droplet",                 // DigitalOcean
 			}
 			for _, model := range vmModels {
 				if strings.Contains(outputStr, model) {
@@ -2485,7 +3827,7 @@ func getVirtualizationType() string {
 				}
 			}
 		}
-		
+
 		// Method 2: Check BIOS Manufacturer (not SerialNumber)
 		cmd = exec.Command("wmic", "bios", "get", "manufacturer", "/format:list")
 		output, err = cmd.Output()
@@ -2493,12 +3835,12 @@ func getVirtualizationType() string {
 			outputStr := strings.ToLower(string(output))
 			// BIOS manufacturers that are VM-specific
 			vmBiosManufacturers := []string{
-				"vmware",      // VMware
-				"innotek",     // VirtualBox
-				"parallels",   // Parallels
-				"seabios",     // QEMU/KVM
-				"xen",         // Xen
-				"amazon ec2",  // AWS
+				"vmware",     // VMware
+				"innotek",    // VirtualBox
+				"parallels",  // Parallels
+				"seabios",    // QEMU/KVM
+				"xen",        // Xen
+				"amazon ec2", // AWS
 			}
 			for _, mfr := range vmBiosManufacturers {
 				if strings.Contains(outputStr, mfr) {
@@ -2511,7 +3853,7 @@ func getVirtualizationType() string {
 				}
 			}
 		}
-		
+
 		// Method 3: Check BaseBoard (motherboard) Manufacturer
 		cmd = exec.Command("wmic", "baseboard", "get", "manufacturer", "/format:list")
 		output, err = cmd.Output()
@@ -2520,7 +3862,7 @@ func getVirtualizationType() string {
 			// Motherboard manufacturers that are VM-specific
 			vmBaseboardMfrs := []string{
 				"vmware",
-				"oracle corporation",  // VirtualBox
+				"oracle corporation",            // VirtualBox
 				"microsoft corporation virtual", // Azure VM (contains "virtual")
 				"qemu",
 				"xen",
@@ -2536,7 +3878,7 @@ func getVirtualizationType() string {
 				}
 			}
 		}
-		
+
 		// If none of the above detected VM, it's a physical server
 		// Note: We intentionally do NOT use gopsutil host.Info() here because
 		// it can return "hyperv" on physical Windows machines with Hyper-V enabled
@@ -2563,7 +3905,7 @@ func getVirtualizationType() string {
 				}
 			}
 		}
-		
+
 		hostInfo, err := host.Info()
 		if err == nil {
 			if hostInfo.VirtualizationSystem != "" && hostInfo.VirtualizationSystem != "none" {
@@ -2575,7 +3917,7 @@ func getVirtualizationType() string {
 				return result
 			}
 		}
-		
+
 		result := "DS"
 		cacheMutex.Lock()
 		virtualizationTypeCache = result
@@ -2583,9 +3925,11 @@ func getVirtualizationType() string {
 		cacheMutex.Unlock()
 		return result
 	}
-	
+
 	// Linux virtualization detection
-	// Method 1: systemd-detect-virt (most reliable on modern Linux)
+	// Method 1: systemd-detect-virt (most reliable on modern Linux).
+	// Handles both hypervisor-based VMs ("kvm", "qemu", "xen", ...) and
+	// container runtimes ("lxc", "docker", "podman", "systemd-nspawn").
 	cmd := exec.Command("systemd-detect-virt")
 	output, err := cmd.Output()
 	if err == nil {
@@ -2609,7 +3953,21 @@ func getVirtualizationType() string {
 			return result
 		}
 	}
-	
+
+	// Method 1b: container runtime detection — LXC/Docker/k8s/podman do
+	// not expose a hypervisor flag, so the hypervisor-flag based methods
+	// below would miss them entirely. This check is especially important
+	// on minimal LXC images where systemd-detect-virt is not installed
+	// (Method 1 above would silently error out).
+	if isLinuxContainer() {
+		result := "VPS"
+		cacheMutex.Lock()
+		virtualizationTypeCache = result
+		virtualizationTypeCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return result
+	}
+
 	// Method 2: Check for hypervisor vendor in lscpu (fallback if systemd-detect-virt not available)
 	cmd = exec.Command("sh", "-c", "lscpu 2>/dev/null | grep -i 'Hypervisor vendor' | cut -d':' -f2")
 	output, err = cmd.Output()
@@ -2624,7 +3982,7 @@ func getVirtualizationType() string {
 			return result
 		}
 	}
-	
+
 	// Method 3: Check /proc/cpuinfo for hypervisor flag
 	cmd = exec.Command("sh", "-c", "grep -w 'hypervisor' /proc/cpuinfo 2>/dev/null")
 	output, err = cmd.Output()
@@ -2636,7 +3994,7 @@ func getVirtualizationType() string {
 		cacheMutex.Unlock()
 		return result
 	}
-	
+
 	// Method 4: Check DMI for known virtualization products
 	cmd = exec.Command("sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null")
 	output, err = cmd.Output()
@@ -2655,7 +4013,7 @@ func getVirtualizationType() string {
 			}
 		}
 	}
-	
+
 	// If none of the above detected virtualization, it's a dedicated server
 	result := "DS"
 	cacheMutex.Lock()
@@ -2681,30 +4039,38 @@ func getMemoryInfo() string {
 		}
 		return ""
 	}
-	
-	// Read /proc/meminfo for accurate memory info (Linux)
+
+	// Step 1 — Authoritative cgroup limit, if one is set.
+	//
+	// When the kernel has an explicit memory limit for this cgroup, that
+	// is ALWAYS the most accurate container total: it doesn't depend on
+	// lxcfs, doesn't depend on how /proc/meminfo is virtualised, and
+	// can't be confused by a privileged container that exposes the host's
+	// /proc. We check this BEFORE /proc/meminfo because several common
+	// container setups expose the host's /proc/meminfo even when a
+	// cgroup limit IS in force (Docker without --pid=host quirks,
+	// unprivileged LXC without meminfo bind-mount, systemd-nspawn, etc.).
+	//
+	// On bare-metal Linux there's no cgroup memory limit at the root
+	// (memory.max = "max"), so getCgroupMemoryStats returns ok=false and
+	// we fall through to /proc/meminfo — no change in behaviour.
+	if u, t, ok := getCgroupMemoryStats(); ok && t > 0 {
+		return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
+	}
+
+	// Step 2 — /proc/meminfo. Works for bare metal and for containers
+	// where lxcfs is alive and properly virtualising meminfo.
 	data, err := ioutil.ReadFile("/proc/meminfo")
 	if err != nil {
-		// Fallback to free command
-		cmd := exec.Command("sh", "-c", "free -h | grep Mem | awk '{print $3 \"/\" $2}'")
-		output, err := cmd.Output()
-		if err == nil {
-			info := strings.TrimSpace(string(output))
-			if info != "" {
-				parts := strings.Split(info, "/")
-				if len(parts) == 2 {
-					used := strings.TrimSpace(parts[0])
-					total := strings.TrimSpace(parts[1])
-					used = addSpaceBeforeUnit(used)
-					total = addSpaceBeforeUnit(total)
-					return fmt.Sprintf("%s / %s", used, total)
-				}
-				return info
-			}
+		// Step 3a — /proc/meminfo unreadable (lxcfs ENOTCONN). Fall back
+		// to cgroup.current + sysinfo host total. This is the best we
+		// can do for an unlimited container with a broken lxcfs.
+		if u, t, ok := resolveMemoryStats(); ok && t > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
 		}
 		return ""
 	}
-	
+
 	// Parse /proc/meminfo
 	var memTotal, memAvailable, memFree, buffers, cached uint64
 	lines := strings.Split(string(data), "\n")
@@ -2713,10 +4079,10 @@ func getMemoryInfo() string {
 		if len(fields) < 2 {
 			continue
 		}
-		
+
 		key := strings.TrimSuffix(fields[0], ":")
 		value := fields[1]
-		
+
 		switch key {
 		case "MemTotal":
 			fmt.Sscanf(value, "%d", &memTotal)
@@ -2730,11 +4096,17 @@ func getMemoryInfo() string {
 			fmt.Sscanf(value, "%d", &cached)
 		}
 	}
-	
+
 	if memTotal == 0 {
+		// Step 3b — /proc/meminfo was readable but MemTotal is 0 (lxcfs
+		// quirk on unprivileged LXC, or an intentionally empty bind
+		// mount). resolveMemoryStats walks every alternative source.
+		if u, t, ok := resolveMemoryStats(); ok && t > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
+		}
 		return ""
 	}
-	
+
 	// Calculate used memory (same logic as getMemoryUsage)
 	var memUsed uint64
 	if memAvailable > 0 {
@@ -2742,11 +4114,11 @@ func getMemoryInfo() string {
 	} else {
 		memUsed = memTotal - memFree - buffers - cached
 	}
-	
+
 	// Convert to human-readable format
 	usedStr := formatBytes(memUsed * 1024) // /proc/meminfo is in KB, convert to bytes
 	totalStr := formatBytes(memTotal * 1024)
-	
+
 	return fmt.Sprintf("%s / %s", usedStr, totalStr)
 }
 
@@ -2766,36 +4138,29 @@ func getSwapInfo() string {
 		}
 		return "0 B / 0 B"
 	}
-	
-	// Read /proc/meminfo for accurate swap info (Linux)
+
+	// Step 1 — Authoritative cgroup swap limit, if one is set. Same
+	// rationale as getMemoryInfo: when the kernel enforces a container
+	// swap limit we report that, not whatever /proc/meminfo claims.
+	if u, t, ok := getCgroupSwapStats(); ok && t > 0 {
+		return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
+	}
+
+	// Step 2 — /proc/meminfo. Falls back to cgroup + sysinfo when
+	// /proc is unreadable (lxcfs ENOTCONN). We always return something
+	// ("0 B / 0 B" at worst) so the frontend can distinguish "no swap
+	// configured" from "no data yet".
 	data, err := ioutil.ReadFile("/proc/meminfo")
 	if err != nil {
-		// Fallback to free command
-		cmd := exec.Command("sh", "-c", "free -h | grep Swap | awk '{print $3 \"/\" $2}'")
-		output, err := cmd.Output()
-		if err == nil {
-			info := strings.TrimSpace(string(output))
-			if info != "" && info != "/" {
-				parts := strings.Split(info, "/")
-				if len(parts) == 2 {
-					used := strings.TrimSpace(parts[0])
-					total := strings.TrimSpace(parts[1])
-					if used == "" {
-						used = "0"
-					}
-					if total == "" {
-						total = "0"
-					}
-					used = addSpaceBeforeUnit(used)
-					total = addSpaceBeforeUnit(total)
-					return fmt.Sprintf("%s / %s", used, total)
-				}
-				return info
+		if u, t, ok := resolveSwapStats(); ok {
+			if t > 0 {
+				return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
 			}
+			return "0 B / 0 B" // no swap on host
 		}
-		return ""
+		return "0 B / 0 B"
 	}
-	
+
 	// Parse /proc/meminfo for swap
 	var swapTotal, swapFree uint64
 	lines := strings.Split(string(data), "\n")
@@ -2804,10 +4169,10 @@ func getSwapInfo() string {
 		if len(fields) < 2 {
 			continue
 		}
-		
+
 		key := strings.TrimSuffix(fields[0], ":")
 		value := fields[1]
-		
+
 		switch key {
 		case "SwapTotal":
 			fmt.Sscanf(value, "%d", &swapTotal)
@@ -2815,20 +4180,24 @@ func getSwapInfo() string {
 			fmt.Sscanf(value, "%d", &swapFree)
 		}
 	}
-	
+
 	if swapTotal == 0 {
-		// Linux: return "0 B / 0 B" to indicate no swap (instead of empty string)
-		// This allows frontend to distinguish between "no data yet" (empty) and "no swap" (0 B / 0 B)
+		// /proc/meminfo reports no swap. On LXC with zeroed-out meminfo this
+		// might be wrong — consult the resolver for a second opinion that
+		// includes cgroup swap files and sysinfo(2).
+		if u, t, ok := resolveSwapStats(); ok && t > 0 {
+			return fmt.Sprintf("%s / %s", formatBytes(u), formatBytes(t))
+		}
 		return "0 B / 0 B"
 	}
-	
+
 	// Calculate used swap
 	swapUsed := swapTotal - swapFree
-	
+
 	// Convert to human-readable format
 	usedStr := formatBytes(swapUsed * 1024) // /proc/meminfo is in KB, convert to bytes
 	totalStr := formatBytes(swapTotal * 1024)
-	
+
 	return fmt.Sprintf("%s / %s", usedStr, totalStr)
 }
 
@@ -2902,7 +4271,7 @@ func computeDiskInfo() string {
 		}
 		return ""
 	}
-	
+
 	// Get total disk size and used space from LOCAL physical filesystems only (Linux)
 	// Exclude: tmpfs, devtmpfs, squashfs, overlay, aufs (containers)
 	// Exclude: nfs, nfs4, cifs, smb, smbfs, fuse, sshfs (network)
@@ -2932,11 +4301,11 @@ func computeDiskInfo() string {
 				var usedFloat, totalFloat float64
 				_, err1 := fmt.Sscanf(fields[0], "%f", &usedFloat)
 				_, err2 := fmt.Sscanf(fields[1], "%f", &totalFloat)
-				
+
 				if err1 == nil && err2 == nil {
 					usedBytes = uint64(usedFloat)
 					totalBytes = uint64(totalFloat)
-					
+
 					if totalBytes > 0 && usedBytes <= totalBytes {
 						usedStr := formatBytes(usedBytes)
 						totalStr := formatBytes(totalBytes)
@@ -2946,7 +4315,7 @@ func computeDiskInfo() string {
 			}
 		}
 	}
-	
+
 	// Fallback: use df -h for root partition only
 	cmd = exec.Command("sh", "-c", "df -h / | tail -1 | awk '{print $3 \"/\" $2}'")
 	output, err = cmd.Output()
@@ -2997,7 +4366,7 @@ func addSpaceBeforeUnit(s string) string {
 	if s == "" {
 		return s
 	}
-	
+
 	// If already has space, normalize units only
 	if strings.Contains(s, " ") {
 		// Normalize: Gi -> GiB, Mi -> MiB, etc. (but avoid double conversion)
@@ -3027,7 +4396,7 @@ func addSpaceBeforeUnit(s string) string {
 		}
 		return s
 	}
-	
+
 	// No space: find unit and add space, then normalize
 	// Try longer units first (GiB before Gi, Gi before G)
 	units := []struct {
@@ -3051,7 +4420,7 @@ func addSpaceBeforeUnit(s string) string {
 		{"M", " MiB"},
 		{"K", " KiB"},
 	}
-	
+
 	for _, unit := range units {
 		if idx := strings.Index(s, unit.old); idx > 0 {
 			// Insert space before unit and normalize

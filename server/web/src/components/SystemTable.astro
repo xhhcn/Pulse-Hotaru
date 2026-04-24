@@ -1920,13 +1920,21 @@ const apiBase = apiBaseProp ?? '';
       return;
     }
     
-    // Load Chart.js with fallback for Chinese networks
+    // Load Chart.js with fallback for Chinese networks. The matching
+    // <link rel="preload" crossorigin="anonymous"> in index.astro warms
+    // the cache, but the browser only reuses that response for a script
+    // request whose CORS mode matches — so we must set crossorigin on
+    // the dynamic <script> too, otherwise Chart.js gets fetched twice.
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+    script.crossOrigin = 'anonymous';
     script.onerror = function() {
-      // Fallback to unpkg CDN if jsdelivr fails (better for Chinese networks)
+      // Fallback to unpkg CDN if jsdelivr fails (better for Chinese networks).
+      // unpkg ships chart.js as `chart.umd.js` (no `.min` suffix) — using
+      // the jsdelivr filename here returns 404 and silently breaks the chart.
       const fallbackScript = document.createElement('script');
-      fallbackScript.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.min.js';
+      fallbackScript.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.js';
+      fallbackScript.crossOrigin = 'anonymous';
       fallbackScript.async = true;
       fallbackScript.setAttribute('data-chartjs', 'true');
       document.head.appendChild(fallbackScript);
@@ -1938,6 +1946,7 @@ const apiBase = apiBaseProp ?? '';
       if (!document.querySelector('script[data-chartjs-adapter]')) {
         const adapterScript = document.createElement('script');
         adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+        adapterScript.crossOrigin = 'anonymous';
         adapterScript.async = true;
         adapterScript.setAttribute('data-chartjs-adapter', 'true');
         adapterScript.onload = () => {
@@ -2516,19 +2525,25 @@ const apiBase = apiBaseProp ?? '';
           return;
         }
         
-        // Load Chart.js first with fallback for Chinese networks
+        // Load Chart.js first with fallback for Chinese networks.
+        // crossOrigin matches the <link rel="preload"> so the browser
+        // can reuse the warmed cache entry (otherwise it refetches).
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        script.crossOrigin = 'anonymous';
         script.onerror = function() {
-          // Fallback to unpkg CDN if jsdelivr fails
+          // Fallback to unpkg CDN if jsdelivr fails. Note: unpkg only
+          // ships `chart.umd.js` (no `.min` suffix) for chart.js@4.4.0.
           const fallbackScript = document.createElement('script');
-          fallbackScript.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.min.js';
+          fallbackScript.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.js';
+          fallbackScript.crossOrigin = 'anonymous';
           fallbackScript.async = true;
           fallbackScript.setAttribute('data-chartjs', 'true');
           fallbackScript.onload = () => {
             // Continue with adapter loading
             const adapterScript = document.createElement('script');
             adapterScript.src = 'https://unpkg.com/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+            adapterScript.crossOrigin = 'anonymous';
             adapterScript.async = true;
             adapterScript.setAttribute('data-chartjs-adapter', 'true');
             adapterScript.onload = () => {
@@ -2548,10 +2563,12 @@ const apiBase = apiBaseProp ?? '';
           // Then load the date adapter for time scale support with fallback
           const adapterScript = document.createElement('script');
           adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          adapterScript.crossOrigin = 'anonymous';
           adapterScript.onerror = function() {
             // Fallback to unpkg CDN
             const fallbackAdapter = document.createElement('script');
             fallbackAdapter.src = 'https://unpkg.com/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+            fallbackAdapter.crossOrigin = 'anonymous';
             fallbackAdapter.async = true;
             fallbackAdapter.setAttribute('data-chartjs-adapter', 'true');
             fallbackAdapter.onload = () => {
@@ -2569,6 +2586,7 @@ const apiBase = apiBaseProp ?? '';
             // Fallback to unpkg CDN
             const fallbackAdapter = document.createElement('script');
             fallbackAdapter.src = 'https://unpkg.com/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+            fallbackAdapter.crossOrigin = 'anonymous';
             fallbackAdapter.async = true;
             fallbackAdapter.setAttribute('data-chartjs-adapter', 'true');
             fallbackAdapter.onload = () => {
@@ -2610,6 +2628,7 @@ const apiBase = apiBaseProp ?? '';
         
         const adapterScript = document.createElement('script');
         adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+        adapterScript.crossOrigin = 'anonymous';
         adapterScript.async = true;
         adapterScript.setAttribute('data-chartjs-adapter', 'true');
         adapterScript.onload = () => {
@@ -2620,6 +2639,7 @@ const apiBase = apiBaseProp ?? '';
           // Fallback to unpkg CDN
           const fallbackAdapter = document.createElement('script');
           fallbackAdapter.src = 'https://unpkg.com/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          fallbackAdapter.crossOrigin = 'anonymous';
           fallbackAdapter.async = true;
           fallbackAdapter.setAttribute('data-chartjs-adapter', 'true');
           fallbackAdapter.onload = () => {

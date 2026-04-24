@@ -3774,8 +3774,13 @@ const apiBase = apiBaseProp ?? '';
         // External script - preserve full tag
         customJS += match[0] + '\n';
       } else {
-        // Inline script - wrap content back in <script> tags to maintain structure
-        customJS += '<' + scriptTag + '>\n' + content + '\n</' + scriptTag + '>\n';
+        // Inline script - wrap content back in <script> tags to maintain structure.
+        // Trim the captured body before re-wrapping; otherwise every save → load
+        // round-trip in the modal accumulates an extra blank line on each side
+        // of the script (the loader re-inserts \n around the body, the parser
+        // captures those \ns as part of the body, and on the next save they
+        // get \n-padded again).
+        customJS += '<' + scriptTag + '>\n' + content.trim() + '\n</' + scriptTag + '>\n';
       }
     }
     

@@ -134,32 +134,29 @@ jobs:
           body: |
             ## 🚀 Release v${{ steps.version.outputs.version }}
 
-            ### ✨ New Features
+            UI stability pass on top of v1.3.6 — three independently-reported visual bugs fixed and the install/uninstall docs synced with what the scripts actually drop on disk. **No backend or wire-protocol changes; clients from v1.3.6 keep working.**
 
-            **One-click Migration & Backup**
-            - New `scripts/migrate.sh`, `scripts/backup.sh`, and `scripts/restore.sh` for zero-downtime migration between hosts using hot bbolt snapshots
-            - Admin dashboard now exposes a "Download Backup" button that streams a consistent `metrics.db` snapshot via the server API
-            - Server-side `/api/admin/backup` endpoint with Bearer-auth, path-safe streaming, and audit logging
-            - `migrate.sh` self-bootstraps `backup.sh` / `restore.sh` on the remote host, preserves inherited `PASSWORD` / `TOKEN` env vars instead of leaking via argv, and ships a rescue path on restore failure
+            ### 🛠️ Fixes
 
-            **macOS Client Parity**
-            - Full Apple Silicon and Intel Mac support with accurate CPU model, core counts, nominal frequency, memory, swap, disk, and network metrics
-            - Reworked installer uses the modern `launchctl bootstrap` / `bootout` APIs (replacing deprecated `load` / `unload`)
-            - OS reporting now includes the macOS product version (e.g. `macOS 14.4`)
+            **TCPing chart no longer "reloads itself"**
+            - `loadTCPingHistory` now returns `{ __error: true }` on transient fetch failures instead of an empty object that looked identical to a "no samples yet" response. Brief 502s from a flaky reverse proxy or a server restart used to tear the existing chart down and flash "No data" before the next 30 s tick repainted; now the live chart is preserved across hiccups and only the *initial* load surfaces the empty state.
+            - Added a per-system re-entrancy guard (`tcpingIncrementalInFlight`) so the per-row 30 s poll and the SSE `metric_updated` push can't race two fetches onto the same canvas — that race was the most reproducible cause of the "reload" flicker on slow networks.
+            - `cleanupTCPingChart` and `handleTCPingConfigUpdated` clear the guard, so a real config change isn't gated by a stale "fetch in progress" entry.
 
-            **UI Polish & Accessibility**
-            - Cross-fade auth/login overlay with `pointer-events: none` during fade so the dashboard is interactive immediately
-            - Refined stagger animations, column-width stability during the waterfall entrance, reduced-motion support, and glassmorphism theme parity
-            - SEO/metadata pass: accurate `description`, `robots: noindex, nofollow` (instances are private), `theme-color` (dark/light), Open Graph, Twitter card, apple-touch-icon, and a `/robots.txt` that disallows indexing by default
+            **Admin server list no longer jitters every 3 s**
+            - `formatBytes` now always emits two decimals — `"1.00 KiB" / "1.50 KiB" / "1.55 KiB"` — instead of stripping trailing zeros, so the traffic column stays the same glyph count between pushes.
+            - `.traffic-info-container` is pinned with `font-variant-numeric: tabular-nums` and a 110 px `min-width`; combined with stable formatting that fully eliminates the left/right drift that used to drag the edit / copy buttons sideways.
+            - `editBtn.dataset.system` is no longer rewritten on every 3 s tick. A tiny `data-edit-key` digest of the fields the edit modal actually reads (`id / name / secret / tags / ipv4 / ipv6 / os / cpu_model / virtualization_type`) gates the rewrite, so volatile traffic counters no longer invalidate the row's CSS cascade — visibly smoother in glassmorphism mode and on lower-end devices.
 
-            ### 🔧 Fixes & Hardening
+            **Public dashboard numeric stability**
+            - Added a scoped `tabular-nums` rule for every data-bearing cell on both dashboards (`.system-row .text-right`, `.system-row span.font-medium`, `[data-tcping-{avg,loss}]`, `[data-traffic-tag] .traffic-value`, `[data-speed-tag] .speed-value`, `[data-detail-{speed,total}]`, total-net-{in,out}). Body prose stays proportional so modals and tooltips read naturally.
 
-            - **Server static cache**: standalone binary now emits the same `Cache-Control` headers as the Docker/Nginx build, so binary-only deployments don't serve stale HTML after an upgrade
-            - **macOS metrics under `CGO_ENABLED=0`**: CPU / memory / swap no longer report zero on Darwin builds
-            - **Linux client build**: split into `hwprobe_*.go/.s` + `linux_kernel{,_other}.go` for correct per-arch compilation (workflows now build the package `.`, not a single file)
-            - **Docker / binary caching parity**: `docker/nginx.conf` emits `Cache-Control: no-cache` for HTML and long-lived caching for hashed assets; the standalone server replicates this
-            - **Admin / index auth flow**: privacy-disabled, valid-token, invalid-token, no-token, and config-failure paths verified against a jsdom harness (9/9 scenarios)
-            - **Security**: stdin-only password prompts, `0600` DB permissions after restore, Bearer-only admin API, audit-logged backup downloads, and explicit warnings when falling back to plaintext HTTP during migration
+            ### 📚 Docs
+
+            `README.md` / `README_EN.md` install & uninstall sections now match exactly what the scripts drop on disk:
+            - **Server uninstall** removes `/opt/pulse/scripts/` and the three `pulse-{backup,restore,migrate}` CLI shortcuts in `/usr/local/bin/`, with separate "keep data" vs "wipe everything" flavours.
+            - **Linux client uninstall** stops & removes the `pulse-client-update.timer` + `.service` alongside `pulse-client.service`, with a warning about not clobbering co-located server data.
+            - **macOS client uninstall** prose tightened to cover the `com.pulse.client.update` LaunchDaemon installed by the auto-updater.
 
             ### 📦 Docker Images
             - `xhh1128/pulse:${{ steps.version.outputs.version }}`
@@ -193,5 +190,9 @@ jobs:
             PASSWORD="$OLD_ADMIN_PW" TOKEN="$NEW_ADMIN_PW" \
               bash scripts/migrate.sh --from https://old.example.com --to https://new.example.com
             ```
+
+            ### 📝 Cumulative changes since v1.3.5
+
+            v1.3.7 builds directly on v1.3.6, which delivered the one-click migration & backup story (`pulse-{backup,restore,migrate}` CLI), full macOS client parity (Apple Silicon & Intel CPU model / cores / freq / mem / swap / disk / net), the cross-fade auth overlay, glassmorphism theme polish, the SEO/metadata pass, and the standalone server's `Cache-Control` parity with the Docker/Nginx build. See the [v1.3.6 release notes](https://github.com/xhhcn/Pulse/releases/tag/v1.3.6) for the full list — every fix below applies on top of those.
           draft: false
           prerelease: false

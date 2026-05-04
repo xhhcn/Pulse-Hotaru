@@ -56,10 +56,10 @@ curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-serv
 ```
 
 The script will automatically:
-- ✅ Detect system architecture
-- ✅ Download the appropriate binary
-- ✅ Configure systemd service
-- ✅ Start service and enable auto-start
+- ✅ Detect system architecture (amd64 / arm64)
+- ✅ Download the appropriate binary to `/opt/pulse/pulse-server`
+- ✅ Configure `pulse-server.service` and enable auto-start
+- ✅ Drop the migration helpers `/opt/pulse/scripts/{backup,restore,migrate}.sh` and create the `pulse-backup` / `pulse-restore` / `pulse-migrate` CLI shortcuts (see [Migrate to Another Server](#-migrate-to-another-server))
 
 #### Update Server
 
@@ -75,14 +75,24 @@ sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/rel
 
 #### Uninstall Server
 
-**Remove program only (keep data):**
+> Besides the binary itself, the one-line installer also drops the migration helpers at `/opt/pulse/scripts/{backup,restore,migrate}.sh`, three CLI shortcuts at `/usr/local/bin/pulse-{backup,restore,migrate}`, and `/opt/pulse/data/` (which holds the bbolt database `metrics.db`). Pick whichever uninstall flavour matches your intent:
+
+**Remove program only (keep `/opt/pulse/data/` so you can roll back or reinstall later):**
 ```bash
-sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service /opt/pulse/pulse-server && sudo systemctl daemon-reload
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && \
+sudo rm -f /usr/local/bin/pulse-migrate /usr/local/bin/pulse-backup /usr/local/bin/pulse-restore && \
+sudo rm -f /opt/pulse/pulse-server /etc/systemd/system/pulse-server.service && \
+sudo rm -rf /opt/pulse/scripts && \
+sudo systemctl daemon-reload
 ```
 
-**Complete removal (including data):**
+**Complete removal (including the `metrics.db` database — irreversible):**
 ```bash
-sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service && sudo rm -rf /opt/pulse && sudo systemctl daemon-reload
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && \
+sudo rm -f /usr/local/bin/pulse-migrate /usr/local/bin/pulse-backup /usr/local/bin/pulse-restore && \
+sudo rm -f /etc/systemd/system/pulse-server.service && \
+sudo rm -rf /opt/pulse && \
+sudo systemctl daemon-reload
 ```
 
 #### Manual Installation
@@ -283,10 +293,19 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 
 ### Uninstall Client
 
-**Linux:**
+> The client enables auto-update by default, so on systemd you also get `pulse-client-update.service` + `pulse-client-update.timer` alongside `pulse-client.service`, and on macOS an extra `com.pulse.client.update` launchd job. The commands below clean those up too — they are safe to run regardless of whether auto-update was enabled (missing units are silently ignored).
+
+**Linux (systemd):**
 ```bash
-sudo systemctl stop pulse-client && sudo systemctl disable pulse-client && sudo rm -f /opt/pulse/probe-client /etc/systemd/system/pulse-client.service && sudo systemctl daemon-reload
+sudo systemctl stop pulse-client pulse-client-update.timer 2>/dev/null
+sudo systemctl disable pulse-client pulse-client-update.timer 2>/dev/null
+sudo rm -f /opt/pulse/probe-client /opt/pulse/update.sh \
+  /etc/systemd/system/pulse-client.service \
+  /etc/systemd/system/pulse-client-update.service \
+  /etc/systemd/system/pulse-client-update.timer
+sudo systemctl daemon-reload
 ```
+> If the same machine also runs Pulse server, keep `/opt/pulse/` (only delete the client-specific files listed above) — the database is untouched.
 
 **macOS (with auto-update):**
 ```bash

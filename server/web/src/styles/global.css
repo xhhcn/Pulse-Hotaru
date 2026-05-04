@@ -93,6 +93,39 @@ html.light * {
 }
 
 /* ========================================
+   Width-stable numeric rendering for volatile cells
+   ========================================
+   Inter (the body font) is proportional, so the digit "1" is narrower
+   than "0", "8" or "9". For columns that update on every 3 s SSE push
+   — CPU/memory/disk %, network speed, total traffic, TCPing averages
+   on the public dashboard, and traffic / IP info on the admin list —
+   that width difference accumulates into a visible left/right jitter:
+   the same column resizes as the digits change, which drags the
+   neighbouring cells (icons, copy buttons, edit buttons) sideways.
+   `tabular-nums` forces every digit to occupy the same advance width,
+   so values can change freely without shifting layout. Letters are
+   unaffected, so unit suffixes ("MB/s", "GiB", "ms", "%") still read
+   naturally. We deliberately scope this to data-bearing elements
+   rather than `body { font-variant-numeric: tabular-nums }` because
+   tabular figures look worse in flowing prose (e.g. README-style
+   paragraphs in modals) than they help in dashboards. */
+[data-tabular-nums],
+[data-tabular-nums] *,
+.system-row .text-right,
+.system-row span.font-medium,
+.system-total-net-in,
+.system-total-net-out,
+[data-tcping-avg],
+[data-tcping-loss],
+[data-traffic-tag] .traffic-value,
+[data-speed-tag] .speed-value,
+[data-detail-speed] span,
+[data-detail-total] span {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ========================================
    Keyboard focus indicators (:focus-visible)
    ========================================
    Many components set `outline-none` on inputs/buttons and rely on a

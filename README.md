@@ -56,10 +56,10 @@ curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-serv
 ```
 
 脚本会自动：
-- ✅ 检测系统架构
-- ✅ 下载对应的二进制文件
-- ✅ 配置 systemd 服务
-- ✅ 启动服务并设置开机自启
+- ✅ 检测系统架构（amd64 / arm64）
+- ✅ 下载对应的二进制到 `/opt/pulse/pulse-server`
+- ✅ 配置 `pulse-server.service` 并设置开机自启
+- ✅ 顺手装上迁移辅助脚本 `/opt/pulse/scripts/{backup,restore,migrate}.sh`，并创建 `pulse-backup` / `pulse-restore` / `pulse-migrate` 三个 CLI 短链（详见 [迁移到另一台服务器](#-迁移到另一台服务器)）
 
 #### 更新服务端
 
@@ -75,14 +75,24 @@ sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/rel
 
 #### 卸载服务端
 
-**仅删除程序（保留数据）:**
+> 一键安装脚本除了主程序还会落地三件东西：迁移辅助脚本 `/opt/pulse/scripts/{backup,restore,migrate}.sh`、`/usr/local/bin/pulse-{backup,restore,migrate}` 三个 CLI 短链，以及 `/opt/pulse/data/`（数据库 `metrics.db` 在这里）。卸载时按需选择以下两种之一：
+
+**仅删除程序（保留 `/opt/pulse/data/` 下的数据库，方便回滚或日后重装）:**
 ```bash
-sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service /opt/pulse/pulse-server && sudo systemctl daemon-reload
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && \
+sudo rm -f /usr/local/bin/pulse-migrate /usr/local/bin/pulse-backup /usr/local/bin/pulse-restore && \
+sudo rm -f /opt/pulse/pulse-server /etc/systemd/system/pulse-server.service && \
+sudo rm -rf /opt/pulse/scripts && \
+sudo systemctl daemon-reload
 ```
 
-**完全删除（包括数据）:**
+**完全删除（包括数据库 `metrics.db`，不可逆）:**
 ```bash
-sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service && sudo rm -rf /opt/pulse && sudo systemctl daemon-reload
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && \
+sudo rm -f /usr/local/bin/pulse-migrate /usr/local/bin/pulse-backup /usr/local/bin/pulse-restore && \
+sudo rm -f /etc/systemd/system/pulse-server.service && \
+sudo rm -rf /opt/pulse && \
+sudo systemctl daemon-reload
 ```
 
 #### 手动安装
@@ -283,10 +293,19 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 
 ### 卸载客户端
 
-**Linux:**
+> 客户端默认开启自动更新，因此 systemd 上除了 `pulse-client.service` 还有 `pulse-client-update.service` + `pulse-client-update.timer` 两件，macOS 上则多一个 `com.pulse.client.update` 守护进程。下面的命令同时清理这些组件，无论之前是否启用过自动更新都能安全运行（缺失的 unit 会被忽略）。
+
+**Linux (systemd):**
 ```bash
-sudo systemctl stop pulse-client && sudo systemctl disable pulse-client && sudo rm -f /opt/pulse/probe-client /etc/systemd/system/pulse-client.service && sudo systemctl daemon-reload
+sudo systemctl stop pulse-client pulse-client-update.timer 2>/dev/null
+sudo systemctl disable pulse-client pulse-client-update.timer 2>/dev/null
+sudo rm -f /opt/pulse/probe-client /opt/pulse/update.sh \
+  /etc/systemd/system/pulse-client.service \
+  /etc/systemd/system/pulse-client-update.service \
+  /etc/systemd/system/pulse-client-update.timer
+sudo systemctl daemon-reload
 ```
+> 同一台机器若同时跑了服务端，请保留 `/opt/pulse/`（仅删上面列出的客户端相关文件即可），数据库不受影响。
 
 **macOS（含自动更新）:**
 ```bash

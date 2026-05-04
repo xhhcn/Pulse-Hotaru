@@ -740,9 +740,17 @@ const apiBase = apiBaseProp ?? '';
     const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     const value = bytes / Math.pow(k, i);
-    // Format to 2 decimal places, but remove trailing zeros
-    const formatted = value.toFixed(2).replace(/\.?0+$/, '');
-    return `${formatted} ${sizes[i]}`;
+    // CRITICAL: width-stable formatting.
+    //
+    // Earlier we did `value.toFixed(2).replace(/\.?0+$/, '')`, which
+    // produces "1 KiB", "1.5 KiB" and "1.55 KiB" — three different
+    // widths for the same column. Combined with Inter being a
+    // proportional font, the traffic cell jitters horizontally on
+    // every 3 s push, dragging neighbouring cells with it. Always
+    // emitting two decimals plus tabular-nums on the wrapping span
+    // (see renderSystemItem / updateSystemItem) keeps every traffic
+    // value the same number of glyphs and the same on-screen width.
+    return `${value.toFixed(2)} ${sizes[i]}`;
   }
 
   // Get CPU brand icon based on CPU model.
@@ -1123,6 +1131,17 @@ const apiBase = apiBaseProp ?? '';
             <button 
               class="edit-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
               data-system='${escapeHtmlAttr(JSON.stringify(system))}'
+              data-edit-key='${escapeHtmlAttr(
+                String(system.id || '') + '|' +
+                String(system.name || '') + '|' +
+                String(system.secret || '') + '|' +
+                (Array.isArray(system.tags) ? system.tags.slice().sort().join(',') : '') + '|' +
+                String(system.ipv4 || '') + '|' +
+                String(system.ipv6 || '') + '|' +
+                String(system.os || '') + '|' +
+                String(system.cpu_model || '') + '|' +
+                String(system.virtualization_type || '')
+              )}'
               title="Edit system"
               aria-label="Edit system"
             >
@@ -1190,8 +1209,11 @@ const apiBase = apiBaseProp ?? '';
               ` : ''}
               
               ${(system.total_net_in_bytes || system.total_net_out_bytes) ? `
-              <!-- Network Traffic Stats - Hidden on mobile -->
-              <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
+              <!-- Network Traffic Stats - Hidden on mobile.
+                   tabular-nums + a fixed min-w on the traffic-info-container
+                   keeps the column at a constant width across pushes so the
+                   surrounding row never jitters as the byte count grows. -->
+              <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
                 ${system.total_net_in_bytes ? `
                 <div class="flex items-center min-h-[22px]">
                   <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${formatBytes(system.total_net_in_bytes)}</span>
@@ -1727,7 +1749,7 @@ const apiBase = apiBaseProp ?? '';
       // If traffic container doesn't exist and we have traffic data, create it
       if (!trafficContainer && (item.total_net_in_bytes || item.total_net_out_bytes)) {
         const trafficHTML = `
-          <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
+          <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
               <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
@@ -1788,7 +1810,7 @@ const apiBase = apiBaseProp ?? '';
       // If traffic container doesn't exist and we have traffic data, create it
       if (!trafficContainer && (item.total_net_in_bytes || item.total_net_out_bytes)) {
         const trafficHTML = `
-          <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
+          <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
               <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
@@ -1976,13 +1998,38 @@ const apiBase = apiBaseProp ?? '';
         // Double-check that item is still in cache before updating
         if (currentData.has(item.id)) {
           updateSystemItem(itemElement, item);
-          // CRITICAL: Update data-system attribute on edit button to reflect latest data
-          // This ensures edit modal shows correct data (tags, name, secret, etc.) when reopened
+          // Refresh the edit button's data-system payload, but ONLY if a
+          // field the edit modal actually reads has changed. Doing it
+          // unconditionally on every 3 s push wrote a multi-kilobyte
+          // attribute to every row even when only the volatile traffic
+          // counters moved — which forces the browser to re-parse the
+          // attribute on every tick and, more importantly, invalidates
+          // the row's CSS cascade (`transition-all` plus the glass-mode
+          // `backdrop-filter`) badly enough to be visible as a brief
+          // flicker on slower devices. Edit-relevant fields are: id,
+          // name, secret, tags, plus the surfaceable ipv4/ipv6/os/cpu/
+          // virtualization_type — i.e. exactly what hasChanged() already
+          // tracks (volatile traffic bytes don't matter for editing).
           const editBtn = itemElement.querySelector('.edit-btn');
           if (editBtn) {
-            // Use original item data from API response (includes tags, secret, etc.) for data-system attribute
-            // The item parameter is the raw data from API, which should include all fields
-            editBtn.dataset.system = JSON.stringify(item).replace(/'/g, "&apos;");
+            const oldEditPayload = editBtn.dataset.editKey || '';
+            const newEditPayload =
+              String(item.id || '') + '|' +
+              String(item.name || '') + '|' +
+              String(item.secret || '') + '|' +
+              (Array.isArray(item.tags) ? item.tags.slice().sort().join(',') : '') + '|' +
+              String(item.ipv4 || '') + '|' +
+              String(item.ipv6 || '') + '|' +
+              String(item.os || '') + '|' +
+              String(item.cpu_model || '') + '|' +
+              String(item.virtualization_type || '');
+            if (oldEditPayload !== newEditPayload) {
+              // Use original item data from API response (includes tags,
+              // secret, etc.) for data-system attribute; the modal
+              // reads it directly when "Edit" is clicked.
+              editBtn.dataset.system = JSON.stringify(item).replace(/'/g, "&apos;");
+              editBtn.dataset.editKey = newEditPayload;
+            }
           }
         } else {
           // Item was removed from cache, skip update (should be handled by re-render)

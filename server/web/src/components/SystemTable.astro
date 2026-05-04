@@ -2892,16 +2892,12 @@ const apiBase = apiBaseProp ?? '';
         responsive: true,
         maintainAspectRatio: false,
         devicePixelRatio: window.devicePixelRatio || 1, // Explicitly set for high-DPI displays
-        // Chart.js v4 defaults to a ~1000 ms entrance animation, which is
-        // the dominant component of perceived "open latency" once the
-        // network request itself is fast. Cap it to a snappy 200 ms with a
-        // smooth ease-out so the chart still has polish but is fully on
-        // screen almost immediately. Incremental updates already pass
-        // chart.update('none') and so are unaffected by this change.
-        animation: {
-          duration: 200,
-          easing: 'easeOutCubic'
-        },
+        // Chart.js entrance animation intentionally left at the library's
+        // default (~1 s ease-out) so the curves still draw in with the
+        // polish users expect. Search & render hot path is fast enough
+        // independently — the data is on the canvas before the animation
+        // fully resolves, and incremental updates keep using
+        // chart.update('none') so they remain instantaneous.
         plugins: {
           legend: {
             display: false

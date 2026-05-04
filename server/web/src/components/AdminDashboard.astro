@@ -1112,7 +1112,7 @@ const apiBase = apiBaseProp ?? '';
 
   function renderSystemItem(system, index) {
     return `
-        <div class="draggable-item rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4 cursor-move transition-all hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] min-h-[60px] relative" draggable="true" data-system-id="${escapeHtmlAttr(system.id || '')}" data-index="${index}">
+        <div class="draggable-item rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4 cursor-move transition-colors duration-150 hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] min-h-[60px] relative" draggable="true" data-system-id="${escapeHtmlAttr(system.id || '')}" data-index="${index}">
             <!-- CPU Brand Icon - Background, centered horizontally -->
             ${(() => {
               const cpuBrandIcon = getCPUBrandIcon(system.cpu_model);
@@ -1904,21 +1904,11 @@ const apiBase = apiBaseProp ?? '';
       // Use original data for rendering to preserve all fields including tags
       container.innerHTML = data.map((system, index) => renderSystemItem(system, index)).join('');
       currentData = newData;
-      
-      // Add staggered entrance animation for initial load
-      const systemItems = container.querySelectorAll('.draggable-item');
-      systemItems.forEach((item, index) => {
-        item.style.opacity = '0';
-        item.classList.add('animate-stagger-in');
-        item.style.animationDelay = `${index * 60}ms`;
-        // Clean up after animation
-        setTimeout(() => {
-          item.style.opacity = '';
-          item.classList.remove('animate-stagger-in');
-          item.style.animationDelay = '';
-        }, 400 + index * 60);
-      });
-      
+
+      // Admin list: no stagger / fade-in on rows. The outer page already
+      // animates `.animate-content`; another per-row entrance reads as a
+      // second “wave” and clashes with SSE refreshes. Rows appear immediately.
+
       setupSystemEventHandlers(container);
       setupDragAndDrop(container);
       await loadCPUBrandIcons();
@@ -2039,7 +2029,7 @@ const apiBase = apiBaseProp ?? '';
 
     // Add new items
     if (itemsToAdd.length > 0) {
-      itemsToAdd.forEach(({ item, index }, addIndex) => {
+      itemsToAdd.forEach(({ item, index }) => {
         // Find insertion point
         let insertBefore = null;
         for (let i = index + 1; i < data.length; i++) {
@@ -2056,21 +2046,11 @@ const apiBase = apiBaseProp ?? '';
         tempDiv.innerHTML = itemHTML;
         const itemElement = tempDiv.firstElementChild;
         if (itemElement) {
-          // Add entrance animation for new items
-          itemElement.classList.add('animate-scale-in');
-          itemElement.style.animationDelay = `${addIndex * 50}ms`;
-          
           if (insertBefore) {
             container.insertBefore(itemElement, insertBefore);
           } else {
             container.appendChild(itemElement);
           }
-          
-          // Clean up animation class after animation completes
-          setTimeout(() => {
-            itemElement.classList.remove('animate-scale-in');
-            itemElement.style.animationDelay = '';
-          }, 300 + addIndex * 50);
         }
       });
 

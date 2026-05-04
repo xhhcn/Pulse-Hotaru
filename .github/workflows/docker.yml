@@ -151,6 +151,17 @@ jobs:
             **Public dashboard numeric stability**
             - Added a scoped `tabular-nums` rule for every data-bearing cell on both dashboards (`.system-row .text-right`, `.system-row span.font-medium`, `[data-tcping-{avg,loss}]`, `[data-traffic-tag] .traffic-value`, `[data-speed-tag] .speed-value`, `[data-detail-{speed,total}]`, total-net-{in,out}). Body prose stays proportional so modals and tooltips read naturally.
 
+            **Admin list motion & glass-mode paint cost (follow-up polish in this tag)**
+            - Removed the per-row stagger entrance and the scale-in animation on newly inserted rows — the outer page already runs `.animate-content`, and stacking another timed wave on top clashed visually with SSE refreshes.
+            - `.draggable-item` now transitions **colors only** (`transition-colors`), not `transition-all`, so routine cell updates don’t constantly re-sample `backdrop-filter` in glass mode.
+
+            **Public table first paint**
+            - The `data-row-in` stagger after the initial HTML paint is gated with a once-per-session latch. Transient empty metric snapshots used to clear the in-memory cache and replay the entire top-to-bottom fade when data returned — fixed.
+
+            **TCPing chart & narrow screens**
+            - After the debounced window `resize` handler (and on `orientationchange`), every live Chart.js TCPing instance receives an explicit `chart.resize()` so mobile Safari/WebViews keep canvas width aligned with the horizontally scrollable table.
+            - TCPing target tab buttons use `touch-action: manipulation` (with tap highlight suppressed) for snappier switching on phones.
+
             ### 📚 Docs
 
             `README.md` / `README_EN.md` install & uninstall sections now match exactly what the scripts drop on disk:

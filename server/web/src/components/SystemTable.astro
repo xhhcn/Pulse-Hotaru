@@ -437,6 +437,15 @@ const apiBase = apiBaseProp ?? '';
   // Cache current data for comparison
   let currentData = new Map(); // key: system ID, value: system data
 
+  // Latched the FIRST time the table renders rows. Without this latch,
+  // every transient empty payload (server hiccup, all clients momentarily
+  // unreported, …) would clear `currentData` and cause the row stagger
+  // (`data-row-in`) to replay the next time data comes back — which the
+  // user perceives as "the dashboard keeps fading in from the top". The
+  // stagger is meant to be a first-impression delight, not a refresh
+  // signal, so we run it exactly once per page session.
+  let staggerAnimationPlayed = false;
+
   // Sort state (temporary, not persisted)
   let currentSort = {
     field: null, // 'name', 'time', 'os', or null (no sort - default backend order)
@@ -3468,19 +3477,27 @@ const apiBase = apiBaseProp ?? '';
       // fade-up is a pure opacity+translateY transition with zero
       // horizontal motion — the user sees rows "rise into place",
       // never "slide sideways".
+      //
+      // Gated by `staggerAnimationPlayed` so a transient empty payload
+      // mid-session does NOT replay the animation: that scenario was
+      // visible to the user as the whole list flickering in from the
+      // top every few seconds.
       const systemRows = body.querySelectorAll('.system-row');
-      systemRows.forEach((row, index) => {
-        row.style.opacity = '0';
-        row.style.animation = 'data-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards';
-        row.style.animationDelay = `${index * 50}ms`;
-        // Clean up after animation
-        setTimeout(() => {
-          row.style.opacity = '';
-          row.style.animation = '';
-          row.style.animationDelay = '';
-        }, 400 + index * 50);
-      });
-      
+      if (!staggerAnimationPlayed) {
+        staggerAnimationPlayed = true;
+        systemRows.forEach((row, index) => {
+          row.style.opacity = '0';
+          row.style.animation = 'data-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+          row.style.animationDelay = `${index * 50}ms`;
+          // Clean up after animation
+          setTimeout(() => {
+            row.style.opacity = '';
+            row.style.animation = '';
+            row.style.animationDelay = '';
+          }, 400 + index * 50);
+        });
+      }
+
       await loadOSIcons();
       await loadFlagIcons();
       setupCopyButtons(body);
@@ -4170,8 +4187,31 @@ const apiBase = apiBaseProp ?? '';
     }
     resizeTimeout = setTimeout(() => {
       recalculateColumnWidthFromCurrentData();
+      // Rotating the phone / resizing the browser changes the chart's CSS
+      // box width (inside horizontally-scrollable table). Chart.js does not
+      // always observe that layout shift reliably on mobile Safari — give it
+      // an explicit resize after column math settles.
+      tcpingCharts.forEach(({ chart }) => {
+        try {
+          if (chart && typeof chart.resize === 'function') chart.resize();
+        } catch (_) {}
+      });
       resizeTimeout = null;
     }, 250);
+  });
+
+  window.addEventListener('orientationchange', () => {
+    // Same rationale as resize — orientation fires slightly ahead of layout
+    // on some WebViews; trigger after the next paint.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        tcpingCharts.forEach(({ chart }) => {
+          try {
+            if (chart && typeof chart.resize === 'function') chart.resize();
+          } catch (_) {}
+        });
+      }, 100);
+    });
   });
 
   window.addEventListener('beforeunload', () => {
@@ -4197,5 +4237,11 @@ const apiBase = apiBaseProp ?? '';
       opacity: 1;
       transform: translateY(0);
     }
+  }
+
+  /* TCPing target tabs — faster taps on mobile (no double-tap zoom delay). */
+  [data-tcping-tabs] button {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 </style>

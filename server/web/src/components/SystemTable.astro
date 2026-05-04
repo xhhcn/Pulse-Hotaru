@@ -2482,38 +2482,70 @@ const apiBase = apiBaseProp ?? '';
         return;
       }
       
-      // Update each dataset with new data points
+      // Update each dataset with new data points.
+      //
+      // INVARIANTS (relied on for the O(K) tail-merge below):
+      //   1. The server returns results sorted ascending by timestamp.
+      //   2. We only ever append new points to the tail of currentData.
+      //   3. We only ever drop expired points from the head of currentData.
+      // So both arrays are sorted at the point we get here. The previous
+      // implementation walked the whole new array with .filter(), then
+      // rebuilt currentData.data with .filter().sort() — O(N log N) per
+      // dataset per tick, executed every 3–30 s while the chart is open.
+      //
+      // The sweep below replaces both with O(K) walks:
+      //   • finding new points: scan from the tail of newDataset.data
+      //     backward until we land on a point at or before lastCurrentTime;
+      //   • dropping stale points: scan from the head of currentDataset.data
+      //     forward until we land on a point at or after the 24-h cutoff.
+      // Typical K is 0–2, so the per-tick cost becomes effectively constant
+      // even for charts with thousands of points already on screen.
       let hasNewData = false;
       datasets.forEach((newDataset, index) => {
-        if (index < chart.data.datasets.length) {
-          const currentDataset = chart.data.datasets[index];
-          const currentData = currentDataset.data || [];
-          
-          if (currentData.length > 0) {
-            const lastCurrentDataPoint = currentData[currentData.length - 1];
-            const lastCurrentTime = lastCurrentDataPoint ? lastCurrentDataPoint.x.getTime() : 0;
-            
-            // Find new data points
-            const newDataPoints = newDataset.data.filter(point => point.x.getTime() > lastCurrentTime);
-            
-            if (newDataPoints.length > 0) {
-              currentDataset.data.push(...newDataPoints);
-              hasNewData = true;
-            }
-          } else {
-            // No existing data, add all new data
-            currentDataset.data = [...newDataset.data];
+        if (index >= chart.data.datasets.length) return;
+
+        const currentDataset = chart.data.datasets[index];
+        const currentData = currentDataset.data || [];
+        const newData = newDataset.data || [];
+
+        if (currentData.length === 0) {
+          if (newData.length > 0) {
+            currentDataset.data = newData.slice();
             hasNewData = true;
           }
-          
-          // Remove data older than 24 hours and ensure data is sorted by time
-          currentDataset.data = currentDataset.data
-            .filter(point => {
-              return point.x.getTime() >= twentyFourHoursAgo;
-            })
-            .sort((a, b) => {
-              return a.x.getTime() - b.x.getTime();
-            });
+        } else if (newData.length > 0) {
+          const lastCurrentTime = currentData[currentData.length - 1].x.getTime();
+          // Walk newData from the tail until we find a point we already
+          // have. Everything to the right is brand-new and chronologically
+          // sorted; we splice that tail in directly.
+          let firstNewIdx = newData.length;
+          for (let i = newData.length - 1; i >= 0; i--) {
+            if (newData[i].x.getTime() <= lastCurrentTime) {
+              firstNewIdx = i + 1;
+              break;
+            }
+            firstNewIdx = i;
+          }
+          if (firstNewIdx < newData.length) {
+            for (let i = firstNewIdx; i < newData.length; i++) {
+              currentData.push(newData[i]);
+            }
+            hasNewData = true;
+          }
+        }
+
+        // Drop expired points from the head. Because the array is sorted
+        // ascending, all expired points form a prefix, so a single splice
+        // at the boundary is enough — no full-array rewrite, no sort.
+        const data = currentDataset.data;
+        if (data && data.length > 0) {
+          let dropTo = 0;
+          while (dropTo < data.length && data[dropTo].x.getTime() < twentyFourHoursAgo) {
+            dropTo++;
+          }
+          if (dropTo > 0) {
+            data.splice(0, dropTo);
+          }
         }
       });
         
@@ -2860,6 +2892,16 @@ const apiBase = apiBaseProp ?? '';
         responsive: true,
         maintainAspectRatio: false,
         devicePixelRatio: window.devicePixelRatio || 1, // Explicitly set for high-DPI displays
+        // Chart.js v4 defaults to a ~1000 ms entrance animation, which is
+        // the dominant component of perceived "open latency" once the
+        // network request itself is fast. Cap it to a snappy 200 ms with a
+        // smooth ease-out so the chart still has polish but is fully on
+        // screen almost immediately. Incremental updates already pass
+        // chart.update('none') and so are unaffected by this change.
+        animation: {
+          duration: 200,
+          easing: 'easeOutCubic'
+        },
         plugins: {
           legend: {
             display: false

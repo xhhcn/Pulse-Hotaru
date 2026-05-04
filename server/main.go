@@ -117,9 +117,18 @@ type TCPingHistoryResponse struct {
 	Stats   TCPingStats    `json:"stats"`
 }
 
-// TCPing query cache to reduce database load (with pre-calculated statistics)
+// TCPing query cache to reduce database load.
+//
+// We cache the *already-encoded* JSON body, not the struct, so a cache hit
+// can short-circuit straight to a single ResponseWriter.Write of an
+// immutable byte slice. Re-encoding the same TCPingHistoryResponse on every
+// hit was measurable on busy deployments (every result row contains a
+// pointer-to-float and a time.Time that goes through RFC3339 formatting),
+// and json.Encoder.Encode does not memoise. Trading a fixed-size []byte for
+// the struct also lets the entry be served read-locked without the encoder
+// touching shared state.
 type tcpingCacheEntry struct {
-	Response TCPingHistoryResponse
+	JSON     []byte // marshaled body of TCPingHistoryResponse, ready to ship
 	CachedAt time.Time
 }
 
@@ -129,8 +138,10 @@ var (
 	tcpingCacheTTL = 2 * time.Minute // Cache results for 2 minutes
 )
 
-// Get cached TCPing results with statistics if available and not expired
-func getCachedTCPingResults(clientID string) (*TCPingHistoryResponse, bool) {
+// Get the cached pre-encoded JSON body if present and not expired.
+// The returned slice is owned by the cache and MUST NOT be mutated by the
+// caller; the writer only reads from it.
+func getCachedTCPingResultsJSON(clientID string) ([]byte, bool) {
 	tcpingCacheMu.RLock()
 	defer tcpingCacheMu.RUnlock()
 
@@ -139,21 +150,31 @@ func getCachedTCPingResults(clientID string) (*TCPingHistoryResponse, bool) {
 		return nil, false
 	}
 
-	// Check if cache is expired
 	if time.Since(entry.CachedAt) > tcpingCacheTTL {
 		return nil, false
 	}
 
-	return &entry.Response, true
+	return entry.JSON, true
 }
 
-// Cache TCPing results with statistics
+// Cache the pre-encoded TCPing response body. Marshal failures fall back to
+// not caching (the next request will retry); we never cache a partial body.
+//
+// The byte layout matches what json.Encoder.Encode would produce — i.e. the
+// JSON value followed by a single trailing '\n'. That way cache-hit and
+// cache-miss responses are byte-identical on the wire, which simplifies
+// downstream tooling (e.g. ETag generation, log diffs, conformance tests).
 func cacheTCPingResults(clientID string, response TCPingHistoryResponse) {
+	body, err := json.Marshal(response)
+	if err != nil {
+		return
+	}
+	body = append(body, '\n')
 	tcpingCacheMu.Lock()
 	defer tcpingCacheMu.Unlock()
 
 	tcpingCache[clientID] = &tcpingCacheEntry{
-		Response: response,
+		JSON:     body,
 		CachedAt: time.Now(),
 	}
 }
@@ -3326,6 +3347,24 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	}
 }
 
+// writeCachedJSON ships an already-encoded body. We deliberately set the
+// same headers as writeJSON so cache-hit responses are byte-equivalent to
+// fresh responses; the only difference is that we skipped the encoder.
+//
+// The body is a json.Encoder output (so it ends with '\n'); we reuse it as
+// is to keep wire-format identical to writeJSON.
+func writeCachedJSON(w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, private")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	if _, err := w.Write(body); err != nil {
+		log.Printf("⚠️  Failed to write cached JSON response: %v", err)
+	}
+}
+
 func portFromEnv() string {
 	if val := strings.TrimSpace(os.Getenv("PORT")); val != "" {
 		return val
@@ -3505,12 +3544,12 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 
 	var results []TCPingResult
 
-	// If no specific target is requested, try to get from cache first
-	// Cache is only used when requesting all targets (no target parameter)
+	// If no specific target is requested, try to get from cache first.
+	// Cache stores the already-encoded JSON body, so a hit can be served
+	// without re-running json.Marshal — measurably reduces CPU under load.
 	if target == "" {
-		if cachedResponse, found := getCachedTCPingResults(clientID); found {
-			// Cache hit - return cached results with pre-calculated statistics immediately
-			writeJSON(w, http.StatusOK, cachedResponse)
+		if body, found := getCachedTCPingResultsJSON(clientID); found {
+			writeCachedJSON(w, http.StatusOK, body)
 			return
 		}
 	}

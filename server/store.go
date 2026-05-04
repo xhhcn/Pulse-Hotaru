@@ -345,11 +345,28 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 	})
 }
 
-// GetTCPingResults returns all tcping results for a client within 24 hours
-// If target is provided, only returns results for that target
+// GetTCPingResults returns all tcping results for a client within 24 hours.
+// If target is provided, only returns results for that target.
+//
+// Uses the same cursor-seek strategy as CleanupOldTCPingResults: keys are
+// formatted as "<unix-seconds>_<client>_<target>" with a 10-digit timestamp
+// (Unix seconds fit in 10 chars until year 2286), so bbolt's lexicographic
+// iteration order matches numeric timestamp order. Seeking directly to the
+// cutoff prefix and walking forward avoids unmarshalling potentially hundreds
+// of thousands of older records on busy deployments — which is what made
+// "open chart" perceptibly slow as the database aged. The `_` separator
+// prevents the prefix from accidentally matching a longer timestamp (e.g.
+// "1714531200" vs "1714531200_xxx").
+//
+// Within a single second the suffix order is `<client>_<target>`, so records
+// for one client/target chunk together. We still emit a final sort below to
+// guarantee strict timestamp ordering across sub-second writes that share a
+// timestamp but differ in client / target — which keeps callers free to
+// assume the result slice is sorted.
 func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingResult, error) {
-	results := make([]TCPingResult, 0)
+	results := make([]TCPingResult, 0, 256)
 	cutoffTime := time.Now().Add(-24 * time.Hour)
+	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
 	filterTarget := ""
 	if len(target) > 0 {
 		filterTarget = target[0]
@@ -361,28 +378,45 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 			return fmt.Errorf("tcping bucket not found")
 		}
 
-		return bucket.ForEach(func(k, v []byte) error {
+		c := bucket.Cursor()
+		// Seek lands on the smallest key >= cutoffPrefix. Every record
+		// from here forward is within the 24-hour window. Records older
+		// than the cutoff are skipped entirely without unmarshalling.
+		for k, v := c.Seek(cutoffPrefix); k != nil; k, v = c.Next() {
 			var result TCPingResult
 			if err := json.Unmarshal(v, &result); err != nil {
-				return nil // Skip corrupted entry
+				continue // Skip corrupted entry
 			}
 
-			// Filter by client ID and time (within 24 hours)
-			if result.ClientID == clientID && result.Timestamp.After(cutoffTime) {
-				// If target filter is specified, only include matching results
-				if filterTarget == "" || result.Target == filterTarget {
-					results = append(results, result)
-				}
+			if result.ClientID != clientID {
+				continue
 			}
-			return nil
-		})
+			if filterTarget != "" && result.Target != filterTarget {
+				continue
+			}
+
+			// Defensive: if a writer ever bypassed the timestamp-prefix
+			// key format, the seek-skip wouldn't catch it. Re-verify the
+			// 24-h window from the actual timestamp field. We use
+			// `!After(cutoffTime)` (i.e. <=) to preserve the original
+			// strict-greater-than semantic of the previous full-scan
+			// implementation, so the visible window is unchanged.
+			if !result.Timestamp.After(cutoffTime) {
+				continue
+			}
+
+			results = append(results, result)
+		}
+		return nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	// Sort by timestamp (oldest first)
+	// Stabilise sub-second-tie ordering for callers that assume strict
+	// ascending-by-timestamp. The slice is already nearly sorted, so the
+	// constant factor is small.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Timestamp.Before(results[j].Timestamp)
 	})

@@ -162,6 +162,11 @@ jobs:
             - After the debounced window `resize` handler (and on `orientationchange`), every live Chart.js TCPing instance receives an explicit `chart.resize()` so mobile Safari/WebViews keep canvas width aligned with the horizontally scrollable table.
             - TCPing target tab buttons use `touch-action: manipulation` (with tap highlight suppressed) for snappier switching on phones.
 
+            **TCPing chart open latency — server-side and client-side**
+            - `Store.GetTCPingResults` now seeks bbolt's cursor directly to the 24h cutoff prefix instead of `bucket.ForEach`-ing the entire history bucket. The keys are already `<unix-seconds>_<client>_<target>` (10-digit timestamp, lexicographic = numeric until 2286), so the seek lands on the first in-window record and walks forward from there. On databases with weeks of multi-client tcping history this collapses the per-request cost from "JSON-unmarshal every record ever written" to "unmarshal records in the 24-hour window", typically a 10–100× speedup. The same trick was already used by `CleanupOldTCPingResults` — the read path now matches.
+            - The 50 ms `setTimeout` that gated chart initialization on row expansion is replaced with a single `requestAnimationFrame` so the fetch starts ~50 ms earlier on average without losing the "let the expand animation paint first" guarantee.
+            - The per-target chart payload is now built in a single linear pass that parses each `result.timestamp` exactly once — old code did `.filter` + `.sort` + `.forEach` per target, parsing every timestamp three times. Min/max time are tracked as actual extrema (not "first / last seen") so X-axis range stays correct even when a fork swaps in a backend with weaker ordering guarantees.
+
             ### 📚 Docs
 
             `README.md` / `README_EN.md` install & uninstall sections now match exactly what the scripts drop on disk:

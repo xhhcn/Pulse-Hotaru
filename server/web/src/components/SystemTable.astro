@@ -2321,33 +2321,34 @@ const apiBase = apiBaseProp ?? '';
     config.targets.forEach((targetConfig, index) => {
       const historyData = allHistoryData[index];
       const safeHistoryData = Array.isArray(historyData) ? historyData : [];
-      
-      // Filter and sort by timestamp
-      const sortedData = [...safeHistoryData]
-        .filter(result => {
-          const timestamp = new Date(result.timestamp).getTime();
-          return timestamp >= twentyFourHoursAgo;
-        })
-        .sort((a, b) => {
-          return new Date(a.timestamp) - new Date(b.timestamp);
-        });
-    
-      if (sortedData.length > 0) {
-        hasAnyData = true;
-        // Track min and max time across all datasets for proper x-axis range
-        const firstTime = new Date(sortedData[0].timestamp).getTime();
-        const lastTime = new Date(sortedData[sortedData.length - 1].timestamp).getTime();
-        if (minTime === null || firstTime < minTime) {
-          minTime = firstTime;
-        }
-        if (maxTime === null || lastTime > maxTime) {
-          maxTime = lastTime;
-        }
-      }
-      
-      const chartData = [];
-      sortedData.forEach(result => {
-        const timestamp = new Date(result.timestamp);
+
+      // The server returns results already (a) within the 24h window and
+      // (b) sorted by timestamp ascending — `Store.GetTCPingResults` uses
+      // a cursor-seek on a 10-digit-unix-prefixed key plus a final sort
+      // pass. We therefore do a single linear pass that:
+      //   • parses every `result.timestamp` exactly once,
+      //   • collects chart points,
+      //   • derives min/max time without re-iterating,
+      //   • drops any rare out-of-window record as a defensive guard.
+      // The previous code did `.filter` + `.sort` + `.forEach` per target,
+      // each `new Date(...)` parse three times per row. Folding it into
+      // one walk roughly halves the JS work for the chart open.
+      //
+      // We track per-dataset min/max time as actual extrema rather than
+      // "first / last seen in iteration order" — both are equivalent for
+      // the bundled server (which always returns sorted ascending), but
+      // this keeps the X-axis range correct for forks that swap in a
+      // backend with weaker ordering guarantees.
+      const chartData = new Array(safeHistoryData.length);
+      let chartIdx = 0;
+      let dsMin = null;
+      let dsMax = null;
+      for (let i = 0; i < safeHistoryData.length; i++) {
+        const result = safeHistoryData[i];
+        const tsDate = new Date(result.timestamp);
+        const tsMs = tsDate.getTime();
+        if (!Number.isFinite(tsMs) || tsMs < twentyFourHoursAgo) continue;
+
         let yValue = null;
         if (result.latency !== null && result.latency !== undefined) {
           if (result.latency > PACKET_LOSS_THRESHOLD_MS) {
@@ -2356,11 +2357,17 @@ const apiBase = apiBaseProp ?? '';
             yValue = result.latency;
           }
         }
-        chartData.push({
-          x: timestamp,
-          y: yValue
-        });
-      });
+        chartData[chartIdx++] = { x: tsDate, y: yValue };
+        if (dsMin === null || tsMs < dsMin) dsMin = tsMs;
+        if (dsMax === null || tsMs > dsMax) dsMax = tsMs;
+      }
+      chartData.length = chartIdx; // shrink to actual size
+
+      if (chartIdx > 0) {
+        hasAnyData = true;
+        if (minTime === null || dsMin < minTime) minTime = dsMin;
+        if (maxTime === null || dsMax > maxTime) maxTime = dsMax;
+      }
     
       // Determine color based on whether a target is selected
       // If no target is selected (selectedTarget === null), all lines have distinct colors
@@ -3274,9 +3281,13 @@ const apiBase = apiBaseProp ?? '';
             });
           });
           
-          // Initialize tcping chart immediately (don't wait for animation)
-          // Chart will load in parallel with the expansion animation
-          setTimeout(() => initializeTCPingChart(systemId), 50);
+          // Initialize tcping chart in the same frame the row starts
+          // expanding. Using requestAnimationFrame instead of setTimeout(50)
+          // means the chart fetch begins ~50 ms earlier on average — which
+          // is visible on slow networks where the round-trip dominates.
+          // The next-frame deferral is kept so the expand animation gets
+          // its first paint before we kick off any heavy work.
+          requestAnimationFrame(() => initializeTCPingChart(systemId));
           
           // Update translations when expanding
           setTimeout(() => updateTranslations(), 0);

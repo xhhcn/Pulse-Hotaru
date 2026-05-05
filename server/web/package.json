@@ -16,8 +16,7 @@
     "@iconify-json/logos": "^1.2.10",
     "@iconify-json/lucide": "^1.2.80",
     "astro": "^4.10.2",
-    "astro-icon": "^1.1.5",
-    "chart.js": "^4.5.1"
+    "astro-icon": "^1.1.5"
   },
   "devDependencies": {
     "@astrojs/tailwind": "^5.1.0",

@@ -396,13 +396,33 @@ PULSE_API_BASE=https://your-pulse-instance.example.com npm run dev
 
 ### Build & deploy
 
+Both paths have been end-to-end verified. Pick one:
+
+**A. Standalone binary (build the frontend first, then `go build`):**
+
 ```bash
-cd server/web
-npm run build       # produces dist/ with _astro/ hashed assets
+# 1) Frontend bundle (produces server/web/dist/)
+cd server/web && npm run build
+
+# 2) Go build embeds the dist via embed.FS; switch GOOS/GOARCH to cross-compile
+cd ..    # back to server/
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -ldflags="-s -w" -o pulse-server .
+
+# 3) Run it (database lands in ./data/metrics.db)
+./pulse-server
 ```
 
-* **Docker mode**: `Dockerfile` already runs `npm run build` and serves dist/ via nginx.
-* **Standalone binary mode**: `go build` embeds `web/dist/` via `embed.FS` — re-build the binary and your new theme is baked in.
+> The frontend must be built first: `go:embed all:web/dist` is a **compile-time** directive, so Go fails the build if `dist/` is missing.
+
+**B. Docker image (single command — the image builds the frontend internally):**
+
+```bash
+docker build -t my-pulse:dev .
+docker run --rm -p 8008:8008 -v "$(pwd)/data:/app/data" my-pulse:dev
+```
+
+The multi-stage `Dockerfile` runs `npm ci && npm run build` for you, hands the dist/ to nginx, and only the API surface goes through the Go backend. After modifying your theme locally, a single `docker build` rebuilds everything — no separate `npm run build` step needed.
 
 ### What you don't need to touch
 

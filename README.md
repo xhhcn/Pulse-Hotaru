@@ -396,13 +396,33 @@ PULSE_API_BASE=https://your-pulse-instance.example.com npm run dev
 
 ### 出包 & 部署
 
+两种路径都已经过端到端验证。任选其一：
+
+**A. 独立二进制（先打前端，再编 Go）：**
+
 ```bash
-cd server/web
-npm run build       # 产出 dist/，含 _astro/ 哈希资产
+# 1) 前端打包（产出 server/web/dist/）
+cd server/web && npm run build
+
+# 2) Go 编译，前端通过 embed.FS 嵌进去；交叉编译只需要换 GOOS/GOARCH
+cd ..    # 回到 server/
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -ldflags="-s -w" -o pulse-server .
+
+# 3) 直接跑（数据库写到 ./data/metrics.db）
+./pulse-server
 ```
 
-* **Docker 模式**：`Dockerfile` 已经替你跑 `npm run build`，并把产物放到 nginx 里。
-* **独立二进制模式**：`go build` 时 Go 用 `embed.FS` 把 `web/dist/` 整个嵌进去 —— 重新编译一下就把你的新主题烤进了二进制。
+> 前端必须先 `npm run build`：`go:embed all:web/dist` 是**编译期**指令，build 时没有 `dist/` 目录就会报错。
+
+**B. Docker 镜像（一条命令搞定，前端打包发生在镜像内）：**
+
+```bash
+docker build -t my-pulse:dev .
+docker run --rm -p 8008:8008 -v "$(pwd)/data:/app/data" my-pulse:dev
+```
+
+`Dockerfile` 多阶段构建会替你跑 `npm ci && npm run build`，再把 dist/ 喂给 nginx，Go 后端只走 API。本地改完主题，直接 `docker build` 一遍就好，不需要先单独 `npm run build`。
 
 ### 不需要碰的部分
 

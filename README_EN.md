@@ -348,6 +348,74 @@ Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregi
 
 ---
 
+## 🎨 Theming & Customisation
+
+Pulse's frontend is a self-contained Astro project, **fully decoupled from the backend**. If you want to fork it into a new theme — re-skin, add components, tweak interactions — all the work happens under `server/web/`; you don't need to touch a single line of Go.
+
+### Where the theme code lives
+
+```
+server/web/
+├── src/
+│   ├── pages/                    # Three route entries
+│   │   ├── index.astro           #   /        public dashboard
+│   │   ├── admin.astro           #   /admin   admin panel
+│   │   └── login.astro           #   /login   login page
+│   ├── components/               # 9 reusable components, Astro + Tailwind throughout
+│   │   ├── SystemTable.astro     #     main table + TCPing chart
+│   │   ├── AdminDashboard.astro  #     admin tables + modals
+│   │   ├── NavBar.astro / Footer.astro / LoadingState.astro
+│   │   ├── LoginForm.astro / Icon.astro
+│   │   └── SystemTableHeader.astro / SystemTableHeaderRow.astro
+│   ├── styles/global.css         # global animations + custom Tailwind utilities
+│   └── utils/i18n.ts             # English / Chinese strings (48 keys); add a language by extending the Language type
+├── tailwind.config.mjs           # color palette + dark-mode config
+└── astro.config.mjs              # Astro / Vite config (includes the dev proxy, see below)
+```
+
+### Local dev workflow
+
+```bash
+git clone https://github.com/<your-username>/Pulse.git
+cd Pulse/server
+
+# Terminal 1: run the backend on :8080
+go run .
+
+# Terminal 2: run the frontend on :4321 with hot reload
+cd web
+npm install
+npm run dev
+```
+
+Open `http://localhost:4321` and you'll get a live-reloading dashboard. `astro.config.mjs` already proxies `/api/*` and `/healthz` over to `:8080`, so **no fetch URLs need to change**. To work against a remote backend (e.g. your VPS instance):
+
+```bash
+PULSE_API_BASE=https://your-pulse-instance.example.com npm run dev
+```
+
+### Build & deploy
+
+```bash
+cd server/web
+npm run build       # produces dist/ with _astro/ hashed assets
+```
+
+* **Docker mode**: `Dockerfile` already runs `npm run build` and serves dist/ via nginx.
+* **Standalone binary mode**: `go build` embeds `web/dist/` via `embed.FS` — re-build the binary and your new theme is baked in.
+
+### What you don't need to touch
+
+* `server/main.go` & `server/store.go`: backend API, auth, bbolt storage. Already audited; transparent to theme work.
+* `client/`: agent code running on monitored machines.
+* `scripts/`, `install-pulse-server.sh`, `docker/`: deployment & ops.
+
+### Upstreaming
+
+Pure re-skins are best kept on your own fork. If you build something with general utility (a new component, a new filter, a bug fix), PRs back to upstream are welcome.
+
+---
+
 ## 🚚 Migrating to Another Server
 
 All of Pulse's server state (registered systems, shared secrets, TCPing history, admin password, dashboard config, …) lives in **one bbolt file**. The repo ships `scripts/migrate.sh`, which wraps the entire migration into **a single command** — run it on the new server and it pulls everything across from the old one. **The old server stays fully online** the whole time, with zero data loss.

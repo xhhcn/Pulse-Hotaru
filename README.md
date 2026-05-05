@@ -348,6 +348,74 @@ Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregi
 
 ---
 
+## 🎨 二次开发 / 自定义主题
+
+Pulse 的前端是独立的 Astro 项目，**完全和后端解耦**。如果你想 fork 出一个自己的主题（换皮、加组件、改交互），只需要动 `server/web/` 下面的代码，Go 后端不需要改一行。
+
+### 主题代码在哪里
+
+```
+server/web/
+├── src/
+│   ├── pages/                    # 三个入口路由
+│   │   ├── index.astro           #   /        公开仪表盘
+│   │   ├── admin.astro           #   /admin   管理面板
+│   │   └── login.astro           #   /login   登录页
+│   ├── components/               # 9 个可复用组件，全部 Astro + Tailwind
+│   │   ├── SystemTable.astro     #     主表 + TCPing 折线图
+│   │   ├── AdminDashboard.astro  #     管理面板表格 + 模态框
+│   │   ├── NavBar.astro / Footer.astro / LoadingState.astro
+│   │   ├── LoginForm.astro / Icon.astro
+│   │   └── SystemTableHeader.astro / SystemTableHeaderRow.astro
+│   ├── styles/global.css         # 全局动画 + 自定义 Tailwind 工具
+│   └── utils/i18n.ts             # 中英文词条（48 条）；新增语言只需扩展 Language 类型
+├── tailwind.config.mjs           # 颜色调色板 + dark mode
+└── astro.config.mjs              # Astro / Vite 配置（含 dev 代理，下面会讲）
+```
+
+### 本地开发工作流
+
+```bash
+git clone https://github.com/<你的用户名>/Pulse.git
+cd Pulse/server
+
+# 终端 1：跑后端（监听 :8080）
+go run .
+
+# 终端 2：跑前端（监听 :4321，自动热重载）
+cd web
+npm install
+npm run dev
+```
+
+打开 `http://localhost:4321` 即可看到带热重载的页面。`astro.config.mjs` 已经把 `/api/*` 与 `/healthz` 代理到 `:8080`，**不用改任何 fetch 代码**。如果想对接远程后端（例如自己 VPS 上的实例）：
+
+```bash
+PULSE_API_BASE=https://your-pulse-instance.example.com npm run dev
+```
+
+### 出包 & 部署
+
+```bash
+cd server/web
+npm run build       # 产出 dist/，含 _astro/ 哈希资产
+```
+
+* **Docker 模式**：`Dockerfile` 已经替你跑 `npm run build`，并把产物放到 nginx 里。
+* **独立二进制模式**：`go build` 时 Go 用 `embed.FS` 把 `web/dist/` 整个嵌进去 —— 重新编译一下就把你的新主题烤进了二进制。
+
+### 不需要碰的部分
+
+* `server/main.go` & `server/store.go`：后端 API、鉴权、bbolt 存储，已经过几轮安全/性能审计，对主题开发完全透明。
+* `client/`：跑在被监控机器上的 Go agent 代码。
+* `scripts/`、`install-pulse-server.sh`、`docker/`：部署 / 运维相关。
+
+### 上游协作
+
+只是换皮的话保留独立 fork 就好。如果你做出来的功能有普适价值（一个新组件、一个新过滤器、一个 bug 修复），欢迎提 PR 回主仓库。
+
+---
+
 ## 🚚 迁移到另一台服务器
 
 Pulse 服务端的全部状态（系统列表、共享密钥、TCPing 历史、管理员密码、面板配置……）都只保存在 **一个 bbolt 文件** 里。仓库提供的 `scripts/migrate.sh` 把整个流程打包成 **一条命令**：在新服务器上跑一次，就能从旧服务器把所有数据搬过来，**旧服务器全程不停机、零数据丢失**。

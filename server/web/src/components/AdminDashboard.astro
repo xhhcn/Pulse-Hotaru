@@ -3,6 +3,36 @@ import Icon from './Icon.astro';
 
 const { apiBase: apiBaseProp } = Astro.props ?? {};
 const apiBase = apiBaseProp ?? '';
+
+// Build the custom-CSS/JS textarea placeholder in the frontmatter rather
+// than inlining the literal HTML attribute. The dev-time dependency
+// scanner that astro dev runs (via Vite/esbuild) does a regex pass for
+// script blocks in .astro source. If it sees the matching open and
+// close tags anywhere -- even inside a JS string constant -- it pulls
+// every line between them as JS and chokes on whatever that turns out
+// to be. The production astro build path uses a different pipeline and
+// was never affected, but devs running npm run dev would hit a crash
+// on first start. Splitting the angle bracket off into its own
+// concatenation keeps the rendered output identical while keeping the
+// scanner blind to the example tags. Note: this same constraint
+// applies to comments in this file -- never put the matching tags
+// literally next to each other; reference them via parts instead.
+const lt = '<';
+const customCodePlaceholder = [
+	'/* Custom CSS */',
+	lt + 'style>',
+	"body { font-family: 'Arial', sans-serif; }",
+	'#all-systems-title { color: #ff6b6b; }',
+	lt + '/style>',
+	'',
+	'/* Inline JavaScript */',
+	lt + 'script>',
+	"console.log('Custom code loaded!');",
+	lt + '/script>',
+	'',
+	'/* External Libraries */',
+	lt + 'script src="https://cdn.jsdelivr.net/...">' + lt + '/script>',
+].join('\n');
 ---
 
 <div class="mx-auto max-w-7xl">
@@ -427,7 +457,7 @@ const apiBase = apiBaseProp ?? '';
           <textarea
             id="navbar-custom-code-input"
             rows="10"
-            placeholder="/* Custom CSS */&#10;<style>&#10;body { font-family: 'Arial', sans-serif; }&#10;#all-systems-title { color: #ff6b6b; }&#10;</style>&#10;&#10;/* Inline JavaScript */&#10;<script>&#10;console.log('Custom code loaded!');&#10;</script>&#10;&#10;/* External Libraries */&#10;<script src=&quot;https://cdn.jsdelivr.net/...&quot;></script>"
+            placeholder={customCodePlaceholder}
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] font-mono"
           ></textarea>
           <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="customCodeHint">Custom CSS and JavaScript will be applied to all pages. Use &lt;style&gt; for CSS or &lt;script&gt; for JS</p>

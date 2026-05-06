@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Pulse Server Standalone Installation Script
-# This script installs Pulse Server as a standalone binary with systemd service
+# Pulse-Hotaru Server Standalone Installation Script
+# This script installs Pulse-Hotaru Server as a standalone binary with systemd service
 
 set -e
 
@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Configuration
 INSTALL_DIR="/opt/pulse"
 SERVICE_NAME="pulse-server"
-GITHUB_REPO="xhhcn/Pulse"
+GITHUB_REPO="xhhcn/Pulse-Hotaru"
 VERSION="latest"  # Can be changed to specific version like "v1.2.3"
 
 # Print colored message

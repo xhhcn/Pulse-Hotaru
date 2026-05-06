@@ -144,7 +144,7 @@ trap cleanup_on_exit EXIT
 # a private temp dir and use them from there. Zero-effort for the
 # user, and the downloaded copies are cleaned up on exit.
 if [[ ! -x "$SCRIPT_DIR/backup.sh" || ! -x "$SCRIPT_DIR/restore.sh" ]]; then
-  base="${PULSE_SCRIPT_BASE:-https://raw.githubusercontent.com/xhhcn/Pulse/main/scripts}"
+  base="${PULSE_SCRIPT_BASE:-https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/scripts}"
   echo "→ helper scripts not found next to $0 — fetching from $base" >&2
   boot="$(mktemp -d "${TMPDIR:-/tmp}/pulse-migrate-boot.XXXXXX")"
   chmod 700 "$boot"

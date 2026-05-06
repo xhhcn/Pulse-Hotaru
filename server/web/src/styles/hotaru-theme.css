@@ -492,13 +492,36 @@ body.hotaru-theme {
 /* Extra-extreme tier (narrower than upstream):
    preserve RAM, hide CPU, and let node name show fully. */
 @media (max-width: 420px) {
+  /* Let remaining columns share width predictably so the last
+     memory column stays inside viewport even with long names. */
+  .hotaru-table {
+    table-layout: fixed;
+  }
+  .hotaru-table thead th,
+  .hotaru-table tbody tr.hotaru-row td {
+    padding: 0.56em 0.5em;
+  }
+
   .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) { display: none; } /* cpu */
+  .hotaru-table th:nth-child(1), .hotaru-table td:nth-child(1) { width: 23%; }
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) { width: 37%; }
+  .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6) { width: 24%; }
+  .hotaru-table th:nth-child(9), .hotaru-table td:nth-child(9) { width: 16%; }
+
   .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) {
     max-width: none;
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
     word-break: break-word;
+  }
+  .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6),
+  .hotaru-table th:nth-child(9), .hotaru-table td:nth-child(9) {
+    min-width: 0;
+    max-width: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

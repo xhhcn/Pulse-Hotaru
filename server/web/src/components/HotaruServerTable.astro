@@ -80,6 +80,23 @@
       return locationToZh(s);
     }
 
+    /* Compact OS label for the "系统" column.
+       -------------------------------------
+       Probe payloads can carry long distro/version strings
+       (e.g. "macOS Sequoia 15.7.4"). In the table this makes the
+       system column visually noisy and breaks alignment against
+       shorter labels ("Linux", "Windows"). We keep the raw value
+       in backend data, but normalize a few high-frequency families
+       for display:
+         - "macOS ..." / "Mac OS ..." / "OS X ..." → "macOS"
+       Everything else passes through unchanged. */
+    function normalizeSystemLabel(osRaw) {
+      const s = String(osRaw || '').trim();
+      if (!s) return '';
+      if (/^(mac\s*os|macos|os\s*x)\b/i.test(s)) return 'macOS';
+      return s;
+    }
+
     /* Short byte formatter — single-letter SI/IEC suffix, no
        trailing "/s". The "B/s" and "(B)" units are already in the
        column headers, so the cells stay terse like in hotaru:
@@ -1699,7 +1716,7 @@
 
       /* 系统：优先 OS 名称（如 Debian），无则虚拟化类型（如 KVM），与
          Pulse 探针上报顺序一致。                                      */
-      const sysText = item.os || item.virtualization_type || 'Unknown';
+      const sysText = normalizeSystemLabel(item.os) || item.virtualization_type || 'Unknown';
       const sysKey = 'sys:' + sysText;
       if (r.type.dataset.sysKey !== sysKey) {
         r.type.textContent = sysText;

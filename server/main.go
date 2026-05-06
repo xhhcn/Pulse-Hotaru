@@ -3375,6 +3375,13 @@ func portFromEnv() string {
 // formatUptime formats uptime in seconds to human-readable string
 // < 1 day: shows hours (e.g., "5h", "23h")
 // >= 1 day: shows days (e.g., "2d", "15d")
+//
+// The backend deliberately emits the canonical English short form
+// here; the hotaru-themed frontend translates "Xd"/"Yh" into
+// "X天"/"Y小时" at render time. Keeping the wire format stable
+// preserves backwards compatibility with existing on-disk metric
+// snapshots and any external consumer of /api/metrics that may
+// have been written against the original Pulse contract.
 func formatUptime(seconds int64) string {
 	if seconds < 0 {
 		return "0h"
@@ -3383,12 +3390,10 @@ func formatUptime(seconds int64) string {
 	hours := seconds / 3600
 	days := hours / 24
 
-	// If less than 1 day, show hours
 	if days < 1 {
 		return fmt.Sprintf("%dh", hours)
 	}
 
-	// Otherwise show days
 	return fmt.Sprintf("%dd", days)
 }
 
@@ -3601,9 +3606,11 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			Text:        config.Text,
 			Logo:        config.Logo,
 			CustomCSS:   config.CustomCSS,   // Public: used for page styling
-			CustomJS:    config.CustomJS,     // Public: used for page functionality
-			ShowTraffic: config.ShowTraffic,  // Public: controls traffic display in detail section
-			ShowGlass:   config.ShowGlass,    // Public: controls glassmorphism effect
+			CustomJS:    config.CustomJS,    // Public: used for page functionality
+			ShowTraffic: config.ShowTraffic, // Public: controls traffic display in detail section
+			ShowGlass:   config.ShowGlass,   // Public: controls glassmorphism effect
+			HideTags:    config.HideTags,    // Public: hides tag row on the homepage
+			HideCards:   config.HideCards,   // Public: hides the homepage card grid section
 			// SharedSecret is intentionally omitted for security
 		}
 		writeJSON(w, http.StatusOK, publicConfig)
@@ -3992,10 +3999,11 @@ func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegi
 		}
 	}
 
-	// Notify every connected browser that the tcping config changed so
-	// they can invalidate their cached copy (cachedTCPingConfig in
-	// SystemTable.astro) and redraw expanded charts without a manual
-	// page reload. The payload is deliberately minimal — just a signal.
+	// Notify every connected browser that the tcping config changed
+	// so they can invalidate their cached copy (cachedTcpingConfig in
+	// HotaruServerTable.astro) and redraw expanded charts without a
+	// manual page reload. The payload is deliberately minimal — just
+	// a signal.
 	// Right after this we also broadcast a fresh metrics snapshot so the
 	// pruned tcping_data reaches the frontend in the same SSE flush.
 	if broker != nil {

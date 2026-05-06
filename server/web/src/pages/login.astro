@@ -1,237 +1,81 @@
 ---
 import '../styles/global.css';
+import '../styles/hotaru-theme.css';
 import LoginForm from '../components/LoginForm.astro';
 
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
 ---
 
-<html lang="en" class="dark overflow-x-hidden" data-api-base={apiBase}>
+<!--
+  Login page — fully aligned with the hotaru theme:
+    • light only (no dark mode classes anywhere)
+    • Chinese only (no language toggle, no English fallback)
+    • no navbar (intentional — login is a single-purpose page)
+    • white card on hotaru's tiled bg, same drop shadow / radius
+      vocabulary as the public dashboard cards
+-->
+<html lang="zh-CN" class="overflow-x-hidden" data-api-base={apiBase}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Sign in to Pulse Monitor." />
+    <meta name="description" content="Pulse Monitor 管理员登录" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="googlebot" content="noindex, nofollow" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="format-detection" content="telephone=no" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
-    <meta property="og:title" content="Login · Pulse Monitor" />
-    <meta property="og:description" content="Sign in to Pulse Monitor." />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pulse Monitor" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Login · Pulse Monitor" />
-    <meta name="twitter:description" content="Sign in to Pulse Monitor." />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#fafafa" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
-    <title>Login · Pulse Monitor</title>
-    <!-- View Transitions API styling for smooth theme switching -->
-    <style>
-      /* View Transitions API support for smooth cross-fade */
-      ::view-transition-old(root),
-      ::view-transition-new(root) {
-        animation-duration: 0.15s;
-        animation-timing-function: ease-in-out;
-      }
-      
-      ::view-transition-old(root) {
-        animation-name: fade-out;
-      }
-      
-      ::view-transition-new(root) {
-        animation-name: fade-in;
-      }
-      
-      @keyframes fade-out {
-        from { opacity: 1; }
-        to { opacity: 0; }
-      }
-      
-      @keyframes fade-in {
-        from { opacity: 0; }
-        to { opacity: 1; }
-      }
-      
-      /* Disable all transitions when theme-switching class is present */
-      html.theme-switching *,
-      html.theme-switching *::before,
-      html.theme-switching *::after {
-        transition: none !important;
-        animation-duration: 0s !important;
-      }
-    </style>
-    <!-- Initialize language and theme before page render to prevent FOUC -->
+    <title>登录 · Pulse Monitor</title>
     <script is:inline>
-      (function() {
-        // Get system language (convert to 'zh' or 'en')
-        function getSystemLanguage() {
-          const sysLang = navigator.language || (navigator.languages && navigator.languages[0]) || 'en';
-          // Check if system language is Chinese (zh, zh-CN, zh-TW, etc.)
-          if (sysLang.toLowerCase().startsWith('zh')) {
-            return 'zh';
-          }
-          return 'en';
-        }
-        
-        // Get system theme
-        function getSystemTheme() {
-          if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            return 'dark';
-          }
-          return 'light';
-        }
-        
-        // Get language preference (use system language as default)
-        const storedLang = localStorage.getItem('preferred-language');
-        const lang = storedLang || getSystemLanguage();
-        document.documentElement.lang = lang;
-        
-        // Get theme preference (use system theme as default)
-        const storedTheme = localStorage.getItem('preferred-theme');
-        const theme = (storedTheme === 'dark' || storedTheme === 'light') ? storedTheme : getSystemTheme();
-        
-        // Apply theme immediately to html
-        const html = document.documentElement;
-        if (theme === 'dark') {
-          html.classList.add('dark');
-          html.classList.remove('light');
-        } else {
-          html.classList.add('light');
-          html.classList.remove('dark');
-        }
-        
-        // Apply theme to body when it's available
-        function applyThemeToBody() {
+      (function () {
+        document.documentElement.lang = 'zh-CN';
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+        function applyBody() {
           const body = document.body;
           if (body) {
-            if (theme === 'dark') {
-              body.classList.add('dark');
-              body.classList.remove('light');
-            } else {
-              body.classList.add('light');
-              body.classList.remove('dark');
-            }
+            body.classList.add('light');
+            body.classList.remove('dark');
           } else {
-            // Body not ready yet, try again
-            requestAnimationFrame(applyThemeToBody);
+            requestAnimationFrame(applyBody);
           }
         }
-        applyThemeToBody();
-        
-        // Preload navbar config and update page title & favicon
+        applyBody();
+
+        // Pull custom title / favicon if the operator configured them.
+        // Custom CSS / JS injection is intentionally NOT loaded on the
+        // login page — the login screen must remain a known-trusted
+        // surface even if an admin's customCSS would otherwise reskin
+        // it (avoids look-alike credential phishing).
         const apiBase = window.location.origin;
         fetch(`${apiBase}/api/navbar/config`)
-          .then(res => res.ok ? res.json() : null)
-          .then(config => {
-            if (config) {
-              // Update page title with navbar text
-              if (config.text) {
-                document.title = `Login - ${config.text}`;
-              }
-              // Update favicon with custom logo
-              if (config.logo) {
-                const favicon = document.querySelector('link[rel="icon"]');
-                if (favicon) {
-                  favicon.href = config.logo;
-                  // Auto-detect image type based on URL extension
-                  const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
-                  if (ext === 'svg') {
-                    favicon.type = 'image/svg+xml';
-                  } else if (ext === 'png') {
-                    favicon.type = 'image/png';
-                  } else if (ext === 'jpg' || ext === 'jpeg') {
-                    favicon.type = 'image/jpeg';
-                  } else if (ext === 'ico') {
-                    favicon.type = 'image/x-icon';
-                  } else {
-                    // Remove type attribute to let browser auto-detect
-                    favicon.removeAttribute('type');
-                  }
-                }
+          .then((res) => (res.ok ? res.json() : null))
+          .then((config) => {
+            if (!config) return;
+            if (config.text) {
+              document.title = `登录 · ${config.text}`;
+            }
+            if (config.logo) {
+              const favicon = document.querySelector('link[rel="icon"]');
+              if (favicon) {
+                favicon.href = config.logo;
+                const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
+                if (ext === 'svg') favicon.type = 'image/svg+xml';
+                else if (ext === 'png') favicon.type = 'image/png';
+                else if (ext === 'jpg' || ext === 'jpeg') favicon.type = 'image/jpeg';
+                else if (ext === 'ico') favicon.type = 'image/x-icon';
+                else favicon.removeAttribute('type');
               }
             }
           })
-          .catch(() => {
-            // Silently fail, use default title
-          });
-      })();
-    </script>
-    <!-- Load custom CSS and JS from backend (all users see it) -->
-    <script is:inline>
-      (function() {
-        // Use synchronous XMLHttpRequest to load config BEFORE page renders
-        // This ensures external scripts load early enough for DOMContentLoaded
-        try {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', '/api/navbar/config', false); // false = synchronous
-          xhr.send();
-          
-          if (xhr.status === 200) {
-            var config = JSON.parse(xhr.responseText);
-            
-            // Apply glassmorphism effect immediately (before render)
-            if (config.show_glass) {
-              document.documentElement.classList.add('glass-enabled');
-            }
-            
-            // Inject CSS if exists
-            if (config.custom_css && config.custom_css.trim()) {
-              var style = document.createElement('style');
-              style.textContent = config.custom_css;
-              document.head.appendChild(style);
-            }
-            
-            // Inject JS if exists
-            if (config.custom_js && config.custom_js.trim()) {
-              var customJS = config.custom_js;
-              
-              // Check if it's a complete <script> tag (external or with attributes)
-              var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
-              var scriptMatches = [];
-              var match;
-              while ((match = scriptTagRegex.exec(customJS)) !== null) {
-                scriptMatches.push({attrs: match[1], content: match[2]});
-              }
-              
-              if (scriptMatches.length > 0) {
-                // Has <script> tags - parse and inject each
-                scriptMatches.forEach(function(scriptData) {
-                  var script = document.createElement('script');
-                  
-                  // Check if it has src attribute (external script)
-                  var srcMatch = scriptData.attrs.match(/src=["']([^"']+)["']/);
-                  if (srcMatch) {
-                    script.src = srcMatch[1];
-                    // Force synchronous loading for external scripts
-                    script.async = false;
-                    script.defer = false;
-                  } else if (scriptData.content.trim()) {
-                    // Inline script
-                    script.textContent = scriptData.content;
-                  }
-                  
-                  if (script.src || script.textContent) {
-                    document.head.appendChild(script);
-                  }
-                });
-              } else {
-                // Plain JS code without tags - inject directly
-                var script = document.createElement('script');
-                script.textContent = customJS;
-                document.head.appendChild(script);
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to load custom styles:', err);
-        }
+          .catch(() => {});
       })();
     </script>
   </head>
-  <body class="min-h-screen bg-[#fafafa] dark:bg-[#151515] text-[#151515] dark:text-[#f5f5f5]">
+  <body class="hotaru-theme light">
     <LoginForm />
   </body>
 </html>

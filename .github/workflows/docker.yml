@@ -13,7 +13,7 @@ on:
 
 env:
   DOCKERHUB_USERNAME: xhh1128
-  IMAGE_NAME: xhh1128/pulse
+  IMAGE_NAME: xhh1128/pulse-hotaru
 
 jobs:
   build:
@@ -91,129 +91,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          # Client builds only require Go 1.15, but we use 1.22 to match
-          # the server toolchain and allow rebuilding anything in-repo.
-          go-version: '1.22'
-
-      - name: Build Client Binaries
-        # Build the whole client package (`.`), not `main.go` alone.
-        # The client has been split into main.go + hwprobe_*.go/.s +
-        # linux_kernel{,_other}.go (selected by GOOS/GOARCH build tags),
-        # so single-file builds fail with "undefined: readSysinfo" etc.
-        run: |
-          cd client
-          echo "Building client binaries..."
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o probe-client .
-          chmod +x probe-client
-          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-arm64 .
-          chmod +x probe-client-arm64
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o probe-client-darwin-amd64 .
-          chmod +x probe-client-darwin-amd64
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o probe-client-darwin-arm64 .
-          chmod +x probe-client-darwin-arm64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o probe-client.exe .
-          echo "Client binaries built successfully"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: Release v${{ steps.version.outputs.version }}
-          files: |
-            client/probe-client
-            client/probe-client-arm64
-            client/probe-client-darwin-amd64
-            client/probe-client-darwin-arm64
-            client/probe-client.exe
-            client/install.sh
+          name: Pulse-Hotaru v${{ steps.version.outputs.version }}
           body: |
-            ## 🚀 Release v${{ steps.version.outputs.version }}
+            ## Pulse-Hotaru v${{ steps.version.outputs.version }}
 
-            UI stability pass on top of v1.3.6 — three independently-reported visual bugs fixed and the install/uninstall docs synced with what the scripts actually drop on disk. **No backend or wire-protocol changes; clients from v1.3.6 keep working.**
+            Hotaru-themed Pulse distribution release.
 
-            ### 🛠️ Fixes
+            ### Included in this release
+            - Multi-arch Docker image: `xhh1128/pulse-hotaru:${{ steps.version.outputs.version }}`
+            - Multi-arch Docker image: `xhh1128/pulse-hotaru:latest`
+            - Linux standalone server binaries are uploaded by `build-server-standalone.yml`
 
-            **TCPing chart no longer "reloads itself"**
-            - `loadTCPingHistory` now returns `{ __error: true }` on transient fetch failures instead of an empty object that looked identical to a "no samples yet" response. Brief 502s from a flaky reverse proxy or a server restart used to tear the existing chart down and flash "No data" before the next 30 s tick repainted; now the live chart is preserved across hiccups and only the *initial* load surfaces the empty state.
-            - Added a per-system re-entrancy guard (`tcpingIncrementalInFlight`) so the per-row 30 s poll and the SSE `metric_updated` push can't race two fetches onto the same canvas — that race was the most reproducible cause of the "reload" flicker on slow networks.
-            - `cleanupTCPingChart` and `handleTCPingConfigUpdated` clear the guard, so a real config change isn't gated by a stale "fetch in progress" entry.
+            ### Compatibility
+            - Server binary name, service name, API protocol, and data path remain Pulse-compatible.
+            - Existing `/opt/pulse/data/metrics.db` can be reused directly without migration.
 
-            **Admin server list no longer jitters every 3 s**
-            - `formatBytes` now always emits two decimals — `"1.00 KiB" / "1.50 KiB" / "1.55 KiB"` — instead of stripping trailing zeros, so the traffic column stays the same glyph count between pushes.
-            - `.traffic-info-container` is pinned with `font-variant-numeric: tabular-nums` and a 110 px `min-width`; combined with stable formatting that fully eliminates the left/right drift that used to drag the edit / copy buttons sideways.
-            - `editBtn.dataset.system` is no longer rewritten on every 3 s tick. A tiny `data-edit-key` digest of the fields the edit modal actually reads (`id / name / secret / tags / ipv4 / ipv6 / os / cpu_model / virtualization_type`) gates the rewrite, so volatile traffic counters no longer invalidate the row's CSS cascade — visibly smoother in glassmorphism mode and on lower-end devices.
-
-            **Public dashboard numeric stability**
-            - Added a scoped `tabular-nums` rule for every data-bearing cell on both dashboards (`.system-row .text-right`, `.system-row span.font-medium`, `[data-tcping-{avg,loss}]`, `[data-traffic-tag] .traffic-value`, `[data-speed-tag] .speed-value`, `[data-detail-{speed,total}]`, total-net-{in,out}). Body prose stays proportional so modals and tooltips read naturally.
-
-            **Admin list motion & glass-mode paint cost (follow-up polish in this tag)**
-            - Removed the per-row stagger entrance and the scale-in animation on newly inserted rows — the outer page already runs `.animate-content`, and stacking another timed wave on top clashed visually with SSE refreshes.
-            - `.draggable-item` now transitions **colors only** (`transition-colors`), not `transition-all`, so routine cell updates don’t constantly re-sample `backdrop-filter` in glass mode.
-
-            **Public table first paint**
-            - The `data-row-in` stagger after the initial HTML paint is gated with a once-per-session latch. Transient empty metric snapshots used to clear the in-memory cache and replay the entire top-to-bottom fade when data returned — fixed.
-
-            **TCPing chart & narrow screens**
-            - After the debounced window `resize` handler (and on `orientationchange`), every live Chart.js TCPing instance receives an explicit `chart.resize()` so mobile Safari/WebViews keep canvas width aligned with the horizontally scrollable table.
-            - TCPing target tab buttons use `touch-action: manipulation` (with tap highlight suppressed) for snappier switching on phones.
-
-            **TCPing chart open latency — server-side and client-side**
-            - `Store.GetTCPingResults` now seeks bbolt's cursor directly to the 24h cutoff prefix instead of `bucket.ForEach`-ing the entire history bucket. The keys are already `<unix-seconds>_<client>_<target>` (10-digit timestamp, lexicographic = numeric until 2286), so the seek lands on the first in-window record and walks forward from there. On databases with weeks of multi-client tcping history this collapses the per-request cost from "JSON-unmarshal every record ever written" to "unmarshal records in the 24-hour window", typically a 10–100× speedup. The same trick was already used by `CleanupOldTCPingResults` — the read path now matches.
-            - The 50 ms `setTimeout` that gated chart initialization on row expansion is replaced with a single `requestAnimationFrame` so the fetch starts ~50 ms earlier on average without losing the "let the expand animation paint first" guarantee.
-            - The per-target chart payload is now built in a single linear pass that parses each `result.timestamp` exactly once — old code did `.filter` + `.sort` + `.forEach` per target, parsing every timestamp three times. Min/max time are tracked as actual extrema (not "first / last seen") so X-axis range stays correct even when a fork swaps in a backend with weaker ordering guarantees.
-
-            **Final pass on data-fetch & first-paint hot path (this build)**
-            - **Server cache now stores pre-encoded JSON bytes.** `tcpingCacheEntry` used to hold the full `TCPingHistoryResponse` struct; every cache hit therefore re-ran `json.Encoder.Encode` against the same data. The cache now stores the encoded body (with the same trailing `\n` `Encoder.Encode` would emit, so the wire format on hit and miss is byte-identical) and serves it via a `writeCachedJSON` helper that just `Write`s the bytes — measurably reduces CPU under load, especially on busy multi-client deployments where many users may open the same chart inside the 2-min cache window.
-            - **Incremental update merge dropped from O(N log N) to O(K) per dataset per tick.** The previous code did `currentDataset.data.filter(within24h).sort(byTime)` after each merge — reasonable when datasets are small but it ran every 3–30 s for every open chart. Because the server returns sorted data and we only ever append at the tail and expire from the head, the new code does two short directed walks (find tail-newer-than-last, drop expired-prefix) and `splice`s in place. With a chart that already holds a few thousand points, per-tick cost becomes effectively constant; the array reference is preserved so Chart.js sees the mutation transparently and the post-merge min/max recompute / `chart.update('none')` / stats refresh remain unchanged.
-            - **Chart.js entrance animation kept at the library default** — the data lands on the canvas well before the curve animation finishes, so capping the animation didn't actually shorten the user-visible "first sample on screen" time, only the polish.
-
-            ### 📚 Docs
-
-            `README.md` / `README_EN.md` install & uninstall sections now match exactly what the scripts drop on disk:
-            - **Server uninstall** removes `/opt/pulse/scripts/` and the three `pulse-{backup,restore,migrate}` CLI shortcuts in `/usr/local/bin/`, with separate "keep data" vs "wipe everything" flavours.
-            - **Linux client uninstall** stops & removes the `pulse-client-update.timer` + `.service` alongside `pulse-client.service`, with a warning about not clobbering co-located server data.
-            - **macOS client uninstall** prose tightened to cover the `com.pulse.client.update` LaunchDaemon installed by the auto-updater.
-
-            ### 📦 Docker Images
-            - `xhh1128/pulse:${{ steps.version.outputs.version }}`
-            - `xhh1128/pulse:latest`
-
-            ### 📥 Downloads
-
-            **Client binaries**
-            | Platform | File |
-            |----------|------|
-            | Linux amd64 | `probe-client` |
-            | Linux arm64 | `probe-client-arm64` |
-            | macOS Intel (amd64) | `probe-client-darwin-amd64` |
-            | macOS Apple Silicon (arm64) | `probe-client-darwin-arm64` |
-            | Windows amd64 | `probe-client.exe` |
-            | Install Script (Linux + macOS) | `install.sh` |
-
-            **Server standalone binaries** (uploaded by the standalone workflow)
-            | Platform | File |
-            |----------|------|
-            | Linux amd64 | `pulse-server-standalone-linux-amd64` |
-            | Linux arm64 | `pulse-server-standalone-linux-arm64` |
-
-            **Quick Install (Linux & macOS):**
-            ```bash
-            curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id YOUR_ID --server http://YOUR_SERVER:8080
-            ```
-
-            **One-click migration to a new host:**
-            ```bash
-            PASSWORD="$OLD_ADMIN_PW" TOKEN="$NEW_ADMIN_PW" \
-              bash scripts/migrate.sh --from https://old.example.com --to https://new.example.com
-            ```
-
-            ### 📝 Cumulative changes since v1.3.5
-
-            v1.3.7 builds directly on v1.3.6, which delivered the one-click migration & backup story (`pulse-{backup,restore,migrate}` CLI), full macOS client parity (Apple Silicon & Intel CPU model / cores / freq / mem / swap / disk / net), the cross-fade auth overlay, glassmorphism theme polish, the SEO/metadata pass, and the standalone server's `Cache-Control` parity with the Docker/Nginx build. See the [v1.3.6 release notes](https://github.com/xhhcn/Pulse/releases/tag/v1.3.6) for the full list — every fix below applies on top of those.
+            ### Client binaries
+            - Pulse-Hotaru does not publish separate client binaries.
+            - Please continue using the official Pulse client installer from:
+              `https://github.com/xhhcn/Pulse`
           draft: false
           prerelease: false

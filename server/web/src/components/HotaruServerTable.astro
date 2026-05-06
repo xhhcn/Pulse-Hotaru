@@ -1,0 +1,2102 @@
+---
+/**
+ * HotaruServerTable.astro
+ *
+ * Self-contained 10-column server table for the public dashboard.
+ * Original Astro implementation that fetches `/api/metrics` and
+ * renders a hotaru-flavoured layout: status pill / name / type /
+ * location / uptime / network / traffic / cpu / mem / disk, with
+ * click-to-expand row showing memory + swap + disk detail.
+ *
+ * No navigation bar, no dark mode, no legacy table dependency — this
+ * is the "stripped to essentials" view the user asked for.
+ *
+ * The table also dispatches `pulse:metrics-updated` so HotaruCardGrid
+ * (rendered below) can re-render off the same payload without issuing
+ * a duplicate request.
+ */
+---
+
+<!-- Hotaru's TheError equivalent. In hotaru it's `v-show="!servers"`,
+     visible until the first axios.get returns. We deviate slightly:
+     start hidden so the page doesn't look "stuck reloading" on first
+     paint, then show only when a fetch attempt actually fails (same
+     intent as hotaru's design — alert the user something is wrong).
+     Text is hardcoded zh-CN equivalent of hotaru's TheError.vue.    -->
+<p class="hotaru-error" id="hotaru-error" hidden>
+  若长时间出现此消息，请确保您已启用 JavaScript！<br>否则云监控主服务（服务端）未启动或已关闭。
+</p>
+
+<div class="hotaru-table-wrap" id="hotaru-table-wrap">
+  <table class="hotaru-table" id="hotaru-table">
+    <thead>
+      <tr>
+        <th>运行状态</th>
+        <th>节点名</th>
+        <th>系统</th>
+        <th>服务器位置</th>
+        <th>在线时间</th>
+        <th>网络(B/s) ↓|↑</th>
+        <th>流量(B) ↓|↑</th>
+        <th>CPU</th>
+        <th>内存</th>
+        <th>硬盘</th>
+      </tr>
+    </thead>
+    <tbody id="hotaru-tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  import { locationToZh } from '../data/countryZh';
+
+  (function () {
+    const tbody = document.getElementById('hotaru-tbody');
+    const errEl = document.getElementById('hotaru-error');
+    if (!tbody) return;
+
+    /* ------------------------------------------------------------------
+       Hotaru is fundamentally a Chinese-only theme — column headers,
+       status labels, expand-row labels, error text, and update-time
+       are all hardcoded Chinese in the original. We mirror that:
+       no language switching for any user-visible string in this view.
+       ------------------------------------------------------------------ */
+    const t = (zh, _en) => zh;
+
+    /* ------------------------------------------------------------------
+       Helpers
+       ------------------------------------------------------------------ */
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    /** Table "服务器位置" — zh 国名；空或 unknown → 英文 Unknown */
+    function locationCellText(raw) {
+      const s = String(raw || '').trim();
+      if (!s) return 'Unknown';
+      if (/^unknown$/i.test(s)) return 'Unknown';
+      return locationToZh(s);
+    }
+
+    /* Short byte formatter — single-letter SI/IEC suffix, no
+       trailing "/s". The "B/s" and "(B)" units are already in the
+       column headers, so the cells stay terse like in hotaru:
+       "13K", "1.4M", "138.36G". The pipe " | " separator is added
+       at the cell level.                                          */
+    function fmtBytesShort(n) {
+      const v = Number(n) || 0;
+      if (v < 1024)              return v.toFixed(0) + 'B';
+      if (v < 1048576)           return (v / 1024).toFixed(0) + 'K';
+      if (v < 1073741824)        return (v / 1048576).toFixed(1) + 'M';
+      if (v < 1099511627776)     return (v / 1073741824).toFixed(2) + 'G';
+      return (v / 1099511627776).toFixed(2) + 'T';
+    }
+    function fmtRateShort(mbps) {
+      const v = Number(mbps) || 0;
+      return fmtBytesShort(v * 1024 * 1024);
+    }
+    function levelOf(p) {
+      const v = Number(p) || 0;
+      if (v >= 90) return 'bad';
+      if (v >= 70) return 'warn';
+      return 'ok';
+    }
+
+    /* Distinguish "currently offline but had data before" from
+       "brand new server that has never reported anything yet". The
+       agent populates cpu_model / memory_info / disk_info on its
+       first hello, so all three being empty is a strong signal
+       that no agent has ever spoken to us for this entry — usually
+       a row that was just added in the admin panel and is waiting
+       for the agent to come online for the first time.
+
+       The two cases want very different rendering:
+         * Offline-with-history → Pulse style: keep showing the last
+           reported %, paint the bar red, leave the expand row
+           openable so the user can inspect the snapshot.
+         * Pristine             → hotaru style: 100 % red bar with
+           "维护中" text (no useful percentage to display anyway),
+           no expand row (nothing to put in it).                   */
+    function isPristineItem(item) {
+      if (!item) return true;
+      return !item.cpu_model && !item.memory_info && !item.disk_info;
+    }
+
+    /* ------------------------------------------------------------------
+       DOM helpers
+       ------------------------------------------------------------------
+       We build every widget as live DOM nodes (not HTML strings) so
+       updates can mutate the existing element rather than blowing
+       away a parent's innerHTML. setText / setAttr both check the
+       current value first so unchanged cells don't even touch the
+       DOM — that's what keeps "open expand rows stay open" honest.
+       ------------------------------------------------------------------ */
+    function setText(el, text) {
+      if (el.textContent !== text) el.textContent = text;
+    }
+    function setAttr(el, name, value) {
+      if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+    }
+
+    /* Localize the backend's English short-form uptime ("5h" / "160d")
+       into the Chinese form the hotaru rebuild renders ("5小时" /
+       "160天"). The backend deliberately keeps emitting the canonical
+       English values to preserve compatibility with existing on-disk
+       metric snapshots and any external API consumer; translation
+       lives here at render time so the wire format stays stable.
+       Idempotent — strings already in the Chinese form (e.g. carried
+       over from earlier prototype builds) pass through unchanged.
+       Non-matching inputs (placeholders, "–", etc.) also pass
+       through. */
+    function formatUptimeZh(value) {
+      if (typeof value !== 'string' || value.length === 0) return value;
+      const m = /^(\d+)([dh])$/.exec(value);
+      if (!m) return value;
+      return m[2] === 'd' ? (m[1] + '天') : (m[1] + '小时');
+    }
+
+    /* Progress bar widget — chunky 50×25 bar, percent text inside.
+       Returns refs so the row entry can mutate just data-level / fill
+       width / label text on each update.                            */
+    function buildBarEl() {
+      const wrap = document.createElement('span');
+      wrap.className = 'hotaru-bar';
+      wrap.dataset.level = 'ok';
+      const fill = document.createElement('i');
+      fill.style.width = '0%';
+      const lbl = document.createElement('span');
+      lbl.textContent = '0%';
+      wrap.append(fill, lbl);
+      return { wrap, fill, lbl };
+    }
+    /* Three-state bar renderer:
+
+         online                          → width = pct, text = `${pct}%`
+                                           color = ok/warn/bad (level-driven)
+         disconnected (alert + had data) → width = last pct, text = `${last_pct}%`
+                                           color = red
+         pristine (alert + no data ever) → width = 100 %, text = "维护中"
+                                           color = red
+
+       The "维护中" text is reserved for genuinely-empty pristine
+       rows where there is no last percentage to show. Disconnected
+       rows preserve their last reported percentage on the text
+       too — hotaru renders "维护中" for any offline state, but
+       that discards the diagnostic information ("memory was at
+       71 % when this server dropped") that's actually useful for
+       triaging an outage. So this is a deliberate hotaru → Pulse
+       hybrid: hotaru-style for truly empty rows, Pulse-style
+       freeze-on-disconnect for everything else.
+
+       Pristine forces 100 % width to match hotaru's
+         (cpu === undefined ? 100 : cpu)
+       rule — the value is genuinely undefined and a 0 %-wide bar
+       would read as "broken" rather than "offline".
+
+       Bar color: hotaru picks ok/warn/bad off the percentage even
+       when offline. We keep "always red on offline" instead, which
+       makes "this row is offline" readable from across the table
+       without forcing the eye to parse the bar text.            */
+    function setBar(refs, pct, isOffline, isPristine) {
+      if (isPristine) {
+        if (refs.wrap.dataset.level !== 'bad')   refs.wrap.dataset.level = 'bad';
+        if (refs.fill.style.width   !== '100%')  refs.fill.style.width   = '100%';
+        if (refs.lbl.textContent    !== '维护中') refs.lbl.textContent    = '维护中';
+        return;
+      }
+      const v   = Math.max(0, Math.min(100, Number(pct) || 0));
+      const lvl = isOffline ? 'bad' : levelOf(v);
+      const w   = v.toFixed(1) + '%';
+      const txt = v.toFixed(0) + '%';
+      if (refs.wrap.dataset.level !== lvl) refs.wrap.dataset.level = lvl;
+      if (refs.fill.style.width   !== w)   refs.fill.style.width   = w;
+      if (refs.lbl.textContent    !== txt) refs.lbl.textContent    = txt;
+    }
+
+    /* Status bar — same 50×25 shape but always 100% filled, just
+       swapping green ↔ red as the server flips online/offline.    */
+    function buildStatusBarEl() {
+      const wrap = document.createElement('span');
+      wrap.className = 'hotaru-bar hotaru-bar--status';
+      wrap.dataset.level = 'ok';
+      const fill = document.createElement('i');
+      fill.style.width = '100%';
+      const lbl = document.createElement('span');
+      lbl.textContent = '运行中';
+      wrap.append(fill, lbl);
+      return { wrap, fill, lbl };
+    }
+    function setStatusBar(refs, isOffline) {
+      const lvl = isOffline ? 'bad' : 'ok';
+      const txt = isOffline ? '维护中' : '运行中';
+      if (refs.wrap.dataset.level !== lvl) refs.wrap.dataset.level = lvl;
+      if (refs.lbl.textContent    !== txt) refs.lbl.textContent    = txt;
+    }
+
+    /* iconify SVG cache. Used by card flags (`loadFlagIcons`) and any
+       other iconify spans. "服务器位置" uses `locationToZh` text.     */
+    const iconSvgCache = new Map();
+    function fetchIconSvg(name, height) {
+      const key = `${name}@${height}`;
+      let p = iconSvgCache.get(key);
+      if (p) return p;
+      p = (async () => {
+        try {
+          const url = `https://api.iconify.design/${encodeURI(name)}.svg?height=${height}`;
+          const r = await fetch(url);
+          if (!r.ok) return null;
+          return await r.text();
+        } catch (_) {
+          return null;
+        }
+      })();
+      iconSvgCache.set(key, p);
+      return p;
+    }
+
+    /* Country → emojione-v1 flag (cards only; same map Pulse uses). */
+    const FLAG_NAMES = {
+      AD: 'andorra', AE: 'united-arab-emirates', AF: 'afghanistan',
+      AG: 'antigua-barbuda', AL: 'albania', AM: 'armenia',
+      AO: 'angola', AR: 'argentina', AT: 'austria',
+      AU: 'australia', AZ: 'azerbaijan',
+      BA: 'bosnia-herzegovina', BB: 'barbados', BD: 'bangladesh',
+      BE: 'belgium', BF: 'burkina-faso', BG: 'bulgaria',
+      BH: 'bahrain', BI: 'burundi', BJ: 'benin',
+      BN: 'brunei', BO: 'bolivia', BR: 'brazil',
+      BS: 'bahamas', BT: 'bhutan', BW: 'botswana',
+      BY: 'belarus', BZ: 'belize',
+      CA: 'canada', CD: 'congo-kinshasa', CG: 'congo-brazzaville',
+      CH: 'switzerland', CI: 'cote-d-ivoire', CL: 'chile',
+      CM: 'cameroon', CN: 'china', CO: 'colombia',
+      CR: 'costa-rica', CU: 'cuba', CV: 'cape-verde',
+      CY: 'cyprus', CZ: 'czech-republic',
+      DE: 'germany', DJ: 'djibouti', DK: 'denmark',
+      DM: 'dominica', DO: 'dominican-republic', DZ: 'algeria',
+      EC: 'ecuador', EE: 'estonia', EG: 'egypt',
+      ER: 'eritrea', ES: 'spain', ET: 'ethiopia',
+      FI: 'finland', FJ: 'fiji', FR: 'france',
+      GA: 'gabon', GB: 'united-kingdom', GD: 'grenada',
+      GE: 'georgia', GH: 'ghana', GM: 'gambia',
+      GN: 'guinea', GR: 'greece', GT: 'guatemala',
+      GW: 'guinea-bissau', GY: 'guyana',
+      HK: 'hong-kong-sar-china', HN: 'honduras', HR: 'croatia',
+      HT: 'haiti', HU: 'hungary',
+      ID: 'indonesia', IE: 'ireland', IL: 'israel',
+      IN: 'india', IQ: 'iraq', IR: 'iran',
+      IS: 'iceland', IT: 'italy',
+      JM: 'jamaica', JO: 'jordan', JP: 'japan',
+      KE: 'kenya', KG: 'kyrgyzstan', KH: 'cambodia',
+      KM: 'comoros', KN: 'st-kitts-nevis', KP: 'north-korea',
+      KR: 'south-korea', KW: 'kuwait', KZ: 'kazakhstan',
+      LA: 'laos', LB: 'lebanon', LC: 'st-lucia',
+      LI: 'liechtenstein', LK: 'sri-lanka', LR: 'liberia',
+      LS: 'lesotho', LT: 'lithuania', LU: 'luxembourg',
+      LV: 'latvia', LY: 'libya',
+      MA: 'morocco', MC: 'monaco', MD: 'moldova',
+      ME: 'montenegro', MG: 'madagascar', MK: 'north-macedonia',
+      ML: 'mali', MM: 'myanmar-burma', MN: 'mongolia',
+      MO: 'macau-sar-china', MR: 'mauritania', MT: 'malta',
+      MU: 'mauritius', MV: 'maldives', MW: 'malawi',
+      MX: 'mexico', MY: 'malaysia', MZ: 'mozambique',
+      NA: 'namibia', NE: 'niger', NG: 'nigeria',
+      NI: 'nicaragua', NL: 'netherlands', NO: 'norway',
+      NP: 'nepal', NZ: 'new-zealand',
+      OM: 'oman',
+      PA: 'panama', PE: 'peru', PG: 'papua-new-guinea',
+      PH: 'philippines', PK: 'pakistan', PL: 'poland',
+      PR: 'puerto-rico', PT: 'portugal', PY: 'paraguay',
+      QA: 'qatar',
+      RO: 'romania', RS: 'serbia', RU: 'russia', RW: 'rwanda',
+      SA: 'saudi-arabia', SB: 'solomon-islands', SC: 'seychelles',
+      SD: 'sudan', SE: 'sweden', SG: 'singapore',
+      SI: 'slovenia', SK: 'slovakia', SL: 'sierra-leone',
+      SM: 'san-marino', SN: 'senegal', SO: 'somalia',
+      SR: 'suriname', SS: 'south-sudan', ST: 'sao-tome-principe',
+      SV: 'el-salvador', SY: 'syria', SZ: 'eswatini',
+      TD: 'chad', TG: 'togo', TH: 'thailand',
+      TJ: 'tajikistan', TL: 'timor-leste', TM: 'turkmenistan',
+      TN: 'tunisia', TO: 'tonga', TR: 'turkey',
+      TT: 'trinidad-tobago', TW: 'taiwan', TZ: 'tanzania',
+      UA: 'ukraine', UG: 'uganda', UK: 'united-kingdom',
+      US: 'united-states', UY: 'uruguay', UZ: 'uzbekistan',
+      VA: 'vatican-city', VC: 'st-vincent-grenadines',
+      VE: 'venezuela', VN: 'vietnam',
+      YE: 'yemen',
+      ZA: 'south-africa', ZM: 'zambia', ZW: 'zimbabwe'
+    };
+
+    function flagIcon(country) {
+      if (!country) return null;
+      const v = String(country).trim().toUpperCase();
+      if (/^UNKNOWN$/i.test(v)) return null;
+      const m = v.match(/^[A-Z]{2}$/);
+      if (m) {
+        const name = FLAG_NAMES[v];
+        return name ? `emojione-v1:flag-for-${name}` : null;
+      }
+      const lead = v.match(/[A-Z]{2}/);
+      if (lead) {
+        const name = FLAG_NAMES[lead[0]];
+        if (name) return `emojione-v1:flag-for-${name}`;
+      }
+      return null;
+    }
+
+    async function loadFlagIcons(scope) {
+      const root = scope || document;
+      const els = root.querySelectorAll('.flag-icon[data-icon]');
+      await Promise.all(Array.from(els).map(async (el) => {
+        const name = el.dataset.icon;
+        if (!name || el.dataset.iconLoaded === name) return;
+        const svg = await fetchIconSvg(name, 32);
+        if (!svg) return;
+        el.innerHTML = svg;
+        el.dataset.iconLoaded = name;
+        const svgEl = el.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.width  = '100%';
+          svgEl.style.height = '100%';
+          svgEl.style.display = 'block';
+        }
+      }));
+    }
+
+    /* Expose for card grid: flags + zh location helper.              */
+    window.__hotaruFlag = { fetchIconSvg, loadFlagIcons, flagIcon, locationToZh };
+
+    /* ------------------------------------------------------------------
+       Auth / fetch
+       ------------------------------------------------------------------ */
+    function getApiBase() {
+      const root = document.getElementById('hotaru-table-wrap');
+      if (root && root.dataset.apiBase && root.dataset.apiBase.trim() !== '') {
+        return root.dataset.apiBase.trim();
+      }
+      return window.location.origin;
+    }
+    function authParts() {
+      const url = new URL(window.location.href);
+      const shareToken = url.searchParams.get('token');
+      const adminToken = localStorage.getItem('admin_auth_token');
+      const headers = { 'Cache-Control': 'no-store' };
+      let qs = '';
+      if (shareToken) qs = '?token=' + encodeURIComponent(shareToken);
+      else if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+      return { qs, headers };
+    }
+
+    /* ------------------------------------------------------------------
+       Smart-diff render
+       ------------------------------------------------------------------
+       We never blow away tbody.innerHTML on a data update — that
+       would collapse any open expand row, drop hovers, and force a
+       costly reflow of every row even if nothing in their cells
+       changed. Instead we keep a Map<id, entry> of live DOM nodes
+       and on each update we:
+         (a) update the cells of existing rows in place,
+         (b) insert any rows whose id is new,
+         (c) remove any rows whose id disappeared,
+         (d) reorder if `order` shifted.
+       The result: open expand rows stay open across SSE pushes, and
+       only the cells whose value actually moved touch the DOM.
+       ------------------------------------------------------------------ */
+    const rowMap = new Map();      // id → { row, detail, refs }
+    let firstRender = true;
+    /* tbody starts empty. The full-screen loader (see #hotaru-initial-
+       loader in index.astro) covers the page until first data lands.
+       inPlaceholderState only flips to true when paintPlaceholder()
+       writes an error / empty-list row.                              */
+    let inPlaceholderState = false;
+
+    /* ==================================================================
+       TCPing chart in expand row
+       ==================================================================
+       Per-row mini line chart fed by `/api/tcping/history` — lazy in
+       every direction:
+         * Chart.js + date-fns adapter only injected on first row open.
+         * `/api/tcping/config` fetched once and cached module-wide.
+         * `/api/tcping/history?client_id=<id>` fetched per row, only
+           on first open and then refreshed every 60 s while the row
+           stays open.
+         * If no targets are configured globally OR the row has no
+           samples, the section stays hidden so the expand panel still
+           reads as the original 4-line CPU/mem/swap/disk block.
+       The chart's visual language follows the rest of the hotaru
+       rebuild: hotaru-pink (#ff779a) primary, soft pastel secondary
+       palette, no chart border, hairline grid, 0.85rem labels.
+       ================================================================== */
+    /* Body font stack — mirrored from `body.hotaru-theme` in
+       hotaru-theme.css. Hoisted up here (above loadChartJs) so we
+       can install it as Chart.defaults.font.family the moment
+       Chart.js itself finishes loading, which means *every* piece
+       of default Chart.js text — not just the axis ticks and
+       tooltip we explicitly style — inherits the theme font.       */
+    const HOTARU_FONT = '"Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+
+    /* Anything slower than this we treat as a packet drop (the chart
+       leaves a gap rather than spiking the line up to 5000 ms).     */
+    const TCPING_LOSS_THRESHOLD_MS = 1000;
+
+    /* id → { chart, tabs, canvas, empty, loading, wrap, target,
+              _cache: Map<target, {points, range, sig}>,
+              _inflight: Set<target>, ts }
+       The previous palette-cycling, multi-dataset design was
+       replaced by a single-dataset chart that swaps its data
+       on tab change, so there's no per-row colour map to track. */
+    const tcpingState = new Map();
+    let cachedTcpingConfig    = null;
+    let tcpingConfigPromise   = null;
+    let chartJsPromise        = null;
+
+    function tcpingApiUrl(path, query) {
+      const url = new URL(getApiBase() + path, window.location.origin);
+      const tokenURL = new URL(window.location.href);
+      const shareToken = tokenURL.searchParams.get('token');
+      const adminToken = localStorage.getItem('admin_auth_token');
+      const headers = { 'Cache-Control': 'no-store' };
+      if (query) for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+      }
+      if (shareToken) url.searchParams.set('token', shareToken);
+      else if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+      return { url: url.toString(), headers };
+    }
+
+    /* Push the hotaru font stack into Chart.defaults so every piece
+       of text the library renders (ticks, tooltips, legends, plugin
+       overlays, etc.) uses the theme font — even those we don't
+       explicitly configure in tcpingChartConfig().                 */
+    function applyChartFontDefaults() {
+      if (!window.Chart || !window.Chart.defaults) return;
+      window.Chart.defaults.font = window.Chart.defaults.font || {};
+      window.Chart.defaults.font.family = HOTARU_FONT;
+      window.Chart.defaults.color       = '#9da2a6';
+    }
+
+    function loadChartJs() {
+      if (window.Chart && window._chartjsAdapterLoaded) {
+        applyChartFontDefaults();
+        return Promise.resolve(true);
+      }
+      if (chartJsPromise) return chartJsPromise;
+      chartJsPromise = new Promise((resolve) => {
+        function loadAdapter() {
+          if (window._chartjsAdapterLoaded) {
+            applyChartFontDefaults();
+            resolve(true);
+            return;
+          }
+          const existing = document.querySelector('script[data-chartjs-adapter]');
+          if (existing) {
+            existing.addEventListener('load',  () => {
+              window._chartjsAdapterLoaded = true;
+              applyChartFontDefaults();
+              resolve(true);
+            });
+            existing.addEventListener('error', () => resolve(false));
+            return;
+          }
+          const a = document.createElement('script');
+          a.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          a.async = true;
+          a.crossOrigin = 'anonymous';
+          a.setAttribute('data-chartjs-adapter', 'true');
+          a.onload  = () => {
+            window._chartjsAdapterLoaded = true;
+            applyChartFontDefaults();
+            resolve(true);
+          };
+          a.onerror = () => resolve(false);
+          document.head.appendChild(a);
+        }
+        if (window.Chart) { loadAdapter(); return; }
+        const existing = document.querySelector('script[data-chartjs]');
+        if (existing) {
+          existing.addEventListener('load',  loadAdapter);
+          existing.addEventListener('error', () => resolve(false));
+          return;
+        }
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        s.async = true;
+        s.crossOrigin = 'anonymous';
+        s.setAttribute('data-chartjs', 'true');
+        s.onload = loadAdapter;
+        s.onerror = () => {
+          /* unpkg ships the file as `chart.umd.js` (no .min) — using
+             the jsdelivr filename here returns 404 silently. */
+          const fb = document.createElement('script');
+          fb.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.js';
+          fb.async = true;
+          fb.crossOrigin = 'anonymous';
+          fb.setAttribute('data-chartjs', 'true');
+          fb.onload  = loadAdapter;
+          fb.onerror = () => resolve(false);
+          document.head.appendChild(fb);
+        };
+        document.head.appendChild(s);
+      });
+      return chartJsPromise;
+    }
+
+    function loadTcpingConfig(force) {
+      if (cachedTcpingConfig && !force) return Promise.resolve(cachedTcpingConfig);
+      if (tcpingConfigPromise && !force) return tcpingConfigPromise;
+      tcpingConfigPromise = (async () => {
+        try {
+          const { url, headers } = tcpingApiUrl('/api/tcping/config');
+          const r = await fetch(url, { headers, cache: 'no-store' });
+          if (!r.ok) return null;
+          const cfg = await r.json();
+          cachedTcpingConfig = cfg;
+          return cfg;
+        } catch (_) {
+          return null;
+        } finally {
+          tcpingConfigPromise = null;
+        }
+      })();
+      return tcpingConfigPromise;
+    }
+
+    /* Fetch TCPing history for a single client.
+
+       When `target` is provided we hit `/api/tcping/history?client_id=X
+       &target=Y` and the server returns ONLY that target's samples —
+       a fraction of the previous "all targets" payload. The active-tab
+       single-line chart is the only thing on screen at any moment,
+       so this is the only data we ever need; the per-target client
+       cache (see `_cache` on the tcping entry) takes care of instant
+       repaints on tab switch-back without a fresh round trip.
+
+       Note: the server only caches the target="" (full snapshot)
+       response, so per-target requests always hit the DB. That's
+       OK because each request is small — typically <50 KB instead
+       of the N×50 KB an "all targets" snapshot was.                */
+    async function loadTcpingHistory(clientID, target) {
+      try {
+        const { url, headers } = tcpingApiUrl('/api/tcping/history', {
+          client_id: clientID,
+          target:    target || '',
+        });
+        const r = await fetch(url, { headers, cache: 'no-store' });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    /* DOM scaffolding for the chart section.
+
+       Just target tabs (no "all" pseudo-tab, no stats badges) on
+       top of a single-line latency chart with a flat green area
+       fill.
+
+       The wrap is *visible by default* so that when the expand
+       panel slides open the card chrome appears in lockstep
+       with CPU/memory/disk lines — the chart canvas inside fills
+       in asynchronously, but the user never sees the card "pop
+       in" mid-animation. We only flip `hidden = true` if the
+       eventual config probe confirms this deployment has zero
+       tcping targets configured (handled below in the script
+       init warm-up and again defensively in ensureTcpingChart).  */
+    function buildTcpingSection(id) {
+      const wrap = document.createElement('div');
+      wrap.className = 'hotaru-tcping';
+      wrap.hidden = !!(cachedTcpingConfig
+                       && Array.isArray(cachedTcpingConfig.targets)
+                       && cachedTcpingConfig.targets.length === 0);
+      wrap.dataset.tcpingFor = String(id);
+      /* Stop clicks inside the chart card from bubbling up to
+         the row click handler that would otherwise collapse the
+         expand panel — selecting a tab, hovering the chart, etc.
+         must NOT toggle the row.                                 */
+      wrap.addEventListener('click', (e) => e.stopPropagation());
+
+      const head = document.createElement('div');
+      head.className = 'hotaru-tcping__head';
+
+      const tabs = document.createElement('div');
+      tabs.className = 'hotaru-tcping__tabs';
+      head.append(tabs);
+
+      /* Right-side summary chips (avg latency + loss rate) for the
+         *currently active* target. Built up-front so we can hand
+         stable element refs to applyTcpingDataset(); the container
+         is hidden until the first applyTcpingDataset call confirms
+         there are samples to summarise.
+
+         Each chip is a single span — no separate "avg"/"loss"
+         prefix label any more. The unit suffix on the value
+         (`ms` / `%`) already disambiguates the two pills, and
+         dropping the prefix text gives the soft frosted-grey
+         pill more room to breathe at this small size, which the
+         user explicitly requested.                                 */
+      const stats   = document.createElement('div');
+      stats.className = 'hotaru-tcping__stats';
+      stats.hidden = true;
+
+      /* Pills are pre-seeded in the "loading" skeleton state — the
+         chip surface (rounded grey background) is what the user
+         should see first when the chart card appears, so when the
+         tabs become visible we just flip stats.hidden=false and
+         the placeholder dots inside ride along.
+
+         When real numbers land via updateTcpingStats(...), the
+         data-state attribute is removed (stops the breathe pulse)
+         and a one-shot data-fresh="1" attribute is set so the
+         CSS replays a 240ms opacity fade on the new value.       */
+      const avgVal = document.createElement('span');
+      avgVal.className = 'hotaru-tcping__stat hotaru-tcping__stat--avg';
+      avgVal.dataset.state = 'loading';
+      avgVal.textContent = '···';
+
+      const lossVal = document.createElement('span');
+      lossVal.className = 'hotaru-tcping__stat hotaru-tcping__stat--loss';
+      lossVal.dataset.state = 'loading';
+      lossVal.textContent = '···';
+
+      stats.append(avgVal, lossVal);
+      head.append(stats);
+
+      const chartBox = document.createElement('div');
+      chartBox.className = 'hotaru-tcping__chart';
+      const canvas = document.createElement('canvas');
+      chartBox.appendChild(canvas);
+
+      /* Three-dot pulse spinner overlaid on the chart area. Visible
+         from the moment the card is built; hidden once the canvas
+         has its first frame. Pure CSS animation (see
+         hotaru-theme.css), so no JS overhead while it spins.       */
+      const loading = document.createElement('div');
+      loading.className = 'hotaru-tcping__loading';
+      loading.append(
+        document.createElement('span'),
+        document.createElement('span'),
+        document.createElement('span'),
+      );
+      chartBox.appendChild(loading);
+
+      const empty = document.createElement('div');
+      empty.className = 'hotaru-tcping__empty';
+      empty.textContent = '暂无 TCPing 数据';
+      empty.hidden = true;
+
+      wrap.append(head, chartBox, empty);
+
+      return {
+        id, wrap, tabs, canvas, empty, loading,
+        stats, avgVal, lossVal,
+        chart: null, target: null,
+        /* Per-target cache of already-fetched samples. Keyed by
+           target address, value is { points: [{x:Date, y:ms}],
+           range: {min, max} | null, sig: '<timestamp>' }. Lets
+           setTcpingActiveTarget() repaint instantly on tab
+           switch-back without re-fetching, and lets
+           refreshTcpingChart() use a per-target signature gate
+           instead of a per-row aggregate.                       */
+        _cache:    new Map(),
+        /* Per-target in-flight set. Switching tabs while a fetch
+           is still running is now safe: we let the fetch for
+           target B start even if target A's is still pending,
+           and refreshTcpingChartInner only paints when its
+           captured target still matches the active one.        */
+        _inflight: new Set(),
+        initialized: false,
+      };
+    }
+
+    /* First-open path. Loads Chart.js if needed, probes the global
+       tcping config once, then fetches this row's history. After
+       the chart is live it installs into `tcpingState` for the
+       periodic refresher to pick up.                              */
+    async function ensureTcpingChart(id, tcping) {
+      if (tcping.initialized) {
+        /* Already running; just nudge a refresh in case a long time
+           has passed since the last sample landed, and force a
+           resize so the chart re-measures the container and the
+           x-axis ticks reappear (they sometimes get auto-skipped
+           when the chart was last drawn while the panel was
+           still mid-collapse).                                       */
+        refreshTcpingChart(id, tcping);
+        if (tcping.chart) {
+          requestAnimationFrame(() => { try { tcping.chart.resize(); } catch (_) {} });
+        }
+        return;
+      }
+      tcping.initialized = true;
+
+      const ok = await loadChartJs();
+      if (!ok || !window.Chart) {
+        /* Chart.js failed to load. Leave the empty card in place
+           rather than yanking it out from under the user mid-
+           animation — visual continuity beats hiding an already-
+           visible element. Stop the pulse-dots though, otherwise
+           they'd spin forever signaling work that will never
+           finish; the bare card communicates "no chart" clearly
+           enough on its own.                                      */
+        if (tcping.loading) tcping.loading.hidden = true;
+        return;
+      }
+
+      const cfg = await loadTcpingConfig();
+      if (!cfg || !Array.isArray(cfg.targets) || cfg.targets.length === 0) {
+        /* No targets configured for this deployment — collapse
+           the card so the expand row doesn't show a bare empty
+           rectangle forever.                                     */
+        tcping.wrap.hidden = true;
+        return;
+      }
+      /* Card was already visible from row build time; nothing to
+         flip. Just populate it with tabs + chart.               */
+      tcpingState.set(id, tcping);
+      buildTcpingTabs(tcping, cfg);
+      /* Tabs are built and a default target is selected.
+         Reveal the stat pills in their loading skeleton state
+         immediately — surface arrives now, numbers fade in
+         once the fetch resolves a few hundred ms later.       */
+      setTcpingStatsLoading(tcping);
+
+      /* The expand panel uses a grid-template-rows: 0fr → 1fr
+         transition (cf. .hotaru-expand-inner in hotaru-theme.css).
+         Until that 400 ms animation ends, the canvas's container
+         has zero height, and Chart.js will sample those zero
+         dimensions and auto-skip every x-axis tick — making the
+         time labels disappear even though the data is correct.
+
+         Two-pronged fix:
+         1. Defer the *initial* paint until after the animation
+            completes (`transitionend` on grid-template-rows), so
+            Chart.js measures the real container size on its first
+            layout pass.
+         2. Belt-and-braces: schedule a forced .resize() one frame
+            after the rebuild, which makes Chart.js re-evaluate
+            tick spacing if step 1 happens to fire while the panel
+            is still 0px tall (e.g. when the row was reopened
+            before the previous collapse animation finished).      */
+      const inner = tcping.wrap.closest('.hotaru-expand-inner');
+      const detail = tcping.wrap.closest('tr.hotaru-expand');
+      const drawNow = async () => {
+        await refreshTcpingChart(id, tcping);
+        if (tcping.chart) {
+          requestAnimationFrame(() => { try { tcping.chart.resize(); } catch (_) {} });
+        }
+        /* Chart canvas now has its first frame — peel off the
+           pulse-dots overlay. Subsequent re-renders won't bring
+           the spinner back; the chart paints in place.            */
+        if (tcping.loading) tcping.loading.hidden = true;
+      };
+      if (inner && detail && !detail.classList.contains('is-open')) {
+        /* Row hasn't opened yet (rare: race with a fast double-click).
+           Wait for the next is-open tick.                             */
+        await drawNow();
+      } else if (inner) {
+        /* Wait for the grid-template-rows transition to settle, then
+           paint. Cap the wait at 600 ms so a slow / cancelled
+           transition never strands us without a chart.              */
+        await new Promise((resolve) => {
+          let done = false;
+          const finish = () => { if (done) return; done = true; resolve(); };
+          inner.addEventListener('transitionend', (e) => {
+            if (e.propertyName === 'grid-template-rows') finish();
+          }, { once: true });
+          setTimeout(finish, 600);
+        });
+        await drawNow();
+      } else {
+        await drawNow();
+      }
+    }
+
+    function buildTcpingTabs(tcping, cfg) {
+      tcping.tabs.innerHTML = '';
+      /* One tab per target — no "all" pseudo-tab. The chart shows
+         exactly one line at a time, with the active target painted
+         in the accent green. The first target is selected by
+         default so the chart opens in single-line mode.            */
+      cfg.targets.forEach((t) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'hotaru-tcping__tab';
+        b.textContent = t.name || t.address;
+        b.dataset.target = t.address;
+        b.addEventListener('click', () => setTcpingActiveTarget(tcping, t.address));
+        tcping.tabs.appendChild(b);
+      });
+      if (cfg.targets.length > 0) {
+        const firstAddr = cfg.targets[0].address;
+        tcping.target = firstAddr;
+        Array.from(tcping.tabs.children).forEach((b) => {
+          b.classList.toggle('hotaru-tcping__tab--active',
+                             (b.dataset.target || null) === firstAddr);
+        });
+      }
+    }
+
+    /* Tab-switch entry point. Three cases:
+
+       1. We already cached this target's data on a previous fetch
+          → repaint instantly from cache, no spinner, no network.
+       2. We've never seen this target before → clear the chart
+          (stale data from the previous tab would otherwise flash
+          for a frame), bring back the loading dots, and kick off
+          a fetch.
+       3. The cache is stale (a new sample arrived for this target
+          while we weren't looking) → repaint from cache for
+          immediate feedback, then quietly refresh in the
+          background; refreshTcpingChart will skip the network
+          if the per-target signature matches the latest
+          broadcast.                                                */
+    function setTcpingActiveTarget(tcping, target) {
+      tcping.target = target;
+      Array.from(tcping.tabs.children).forEach((b) => {
+        const matches = (b.dataset.target || null) === target;
+        b.classList.toggle('hotaru-tcping__tab--active', matches);
+      });
+      if (tcping._cache.has(target)) {
+        applyTcpingDataset(tcping, target);
+      } else {
+        /* Cache miss: tear the chart instance down completely so
+           the canvas is *blank* during the load. Just clearing
+           datasets would leave the empty axes / grid lines
+           visible, which the user perceives as a "chart
+           framework" appearing alongside the spinner. With the
+           chart destroyed, the canvas paints nothing — the loading
+           dots are the only thing visible inside the chart area
+           until applyTcpingDataset() rebuilds the chart from
+           scratch with fresh data.                                */
+        if (tcping.chart) {
+          tcping.chart.destroy();
+          tcping.chart = null;
+        }
+        /* Make sure the chart container is visible — a previous
+           "no data" applyTcpingDataset() may have set display:none,
+           which would hide the loading-dots overlay too since the
+           dots live inside .hotaru-tcping__chart.                  */
+        tcping.canvas.parentElement.style.display = '';
+        if (tcping.empty)   tcping.empty.hidden   = true;
+        if (tcping.loading) tcping.loading.hidden = false;
+        /* Tab-switch with no cache — fade the chart canvas
+           back to opacity:0 so the upcoming repaint runs
+           hidden behind the loading dots, matching the
+           first-paint smoothing.                              */
+        const chartBox = tcping.canvas && tcping.canvas.parentElement;
+        if (chartBox) chartBox.classList.remove('is-ready');
+        /* Clear stale numbers from the previous tab without
+           collapsing the pill row — the chips stay visible
+           in their loading skeleton state (breathing "···")
+           while the fetch is in flight.                       */
+        setTcpingStatsLoading(tcping);
+      }
+      refreshTcpingChart(tcping.id, tcping, /*force=*/false);
+    }
+
+    /* Per-target signature: just the latest sample timestamp the
+       broadcast told us about for this one target. If our cached
+       entry already records this timestamp, refreshTcpingChart
+       can skip the fetch+redraw pair. Empty string when the
+       broadcast hasn't yet reported this target — treated as
+       "no signal", same as the old empty-data path.               */
+    function tcpingTargetSignature(item, target) {
+      if (!item || !item.tcping_data || !target) return '';
+      const v = item.tcping_data[target];
+      return (v && v.timestamp) ? String(v.timestamp) : '';
+    }
+
+    /* Summary chips for the active target.
+       --------------------------------------
+       points = [{x:Date, y:ms_or_null}, ...]
+         - y === null → marked as packet loss by
+           refreshTcpingChartInner (latency null/undef OR over
+           TCPING_LOSS_THRESHOLD_MS — same definition the chart
+           gap uses, so the two stats line up with what the
+           user sees plotted).
+         - avg latency  = mean over y!==null
+         - loss rate    = (loss / total) * 100
+       Shows '–' when there are zero non-loss samples (avg is
+       meaningless), '0%' for a perfectly healthy 100% line.
+       Hides the whole pill group when there are no samples
+       at all so the empty card stays uncluttered.             */
+    function updateTcpingStats(tcping, points) {
+      if (!tcping || !tcping.stats) return;
+      if (!Array.isArray(points) || points.length === 0) {
+        /* No data confirmed (applyTcpingDataset() with empty
+           cache result). Hide the entire pill row — there's
+           also a "暂无 TCPing 数据" empty card showing in this
+           branch, so duplicating the no-data signal in the
+           pills would just be noise.                          */
+        tcping.stats.hidden = true;
+        return;
+      }
+
+      let sum = 0;
+      let okCount = 0;
+      let lossCount = 0;
+      for (const p of points) {
+        if (p && p.y != null && Number.isFinite(p.y)) {
+          sum += p.y;
+          okCount++;
+        } else {
+          lossCount++;
+        }
+      }
+      const total = okCount + lossCount;
+
+      let avgText = '–';
+      if (okCount > 0) {
+        const avg = sum / okCount;
+        /* Match the tooltip's "x.xx ms" two-decimal format for
+           sub-10ms readings, snap to whole ms once we're past
+           the tens boundary — same readability heuristic the
+           y-axis tick formatter uses elsewhere in the chart.  */
+        avgText = (avg < 10 ? avg.toFixed(2) : Math.round(avg)) + 'ms';
+      }
+
+      let lossText = '0%';
+      if (total > 0 && lossCount > 0) {
+        const pct = (lossCount / total) * 100;
+        /* < 10 % keeps one decimal so brief outages don't
+           collapse to a flat "0%"; >=10 % rounds to whole
+           percent because at that point the precision noise
+           outweighs the signal.                              */
+        lossText = (pct < 10 ? pct.toFixed(1) : Math.round(pct)) + '%';
+      }
+
+      tcping.stats.hidden = false;
+      setTcpingStatValue(tcping.avgVal,  avgText);
+      setTcpingStatValue(tcping.lossVal, lossText);
+    }
+
+    /* Helper: write `text` into a stat pill and trigger the
+       240ms fade-in animation. Removing the `data-state` attr
+       stops the breathe pulse; `data-fresh` is removed and
+       re-set on the next frame so the keyframes replay even
+       when the same value is being written (e.g. a refresh
+       that returns identical numbers — we still want a tiny
+       acknowledgement that fresh data arrived).               */
+    function setTcpingStatValue(el, text) {
+      if (!el) return;
+      const sameText = (el.textContent === text) && !el.dataset.state;
+      el.textContent = text;
+      delete el.dataset.state;
+      if (sameText) return;
+      el.removeAttribute('data-fresh');
+      // Force reflow so the next attribute set reliably
+      // restarts the keyframes animation.
+      void el.offsetWidth;
+      el.dataset.fresh = '1';
+    }
+
+    /* Switch a pill back into "loading" skeleton state — the
+       chip stays visible (background + breathe pulse) but the
+       previous value is replaced with "···" placeholder. Used
+       on tab-switch cache miss while a fresh fetch is in
+       flight, so the user sees the silhouette of the chip
+       without stale numbers from the previous tab.            */
+    function setTcpingStatsLoading(tcping) {
+      if (!tcping || !tcping.stats) return;
+      tcping.stats.hidden = false;
+      [tcping.avgVal, tcping.lossVal].forEach((el) => {
+        if (!el) return;
+        el.removeAttribute('data-fresh');
+        el.dataset.state = 'loading';
+        el.textContent = '···';
+      });
+    }
+
+    /* Render one cached target's data into the chart as the only
+       dataset. Active-target highlight (green stroke + soft fill)
+       is baked into the dataset directly — no need for the
+       multi-dataset hide-all-but-active gymnastics from the
+       previous "load every target up front" design. Pinning the
+       x-axis to the cached per-target range prevents the leading
+       whitespace that used to appear when other targets had a
+       different start time.                                       */
+    function applyTcpingDataset(tcping, target) {
+      const cached = tcping._cache.get(target);
+      const points = cached ? cached.points : [];
+      const hasAny = points.length > 0;
+
+      tcping.empty.hidden = hasAny;
+      tcping.canvas.parentElement.style.display = hasAny ? '' : 'none';
+      updateTcpingStats(tcping, points);
+
+      if (!hasAny) {
+        if (tcping.chart) { tcping.chart.destroy(); tcping.chart = null; }
+        if (tcping.loading) tcping.loading.hidden = true;
+        /* Chart was just destroyed — strip is-ready so the next
+           target switch (which may rebuild the chart) gets the
+           full fade-in instead of inheriting a stale opacity:1. */
+        const chartBox = tcping.canvas && tcping.canvas.parentElement;
+        if (chartBox) chartBox.classList.remove('is-ready');
+        return;
+      }
+
+      const dataset = {
+        label:           getTcpingTargetLabel(target),
+        data:            points,
+        _target:         target,
+        borderColor:     'rgba(33, 186, 69, 0.9)',
+        backgroundColor: 'rgba(33, 186, 69, 0.15)',
+        borderWidth:     2,
+        tension:         0.1,
+        /* No hover dot. The vertical hotaruCrosshair guide already
+           pin-points the active sample's x, and the tooltip card
+           reports the value, so a circular marker sitting on top
+           of the line just adds visual noise on dense traces (the
+           previous 5px and 3px markers both read as too heavy
+           around clustered spikes — user feedback). The line
+           itself is the visual anchor — the crosshair tells you
+           "which sample", the tooltip tells you "what value",
+           the line tells you "where on the y-axis".               */
+        pointRadius:     0,
+        pointHoverRadius: 0,
+        pointHitRadius:  10,
+        spanGaps:        true,
+        fill:            'origin',
+      };
+
+      const chartBox = tcping.canvas && tcping.canvas.parentElement;
+      const wasFresh = !tcping.chart;
+      if (!tcping.chart) {
+        /* First creation. Make sure the canvas starts at
+           opacity:0 — even if a previous instance lifted
+           is-ready, recreating the Chart with destroy()→new
+           re-binds the canvas, so toggling is-ready off here
+           guarantees the next commit fades up cleanly.       */
+        if (chartBox) chartBox.classList.remove('is-ready');
+        tcping.chart = new window.Chart(tcping.canvas, tcpingChartConfig([dataset]));
+      } else {
+        /* Skip the chart.update() entirely when the freshly-built
+           dataset is visually identical to what's already on
+           canvas (same target, same point count, same last x/y).
+           Catches signature jitter where the backend re-stamps
+           timestamps without changing latency.                    */
+        const cur = tcping.chart.data.datasets[0];
+        if (cur && tcpingDatasetEqual(cur, dataset)) {
+          if (tcping.loading) tcping.loading.hidden = true;
+          if (chartBox) chartBox.classList.add('is-ready');
+          return;
+        }
+        tcping.chart.data.datasets = [dataset];
+      }
+
+      const x = tcping.chart.options.scales.x;
+      if (cached && cached.range) {
+        x.min = cached.range.min;
+        x.max = cached.range.max;
+      } else {
+        delete x.min;
+        delete x.max;
+      }
+      tcping.chart.update('none');
+      if (tcping.loading) tcping.loading.hidden = true;
+
+      /* Smooth fade-in for the first commit. We chain two
+         animation frames before adding `is-ready`:
+           rAF #1 — Chart.js's update('none') has just queued
+                    a paint; let the browser commit it.
+           rAF #2 — surface is now fully painted; flip the
+                    opacity transition so the fade rides on
+                    top of an already-laid-out canvas (cheap
+                    GPU op, no layout cost).
+         For subsequent updates (same chart, new dataset) we
+         skip the rAF dance — the chart was already opacity:1.  */
+      if (chartBox) {
+        if (wasFresh) {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => chartBox.classList.add('is-ready'));
+          });
+        } else {
+          chartBox.classList.add('is-ready');
+        }
+      }
+    }
+
+    /* Lookup helper: target address → display label from the
+       cached config. Falls back to the raw address if the config
+       hasn't loaded yet (shouldn't happen in practice since
+       buildTcpingTabs runs after loadTcpingConfig resolves).      */
+    function getTcpingTargetLabel(target) {
+      if (!cachedTcpingConfig || !Array.isArray(cachedTcpingConfig.targets)) return target;
+      const t = cachedTcpingConfig.targets.find((x) => x.address === target);
+      return t ? (t.name || t.address) : target;
+    }
+
+    /* Single-dataset version of the old tcpingDatasetsEqual.
+       Tcping samples only ever append to the right of the
+       timeline, so "same point count + same last (x, y)" is a
+       sufficient visual-equality check.                           */
+    function tcpingDatasetEqual(cur, nxt) {
+      if (!cur || !nxt) return false;
+      if ((cur._target || '') !== (nxt._target || '')) return false;
+      if (cur.data.length !== nxt.data.length) return false;
+      if (nxt.data.length === 0) return true;
+      const lc = cur.data[cur.data.length - 1];
+      const ln = nxt.data[nxt.data.length - 1];
+      if (lc.y !== ln.y) return false;
+      const lcx = lc.x instanceof Date ? lc.x.getTime() : lc.x;
+      const lnx = ln.x instanceof Date ? ln.x.getTime() : ln.x;
+      return lcx === lnx;
+    }
+
+    /* Refresh entry point. Decides whether the active target's
+       cache is stale enough to warrant a network fetch, and if
+       so kicks off refreshTcpingChartInner. Three gates:
+
+       1. No config yet → nothing to refresh against.
+       2. No active target → nothing to fetch (tabs not built).
+       3. Per-target in-flight set already includes this target →
+          let the existing fetch finish; don't queue a duplicate.
+       4. Cached entry's recorded signature matches the latest
+          broadcast's timestamp for this target → skip the network.
+          When `force=true` (manual nudge from ensureTcpingChart's
+          first-open path or from setTcpingActiveTarget on cache
+          miss) we bypass the signature gate.                     */
+    async function refreshTcpingChart(id, tcping, force) {
+      if (!cachedTcpingConfig) return;
+      const target = tcping.target;
+      if (!target) return;
+      if (tcping._inflight.has(target)) return;
+
+      const item      = tcpingLatestItem(id);
+      const targetSig = tcpingTargetSignature(item, target);
+      const cached    = tcping._cache.get(target);
+      if (!force && cached && cached.sig === targetSig) return;
+
+      tcping._inflight.add(target);
+      try {
+        await refreshTcpingChartInner(id, tcping, target, targetSig);
+      } finally {
+        tcping._inflight.delete(target);
+      }
+    }
+
+    /* Per-target fetch + parse + cache + paint.
+
+       The data-extraction logic mirrors what Pulse's native chart
+       does, with one important simplification: the server already
+       filters by target=, so every result row in the response is
+       for the target we're asking about. We still defensively
+       guard with `r.target === target` to be robust against
+       backends that ignore the filter.
+
+       Captured `target` is compared against `tcping.target` at
+       paint time to handle the "user switched tabs while my
+       fetch was in flight" race: the cache entry is still
+       written (so a later switch-back to this target gets an
+       instant repaint) but we don't shove its data onto the
+       canvas, which would visibly clobber whatever target is
+       currently selected.                                        */
+    async function refreshTcpingChartInner(id, tcping, target, sig) {
+      const resp = await loadTcpingHistory(id, target);
+      if (!resp) {
+        /* Network or 4xx/5xx. If this fetch was the one keeping the
+           pulse-dots overlay on screen (cache miss + active tab),
+           hide it so the card doesn't pulse forever — better to
+           show a static empty card than an indefinite spinner.
+           Same logic for the stat pills: collapse them so the user
+           doesn't see chips breathing forever next to a dead
+           chart card.                                              */
+        if (tcping.target === target && !tcping.chart) {
+          if (tcping.loading) tcping.loading.hidden = true;
+          if (tcping.stats)   tcping.stats.hidden   = true;
+        }
+        return;
+      }
+      const results = Array.isArray(resp) ? resp : (resp.results || []);
+
+      /* 24-hour rolling window + loss handling:
+         * Drop samples older than now-24h.
+         * latency null/undefined or > TCPING_LOSS_THRESHOLD_MS
+           records y=null; combined with `spanGaps: true` this
+           draws a continuous line through single-sample dropouts
+           but leaves a visible gap on prolonged outages.
+         * x is a Date object (date-fns adapter prefers Date over
+           numeric ms — fewer surprises in tick auto-skip).      */
+      const NOW    = Date.now();
+      const CUTOFF = NOW - 24 * 60 * 60 * 1000;
+      const points = [];
+      let min = null;
+      let max = null;
+      for (const r of results) {
+        if (!r) continue;
+        if (r.target && r.target !== target) continue;
+        const tsDate = new Date(r.timestamp);
+        const tsMs   = tsDate.getTime();
+        if (!Number.isFinite(tsMs) || tsMs < CUTOFF) continue;
+        let yVal = null;
+        if (r.latency != null && r.latency <= TCPING_LOSS_THRESHOLD_MS) {
+          yVal = r.latency;
+        }
+        points.push({ x: tsDate, y: yVal });
+        if (min === null || tsMs < min) min = tsMs;
+        if (max === null || tsMs > max) max = tsMs;
+      }
+
+      tcping._cache.set(target, {
+        points,
+        range: (min !== null) ? { min, max } : null,
+        sig,
+      });
+
+      if (tcping.target === target) {
+        applyTcpingDataset(tcping, target);
+        tcping.ts = Date.now();
+      }
+    }
+
+    /* Latest item for a given system, plucked from the most recent
+       broadcast we cached. Used to read tcping_data signature
+       without re-issuing /api/metrics.                              */
+    let lastBroadcastList = null;
+    function tcpingLatestItem(id) {
+      if (!Array.isArray(lastBroadcastList)) return null;
+      for (const it of lastBroadcastList) {
+        if (it && (it.id === id || ('sys-' + lastBroadcastList.indexOf(it)) === id)) return it;
+      }
+      return null;
+    }
+
+    /* Hotaru-styled vertical crosshair plugin.
+       --------------------------------------
+       Why: with a 24-h tcping window the chart easily packs
+       hundreds of samples into a few hundred pixels. The native
+       Chart.js hover dot alone makes it hard to tell *which*
+       sample is being read — especially around a cluster of
+       latency spikes, where the dot can snap to a neighbour the
+       user didn't mean to inspect.
+       What: on every redraw, if the tooltip has an active
+       element, we paint a single 1-px dashed vertical line at
+       the sample's exact x-coordinate, full chart-area height.
+       Colour is hotaru's `--hotaru-text` (#616366) at 38% alpha
+       — strong enough to register against both the white card
+       and the soft-green fill, faint enough to stay quiet when
+       the cursor isn't there. Dashed [3,3] keeps it reading as
+       a guide rather than data.
+       The vertical orientation only is intentional: latency
+       value is already echoed by the tooltip body, so a
+       horizontal guide would just be visual clutter.            */
+    const hotaruCrosshairPlugin = {
+      id: 'hotaruCrosshair',
+      afterDatasetsDraw(chart) {
+        const tooltip = chart.tooltip;
+        if (!tooltip) return;
+        const active = (typeof tooltip.getActiveElements === 'function')
+          ? tooltip.getActiveElements()
+          : [];
+        if (!active.length) return;
+        const x = active[0].element.x;
+        const { top, bottom } = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.lineWidth   = 1;
+        ctx.strokeStyle = 'rgba(97, 99, 102, 0.38)';   /* --hotaru-text @ 38% */
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+        ctx.restore();
+      },
+    };
+
+    function tcpingChartConfig(datasets) {
+      return {
+        type: 'line',
+        data: { datasets },
+        plugins: [hotaruCrosshairPlugin],
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 0 },
+          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          /* Soft layout padding lets the line breathe and avoids the
+             topmost peak hugging the card border.                  */
+          layout: { padding: { top: 6, right: 4, bottom: 0, left: 0 } },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              /* All colours mirror the design tokens defined in
+                 hotaru-theme.css (--hotaru-text, --hotaru-line)
+                 so the tooltip reads as a natural extension of
+                 the rest of the UI, not a stand-out widget.    */
+              backgroundColor: 'rgba(255, 255, 255, 0.96)',
+              titleColor: '#616366',                 /* --hotaru-text */
+              bodyColor:  '#616366',                 /* --hotaru-text */
+              borderColor: 'rgba(0, 0, 0, 0.06)',    /* --hotaru-line */
+              borderWidth: 1,
+              padding: 10,
+              cornerRadius: 6,
+              displayColors: false,
+              titleFont: { family: HOTARU_FONT, size: 11, weight: '600' },
+              bodyFont:  { family: HOTARU_FONT, size: 11, weight: '500' },
+              callbacks: {
+                label: (ctx) => (ctx.parsed.y == null
+                  ? '丢包'
+                  : ctx.parsed.y.toFixed(1) + ' ms'),
+              },
+            },
+          },
+          scales: {
+            x: {
+              type: 'time',
+              /* Don't force a unit — let Chart.js + the date-fns adapter
+                 pick the best granularity for the data range. Forcing
+                 `unit: 'hour'` empties the axis whenever the data spans
+                 less than an hour, which is exactly the "no date" case
+                 the user reported.                                     */
+              time: {
+                displayFormats: {
+                  second: 'HH:mm:ss',
+                  minute: 'HH:mm',
+                  hour:   'HH:mm',
+                  day:    'MM/dd HH:mm',
+                },
+                tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
+              },
+              grid:   { display: false, drawOnChartArea: false },
+              border: { display: false },
+              /* `bounds: 'data'` makes the visible x-axis range
+                 hug the actual data window rather than snapping
+                 outwards to the nearest tick. Combined with the
+                 explicit per-target min/max we set on the
+                 single dataset in applyTcpingDataset(), this
+                 guarantees the chart starts exactly at the
+                 first sample of the active target — no leading
+                 whitespace.                                      */
+              bounds: 'data',
+              ticks:  {
+                /* 11 px / weight 500 / --hotaru-muted reads as
+                   crisply as the row text without tipping over
+                   into "heavy" — visible, but still secondary
+                   to the line itself.                           */
+                color: '#919699',                  /* --hotaru-muted */
+                font: { family: HOTARU_FONT, size: 11, weight: '500' },
+                maxRotation: 0,
+                autoSkip: true,
+                autoSkipPadding: 30,
+                maxTicksLimit: 6,
+                padding: 4,
+              },
+            },
+            y: {
+              beginAtZero: true,
+              /* Grid hairline = --hotaru-line, the same value
+                 every other table/card uses for soft dividers. */
+              grid:   { color: 'rgba(0, 0, 0, 0.06)', drawBorder: false },
+              border: { display: false },
+              ticks:  {
+                color: '#919699',                  /* --hotaru-muted */
+                font: { family: HOTARU_FONT, size: 11, weight: '500' },
+                padding: 6,
+                maxTicksLimit: 6,
+                callback: (v) => v + 'ms',
+              },
+            },
+          },
+          elements: { point: { radius: 0 } },
+        },
+      };
+    }
+
+    /* No periodic forced refresher.
+
+       Earlier we ran `setInterval(force=true, 60_000)` as a safety
+       net, but with the signature gate now correctly handling the
+       empty-sig case the only legitimate redraw trigger is "a new
+       tcping sample landed in the live broadcast" — which fires
+       refreshTcpingChart through `broadcast()` already. Adding a
+       second cadence on top of that produces the dual-rhythm
+       (3-s SSE + N-s admin setting) blink the user reported.
+
+       If we ever need to roll the 24-h x-axis window forward
+       without a new sample, do it in response to `pulse:metrics-tick`
+       at a much longer interval (≥ 5 min) — not here.                */
+
+    function cssEscape(s) {
+      if (window.CSS && window.CSS.escape) return window.CSS.escape(s);
+      return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
+    }
+
+    /* Helper: a network/traffic cell that can render in two modes:
+         online    → "X | Y" (two values separated by hotaru-pipe)
+         offline   → "–"     (single dash, full width — matches
+                              hotaru's `getStatus ? '...' : '–'`)
+       The `setMode(offline)` helper flips between the two on the
+       fly without rebuilding the cell DOM, so smart-diff render
+       can swap state on every SSE push without flicker.            */
+    function makePipeCell(className) {
+      const td = document.createElement('td');
+      td.className = className;
+      const a = document.createElement('span');
+      const pipe = document.createElement('span');
+      pipe.className = 'hotaru-pipe';
+      pipe.textContent = '|';
+      const b = document.createElement('span');
+      const sep1 = document.createTextNode(' ');
+      const sep2 = document.createTextNode(' ');
+      const dash = document.createElement('span');
+      dash.className = 'hotaru-cell-dash';
+      dash.textContent = '–';
+      dash.hidden = true;
+      td.append(a, sep1, pipe, sep2, b, dash);
+      function setMode(offline) {
+        a.hidden    = offline;
+        pipe.hidden = offline;
+        b.hidden    = offline;
+        sep1.nodeValue = offline ? '' : ' ';
+        sep2.nodeValue = offline ? '' : ' ';
+        dash.hidden = !offline;
+      }
+      return { td, a, b, setMode };
+    }
+
+    function buildRowEntry(item, idx) {
+      const id  = item.id || ('sys-' + idx);
+      const row = document.createElement('tr');
+      row.className = 'hotaru-row';
+      row.dataset.rowId = String(id);
+
+      const tdStatus = document.createElement('td');
+      const status   = buildStatusBarEl();
+      tdStatus.appendChild(status.wrap);
+      row.appendChild(tdStatus);
+
+      const tdName = document.createElement('td');
+      tdName.className = 'hotaru-cell-name';
+      row.appendChild(tdName);
+
+      const tdType = document.createElement('td');
+      row.appendChild(tdType);
+
+      const tdLoc = document.createElement('td');
+      row.appendChild(tdLoc);
+
+      const tdUptime = document.createElement('td');
+      row.appendChild(tdUptime);
+
+      const net  = makePipeCell('hotaru-cell-net');
+      row.appendChild(net.td);
+
+      const traf = makePipeCell('hotaru-cell-traffic');
+      row.appendChild(traf.td);
+
+      const tdCpu  = document.createElement('td');
+      const cpuBar = buildBarEl();
+      tdCpu.appendChild(cpuBar.wrap);
+      row.appendChild(tdCpu);
+
+      const tdMem  = document.createElement('td');
+      const memBar = buildBarEl();
+      tdMem.appendChild(memBar.wrap);
+      row.appendChild(tdMem);
+
+      const tdDisk  = document.createElement('td');
+      const diskBar = buildBarEl();
+      tdDisk.appendChild(diskBar.wrap);
+      row.appendChild(tdDisk);
+
+      // Detail row — always in DOM. We never remove/recreate it,
+      // so the user's `is-open` toggle survives every SSE push.
+      // For offline servers we just hide it via the .is-offline
+      // class on the main row (see CSS).
+      //
+      // Structure (grid-template-rows: 0fr/1fr trick gives smooth
+      // open/close regardless of how tall the body grows when the
+      // tcping chart loads):
+      //
+      //   .hotaru-expand-inner       (grid container, animates rows)
+      //     .hotaru-expand-body      (only grid item, overflow:hidden)
+      //       <div>CPU 型号: ...</div>
+      //       <div>内存信息: ...</div>
+      //       <div>交换分区: ...</div>
+      //       <div>硬盘信息: ...</div>
+      //       .hotaru-tcping         (chart, hidden until config probe)
+      const detail = document.createElement('tr');
+      detail.className = 'hotaru-expand';
+      detail.dataset.expandFor = String(id);
+      const dtd = document.createElement('td');
+      dtd.colSpan = 10;
+      const inner = document.createElement('div');
+      inner.className = 'hotaru-expand-inner';
+      const body = document.createElement('div');
+      body.className = 'hotaru-expand-body';
+      /* Tags line — admin-defined classification metadata.
+         Hidden when item.tags is missing/empty so empty rows
+         keep the same compact 4-line layout as before. The
+         "标签: " prefix follows the same pattern as the
+         siblings ("CPU 型号: ", "内存信息: ", ...) so the line
+         reads as part of the same metadata block. */
+      const tagsLine     = document.createElement('div');
+      tagsLine.className = 'hotaru-tag-line';
+      tagsLine.hidden    = true;
+      const tagsLabel    = document.createElement('span');
+      tagsLabel.className = 'hotaru-tag-line__label';
+      tagsLabel.textContent = '标签: ';
+      const tagsList     = document.createElement('span');
+      tagsList.className = 'hotaru-tag-line__list';
+      tagsLine.append(tagsLabel, tagsList);
+      const cpuInfo  = document.createElement('div');
+      const memInfo  = document.createElement('div');
+      const swapInfo = document.createElement('div');
+      const diskInfo = document.createElement('div');
+      const tcping   = buildTcpingSection(id);
+      body.append(tagsLine, cpuInfo, memInfo, swapInfo, diskInfo, tcping.wrap);
+      inner.appendChild(body);
+      dtd.appendChild(inner);
+      detail.appendChild(dtd);
+
+      // Click toggles .is-open on the detail row.
+      //
+      //  * Pristine rows (.is-pristine, agent has never said hello)
+      //    refuse the click outright — there's nothing to put in the
+      //    expand row anyway and CSS keeps it collapsed.
+      //  * Offline-with-history rows (.is-offline) still expand AND
+      //    still load tcping history; the chart will simply freeze
+      //    at the last sample until the agent reconnects, matching
+      //    Pulse's "freeze on disconnect, resume on reconnect" model.
+      //  * Online rows expand + run the lazy chart init as before.
+      row.addEventListener('click', () => {
+        if (row.classList.contains('is-pristine')) return;
+        const opening = !detail.classList.contains('is-open');
+        detail.classList.toggle('is-open');
+        if (opening) ensureTcpingChart(id, tcping);
+      });
+
+      return {
+        row, detail, tcping,
+        refs: {
+          status, name: tdName, type: tdType, location: tdLoc,
+          uptime: tdUptime,
+          net,  traf,
+          netIn: net.a,  netOut: net.b,
+          trafIn: traf.a, trafOut: traf.b,
+          cpuBar, memBar, diskBar,
+          cpuInfo, memInfo, swapInfo, diskInfo,
+          tagsLine, tagsList,
+        },
+      };
+    }
+
+    /* Pulse's tag prefix system, rebuilt for the hotaru theme.
+       ----------------------------------------------------------
+       Plain tag                  → `.hotaru-tag` (Semantic UI grey label)
+       `spr:<label>`              → `.hotaru-tag--red`     (Semantic UI red    #db2828)
+       `spy:<label>`              → `.hotaru-tag--yellow`  (Semantic UI yellow #fbbd08)
+       `spb:<label>`              → `.hotaru-tag--blue`    (Semantic UI blue   #2185d0)
+
+       The colour is picked from the third character of the
+       prefix (`r` / `y` / `b`), case-insensitively, mirroring
+       the original Pulse tag-prefix convention. The visible
+       label is everything after the colon, trimmed.
+
+       Why flat solid colours instead of rainbow gradients: the
+       previous Pulse theme used 3-stop rainbow gradients to look
+       modern; hotaru's identity is the opposite — flat Semantic
+       UI palette (which the upstream stylesheet ships verbatim
+       as `.ui.red.label`, etc.). Using those exact hex values
+       makes the badges feel like part of the same system as the
+       rest of the hotaru UI rather than a 2020s SaaS dashboard
+       graft.                                                    */
+    const COLOR_TAG_PREFIX_RE = /^sp([ryb]):(.+)$/i;
+
+    /* Diff-friendly tag-pill renderer.
+       Stores the previous tag signature (JSON of the array) on a
+       data attribute, and only rebuilds the pill DOM when the
+       array actually changes. Empty / nil tags hide the line.
+
+       When the admin has flipped "显示首页标签" off, the navbar
+       config carries `hide_tags: true`. We honour that here as
+       a hard gate — return early with the line hidden, so any
+       subsequent metric refresh that re-runs setTagPills() can't
+       accidentally un-hide it.                                   */
+    function setTagPills(refs, tags) {
+      const cfg = (typeof window !== 'undefined') ? window.__navbarConfig : null;
+      if (cfg && cfg.hide_tags === true) {
+        refs.tagsLine.hidden = true;
+        return;
+      }
+      const list = Array.isArray(tags) ? tags.filter(Boolean) : [];
+      const sig  = JSON.stringify(list);
+      if (refs.tagsList.dataset.tagSig === sig) {
+        refs.tagsLine.hidden = list.length === 0;
+        return;
+      }
+      refs.tagsList.dataset.tagSig = sig;
+      refs.tagsLine.hidden = list.length === 0;
+      while (refs.tagsList.firstChild) {
+        refs.tagsList.removeChild(refs.tagsList.firstChild);
+      }
+      for (const t of list) {
+        if (typeof t !== 'string') continue;
+        const m = COLOR_TAG_PREFIX_RE.exec(t);
+        const pill = document.createElement('span');
+        if (m) {
+          const label = m[2].trim();
+          if (!label) continue; // "spr:   " → blank pill — skip
+          const colour = m[1].toLowerCase();
+          pill.className   = 'hotaru-tag hotaru-tag--' + (
+            colour === 'r' ? 'red'
+            : colour === 'y' ? 'yellow'
+            : 'blue'
+          );
+          pill.textContent = label;
+        } else {
+          pill.className   = 'hotaru-tag';
+          pill.textContent = t;
+        }
+        refs.tagsList.appendChild(pill);
+      }
+    }
+
+    function updateRowEntry(entry, item) {
+      const isOffline  = !!item.alert;
+      const isPristine = isOffline && isPristineItem(item);
+      const r = entry.refs;
+
+      /* Two distinct offline visual states:
+           .is-offline   — agent has been here before (we're showing
+                           a frozen-on-disconnect Pulse-style snapshot)
+           .is-pristine  — agent has never said hello (hotaru-style
+                           "维护中" placeholder; expand row stays
+                           collapsed since there's nothing to put
+                           in it).
+         A row is only ever in one state at a time, but both classes
+         live on the same <tr> and CSS keys off them independently. */
+      if (isOffline)  entry.row.classList.add('is-offline');
+      else            entry.row.classList.remove('is-offline');
+      if (isPristine) entry.row.classList.add('is-pristine');
+      else            entry.row.classList.remove('is-pristine');
+
+      /* Pristine rows that the user had previously expanded (e.g.
+         the row had data, the agent disappeared for long enough to
+         lose its identity in the broadcast, and the row demoted
+         from .is-offline to .is-pristine) get force-collapsed so
+         the empty expand row doesn't linger in the DOM. */
+      if (isPristine) entry.detail.classList.remove('is-open');
+
+      setStatusBar(r.status, isOffline);
+
+      /* Identifier fields (name / type / location):
+           * `name` falls back to "–" when truly missing (no admin
+             label, no agent self-report).
+           * `type` and `location` fall back to "unknown" — these
+             are admin-configurable and may legitimately be left
+             blank at server-add time, in which case "unknown" is
+             a more honest placeholder than a generic dash. The
+             fallback is online-state-independent: a pristine
+             server with admin-set "VPS" + "US" still reads
+             those values, while a pristine server with nothing
+             set reads "unknown / unknown".                        */
+      const name = item.name || '–';
+      setText(r.name, name);
+      setAttr(r.name, 'title', name);
+
+      /* 系统：优先 OS 名称（如 Debian），无则虚拟化类型（如 KVM），与
+         Pulse 探针上报顺序一致。                                      */
+      const sysText = item.os || item.virtualization_type || 'Unknown';
+      const sysKey = 'sys:' + sysText;
+      if (r.type.dataset.sysKey !== sysKey) {
+        r.type.textContent = sysText;
+        r.type.dataset.sysKey = sysKey;
+      }
+
+      /* 位置：中文国名；空或字面 Unknown / unknown → "Unknown"       */
+      const locStr = item.location || '';
+      const locKey = locStr ? ('loc:' + locStr) : 'loc:empty';
+      if (r.location.dataset.locKey !== locKey) {
+        setText(r.location, locationCellText(locStr));
+        setAttr(r.location, 'title', locStr || '');
+        r.location.dataset.locKey = locKey;
+      }
+
+      /* Uptime (在线时间) follows hotaru's `server.uptime || '–'`:
+         disconnected-with-history keeps its last uptime string
+         (e.g. "160d"), pristine rows fall through to '–'. We force
+         '–' explicitly on pristine rather than relying on
+         `item.time`'s falsiness, because the broadcast can
+         occasionally carry an empty-but-truthy placeholder for a
+         pristine row.                                              */
+      setText(r.uptime, isPristine ? '–' : formatUptimeZh(item.time || '–'));
+
+      /* Network rate / total traffic — three render modes:
+           Online                          → "X | Y" with live values.
+           Offline-with-history            → "X | Y" with LAST sample
+                                             (Pulse's freeze-on-disconnect
+                                             behaviour; the user explicitly
+                                             asked we keep this rather than
+                                             collapsing to a dash).
+           Pristine (never reported)       → single "–", full-cell, no pipe
+                                             (matches hotaru's
+                                             `getStatus ? '...' : '–'`).
+         The pipe + two values OR a single dash — never a `– | –`,
+         which is what we used to render and which the user flagged. */
+      r.net.setMode(isPristine);
+      r.traf.setMode(isPristine);
+      if (!isPristine) {
+        setText(r.netIn,   fmtRateShort(item.net_in_mb_s   || 0));
+        setText(r.netOut,  fmtRateShort(item.net_out_mb_s  || 0));
+        setText(r.trafIn,  fmtBytesShort(item.total_net_in_bytes  || 0));
+        setText(r.trafOut, fmtBytesShort(item.total_net_out_bytes || 0));
+      }
+
+      setBar(r.cpuBar,  item.cpu,    isOffline, isPristine);
+      setBar(r.memBar,  item.memory, isOffline, isPristine);
+      setBar(r.diskBar, item.disk,   isOffline, isPristine);
+
+      /* Expand row body — Pulse-style freeze. The expand row is
+         hidden by CSS for pristine rows (.is-pristine + tr.hotaru-
+         expand), so writing into it for a pristine row is just
+         dead bookkeeping: harmless, and means the expand row is
+         already populated correctly the moment the agent finally
+         reports its first cpu_model / memory_info / disk_info.   */
+      setTagPills(r, item.tags);
+      setText(r.cpuInfo,  'CPU 型号: ' + (item.cpu_model   || '–'));
+      setText(r.memInfo,  '内存信息: ' + (item.memory_info || '–'));
+      setText(r.swapInfo, '交换分区: ' + (item.swap_info   || '–'));
+      setText(r.diskInfo, '硬盘信息: ' + (item.disk_info   || '–'));
+    }
+
+    /* Wipe the diff state — call before painting a placeholder
+       (loading / error / empty) tr so subsequent renders rebuild
+       fresh row DOM rather than diffing against stale references.  */
+    function clearDiffState() {
+      rowMap.clear();
+      tbody.innerHTML = '';
+      inPlaceholderState = true;
+    }
+
+    function buildSkeletonPlaceholderRow(message) {
+      const tr = document.createElement('tr');
+      tr.className = 'hotaru-skeleton';
+      tr.setAttribute('aria-busy', 'true');
+      const td = document.createElement('td');
+      td.className = 'hotaru-skeleton-td hotaru-skeleton-td--merged hotaru-placeholder hotaru-error';
+      td.colSpan = 10;
+      td.textContent = message;
+      tr.appendChild(td);
+      return tr;
+    }
+
+    function paintPlaceholder(message) {
+      clearDiffState();
+      tbody.appendChild(buildSkeletonPlaceholderRow(message));
+    }
+
+    /** Cross-fade the full-page initial loader off, reveal <main>.
+        Idempotent — safe to call from both render() (success path)
+        and showError() (failure path), only the first call has any
+        visible effect.                                            */
+    function dismissInitialLoader() {
+      const loader = document.getElementById('hotaru-initial-loader');
+      const app    = document.getElementById('hotaru-app');
+      if (app && !app.classList.contains('is-ready')) {
+        app.classList.add('is-ready');
+      }
+      if (loader && !loader.classList.contains('is-done')) {
+        loader.classList.add('is-done');
+        const remove = () => { try { loader.remove(); } catch (_) {} };
+        loader.addEventListener('transitionend', function onEnd(e) {
+          if (e.target !== loader || e.propertyName !== 'opacity') return;
+          loader.removeEventListener('transitionend', onEnd);
+          remove();
+        });
+        // Belt-and-suspenders: drop after 600 ms even if transitionend
+        // never fires (e.g. tab was backgrounded during the fade).
+        window.setTimeout(remove, 600);
+      }
+    }
+
+    function render(list) {
+      if (!Array.isArray(list)) { showError(); return; }
+      if (errEl) errEl.hidden = true;
+
+      // Coming back from a placeholder state (error / empty list)?
+      // Wipe the placeholder <tr> before diffing real rows in.
+      if (inPlaceholderState) {
+        rowMap.clear();
+        tbody.innerHTML = '';
+        inPlaceholderState = false;
+      }
+
+      if (list.length === 0) {
+        paintPlaceholder(t('暂无服务器，请到管理面板添加。',
+                           'No servers yet — add one in the admin panel.'));
+        if (firstRender) {
+          firstRender = false;
+          dismissInitialLoader();
+        }
+        return;
+      }
+
+      const sorted = list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      const seenIds = new Set();
+      let prevNode = null;
+
+      /* First-paint stagger setup. Only the very first batch of
+         freshly-built rows gets the `.hotaru-row--fresh` class —
+         later SSE pushes that grow the fleet just snap their
+         new rows in place (no animation), which is what users
+         expect for incremental updates. The 50ms / 6-step cap
+         keeps the cascade to ~300ms tops, so even a 100-server
+         fleet finishes settling before the user can blink. */
+      const isFirstPaintStagger = firstRender;
+      let staggerIdx = 0;
+
+      sorted.forEach((item, idx) => {
+        const id = item.id || ('sys-' + idx);
+        seenIds.add(id);
+        let entry = rowMap.get(id);
+
+        if (!entry) {
+          entry = buildRowEntry(item, idx);
+          rowMap.set(id, entry);
+          updateRowEntry(entry, item);
+          if (isFirstPaintStagger) {
+            const stepIdx = Math.min(staggerIdx++, 6);
+            entry.row.style.setProperty('--hotaru-stagger', String(stepIdx * 50));
+            entry.row.classList.add('hotaru-row--fresh');
+            entry.row.addEventListener('animationend', () => {
+              entry.row.classList.remove('hotaru-row--fresh');
+              entry.row.style.removeProperty('--hotaru-stagger');
+            }, { once: true });
+          }
+          // Insert immediately after prevNode (or at the head of
+          // tbody if this is the first sorted item).
+          const after = prevNode ? prevNode.nextSibling : tbody.firstChild;
+          tbody.insertBefore(entry.row, after);
+          tbody.insertBefore(entry.detail, entry.row.nextSibling);
+        } else {
+          updateRowEntry(entry, item);
+          // Reorder only if the row drifted out of position.
+          const expected = prevNode ? prevNode.nextSibling : tbody.firstChild;
+          if (entry.row !== expected) {
+            tbody.insertBefore(entry.row, expected);
+            tbody.insertBefore(entry.detail, entry.row.nextSibling);
+          }
+        }
+        prevNode = entry.detail;
+      });
+
+      // Drop rows that disappeared from the payload.
+      for (const [id, entry] of Array.from(rowMap)) {
+        if (!seenIds.has(id)) {
+          entry.row.remove();
+          entry.detail.remove();
+          rowMap.delete(id);
+        }
+      }
+
+      if (firstRender) {
+        firstRender = false;
+        dismissInitialLoader();
+        document.dispatchEvent(new Event('hotaru:first-render'));
+      }
+    }
+
+    function showError() {
+      paintPlaceholder(t('无法连接到服务器…', 'Cannot reach the server…'));
+      if (errEl) errEl.hidden = false;
+      // Reveal the page even on first-render failure so the user
+      // sees the explanatory error rather than a forever-loading veil.
+      if (firstRender) {
+        firstRender = false;
+        dismissInitialLoader();
+      }
+    }
+
+    /* Broadcasts a fresh metrics list to sibling components and
+       updates the "last update" timestamp display.
+
+       We anchor the timestamp to Date.now() — the moment we
+       received this snapshot — rather than the per-system
+       `updated_at` field. Reasoning:
+
+       * Pulse uses SSE; by the time this function runs, the
+         server has *just* pushed us the freshest snapshot it has.
+         So Date.now() and the snapshot's true age differ by < 100
+         ms in normal operation, and the relative-time line reads
+         "几秒前" exactly when it should.
+
+       * Reading `updated_at` here (the agent's last-sample stamp)
+         is sensitive to client/server clock skew — a 15-minute
+         drift on either side would freeze the display at "15
+         分钟前" even while live data flows in. We saw this in the
+         field. Anchoring on Date.now() is robust to clock drift.
+
+       * Hotaru's `updated.value = res.data.updated` works because
+         hotaru polls every 3 s with a server-stamped JSON payload;
+         the network arrival and the stamp are inseparable. SSE
+         already gives us that property without rereading the
+         stamp.                                                    */
+    function broadcast(list) {
+      const ts = Date.now();
+      lastBroadcastList = list;
+      window.dispatchEvent(new CustomEvent('pulse:metrics-updated', { detail: list }));
+      window.dispatchEvent(new CustomEvent('pulse:metrics-tick',    { detail: { at: ts } }));
+      /* When new tcping_data lands in the broadcast, give every open
+         chart a chance to pull fresh history. The per-target
+         signature gate inside refreshTcpingChart() is what
+         actually decides whether to fetch — same target sig as
+         our cached entry = no network. With per-target fetching
+         we'll typically hit the network at most once per
+         admin-configured probe interval per open chart, not
+         once per 3-s broadcast.                                   */
+      tcpingState.forEach((tcping, id) => {
+        const detailRow = document.querySelector('tr.hotaru-expand[data-expand-for="' + cssEscape(String(id)) + '"]');
+        if (!detailRow || !detailRow.classList.contains('is-open')) return;
+        refreshTcpingChart(id, tcping);
+      });
+    }
+
+    async function fetchOnce() {
+      try {
+        const { qs, headers } = authParts();
+        const res = await fetch(getApiBase() + '/api/metrics' + qs, { headers, cache: 'no-store' });
+        if (res.status === 401) {
+          window.location.href = '/login?redirect=/';
+          return false;
+        }
+        if (!res.ok) { showError(); return false; }
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data && (data.systems || data.metrics || data.items)) || [];
+        render(list);
+        broadcast(list);
+        return true;
+      } catch (_) {
+        showError();
+        return false;
+      }
+    }
+
+    /* ------------------------------------------------------------------
+       Realtime: prefer SSE (/api/events) so the table only mutates
+       when the backend actually pushes a new snapshot — no scheduled
+       3-second redraw. We keep a watchdog that triggers a one-shot
+       poll if the stream goes silent for too long, and reconnect
+       with exponential backoff on transport errors.
+       ------------------------------------------------------------------ */
+    const SSE_PATH        = '/api/events';
+    const STALE_MS        = 45_000;   // no event for this long → poke /api/metrics once
+    const BACKOFF_MIN_MS  = 1_500;
+    const BACKOFF_MAX_MS  = 30_000;
+
+    let evtSource   = null;
+    let backoffMs   = BACKOFF_MIN_MS;
+    let watchdogId  = null;
+    let lastEventAt = Date.now();
+
+    function armWatchdog() {
+      clearTimeout(watchdogId);
+      watchdogId = setTimeout(async () => {
+        if (Date.now() - lastEventAt >= STALE_MS) {
+          // Stream looks silent; do one HTTP poll to repaint, then
+          // re-arm. We do NOT fall back to recurring polling — that
+          // would defeat the whole point of switching to SSE.
+          await fetchOnce();
+          lastEventAt = Date.now();
+        }
+        armWatchdog();
+      }, STALE_MS);
+    }
+
+    function applyEventPayload(raw) {
+      if (raw == null) return;
+      let payload = raw;
+      if (typeof raw === 'string') {
+        try { payload = JSON.parse(raw); } catch (_) { return; }
+      }
+      const list = Array.isArray(payload)
+        ? payload
+        : (payload && (payload.systems || payload.metrics || payload.items)) || null;
+      if (!Array.isArray(list)) return;
+      render(list);
+      broadcast(list);
+      lastEventAt = Date.now();
+    }
+
+    function connectSSE() {
+      try {
+        const { qs } = authParts();
+        // EventSource doesn't let us set headers; the server falls
+        // back to cookie / token query for SSE auth, same way
+        // Pulse's other realtime consumers do.
+        evtSource = new EventSource(getApiBase() + SSE_PATH + qs);
+      } catch (_) {
+        scheduleReconnect();
+        return;
+      }
+
+      evtSource.onopen = () => {
+        backoffMs   = BACKOFF_MIN_MS;
+        lastEventAt = Date.now();
+      };
+
+      // Pulse emits named "update" events; some deployments also send
+      // unnamed messages. We accept both shapes.
+      const onMsg = (ev) => applyEventPayload(ev && ev.data);
+      evtSource.addEventListener('update',  onMsg);
+      evtSource.addEventListener('metrics', onMsg);
+      evtSource.onmessage = onMsg;
+
+      evtSource.onerror = () => {
+        try { evtSource.close(); } catch (_) {}
+        evtSource = null;
+        scheduleReconnect();
+      };
+    }
+
+    function scheduleReconnect() {
+      const wait = backoffMs;
+      backoffMs  = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
+      setTimeout(connectSSE, wait);
+    }
+
+    // Initial paint via REST so the user sees data immediately, then
+    // hand off to SSE for ongoing diffs.
+    (async () => {
+      const ok = await fetchOnce();
+      if (ok || true) {  // start SSE either way; it'll repaint on first event
+        connectSSE();
+        armWatchdog();
+      }
+    })();
+
+    /* Tcping warm-up. Fire the config probe right at script init so
+       that by the time the user clicks to expand any row we already
+       know:
+         - Whether this deployment has any tcping targets at all (if
+           not, we retroactively hide every card built so far so the
+           empty placeholder never gets a chance to flash).
+         - Whether to bother pre-loading the ~300 KB Chart.js bundle
+           (skipped on no-target deployments).
+       The combined effect is that on deployments with targets, the
+       card chrome is already visible the instant the row opens AND
+       the chart canvas paints in the next frame instead of after a
+       CDN round-trip. On deployments without targets, no card is
+       ever shown at all.                                            */
+    loadTcpingConfig().then((cfg) => {
+      const hasTargets = !!(cfg
+                            && Array.isArray(cfg.targets)
+                            && cfg.targets.length > 0);
+      if (!hasTargets) {
+        document.querySelectorAll('.hotaru-tcping').forEach((el) => {
+          el.hidden = true;
+        });
+        return;
+      }
+      loadChartJs();
+    });
+
+    // Be a good citizen: stop the stream when the tab is fully closed.
+    window.addEventListener('beforeunload', () => {
+      try { if (evtSource) evtSource.close(); } catch (_) {}
+      clearTimeout(watchdogId);
+    });
+  })();
+</script>

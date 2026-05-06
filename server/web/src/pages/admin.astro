@@ -1,238 +1,126 @@
 ---
 import '../styles/global.css';
-import NavBar from '../components/NavBar.astro';
+import '../styles/hotaru-theme.css';
 import AdminDashboard from '../components/AdminDashboard.astro';
 import Footer from '../components/Footer.astro';
 
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
 ---
 
-<html lang="en" class="dark overflow-x-hidden" data-api-base={apiBase}>
+<!--
+  Admin page — fully aligned with the hotaru theme:
+    • light only (no dark mode classes anywhere)
+    • Chinese only (no language toggle)
+    • no navbar — actions are in the AdminDashboard toolbar
+
+  AdminDashboard.astro is reused as-is (it carries all admin
+  functionality). Every Tailwind `dark:` variant has been stripped
+  from that component, so the compiled CSS no longer ships any
+  dark-mode rules; the page is light-only end-to-end.
+-->
+<html lang="zh-CN" class="light overflow-x-hidden" data-api-base={apiBase}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Pulse Monitor admin console — manage clients, policies, and backups." />
+    <meta name="description" content="Pulse Monitor 管理控制台" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="googlebot" content="noindex, nofollow" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="format-detection" content="telephone=no" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
-    <meta property="og:title" content="Admin · Pulse Monitor" />
-    <meta property="og:description" content="Pulse Monitor admin console." />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pulse Monitor" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Admin · Pulse Monitor" />
-    <meta name="twitter:description" content="Pulse Monitor admin console." />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#fafafa" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
-    <title>Admin · Pulse Monitor</title>
-    <!-- View Transitions API styling for smooth theme switching -->
-    <style>
-      /* View Transitions API support for smooth cross-fade */
-      ::view-transition-old(root),
-      ::view-transition-new(root) {
-        animation-duration: 0.15s;
-        animation-timing-function: ease-in-out;
-      }
-      
-      ::view-transition-old(root) {
-        animation-name: fade-out;
-      }
-      
-      ::view-transition-new(root) {
-        animation-name: fade-in;
-      }
-      
-      @keyframes fade-out {
-        from { opacity: 1; }
-        to { opacity: 0; }
-      }
-      
-      @keyframes fade-in {
-        from { opacity: 0; }
-        to { opacity: 1; }
-      }
-      
-      /* Disable all transitions when theme-switching class is present */
-      html.theme-switching *,
-      html.theme-switching *::before,
-      html.theme-switching *::after {
-        transition: none !important;
-        animation-duration: 0s !important;
-      }
-    </style>
-    <!-- Initialize language and theme before page render to prevent FOUC -->
+    <title>管理 · Pulse Monitor</title>
     <script is:inline>
-      (function() {
-        // Get system language (convert to 'zh' or 'en')
-        function getSystemLanguage() {
-          const sysLang = navigator.language || (navigator.languages && navigator.languages[0]) || 'en';
-          // Check if system language is Chinese (zh, zh-CN, zh-TW, etc.)
-          if (sysLang.toLowerCase().startsWith('zh')) {
-            return 'zh';
-          }
-          return 'en';
-        }
-        
-        // Get system theme
-        function getSystemTheme() {
-          if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            return 'dark';
-          }
-          return 'light';
-        }
-        
-        // Get language preference (use system language as default)
-        const storedLang = localStorage.getItem('preferred-language');
-        const lang = storedLang || getSystemLanguage();
-        document.documentElement.lang = lang;
-        
-        // Get theme preference (use system theme as default)
-        const storedTheme = localStorage.getItem('preferred-theme');
-        const theme = (storedTheme === 'dark' || storedTheme === 'light') ? storedTheme : getSystemTheme();
-        
-        // Apply theme immediately to html
-        const html = document.documentElement;
-        if (theme === 'dark') {
-          html.classList.add('dark');
-          html.classList.remove('light');
-        } else {
-          html.classList.add('light');
-          html.classList.remove('dark');
-        }
-        
-        // Apply theme to body when it's available
-        function applyThemeToBody() {
+      (function () {
+        // Light-mode + zh-CN locked at the source. Forced regardless of
+        // any stale `preferred-language` / `preferred-theme` value the
+        // user may have stored from an earlier build.
+        document.documentElement.lang = 'zh-CN';
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+        try { localStorage.setItem('preferred-language', 'zh'); } catch (_) {}
+        try { localStorage.setItem('preferred-theme', 'light'); } catch (_) {}
+
+        function applyBody() {
           const body = document.body;
           if (body) {
-            if (theme === 'dark') {
-              body.classList.add('dark');
-              body.classList.remove('light');
-            } else {
-              body.classList.add('light');
-              body.classList.remove('dark');
-            }
+            body.classList.add('light');
+            body.classList.remove('dark');
           } else {
-            // Body not ready yet, try again
-            requestAnimationFrame(applyThemeToBody);
+            requestAnimationFrame(applyBody);
           }
         }
-        applyThemeToBody();
-        
-        // Preload navbar config early (non-blocking)
+        applyBody();
+
+        // Preload navbar config for title / favicon only — we don't
+        // render a navbar here, but the operator's branded title and
+        // logo are still applied for consistency with the public page.
         const apiBase = window.location.origin;
         fetch(`${apiBase}/api/navbar/config`)
-          .then(res => res.ok ? res.json() : null)
-          .then(config => {
-            if (config) {
-              // Store config for NavBar component to use
-              window.__navbarConfig = config;
-              // Update page title with navbar text
-              if (config.text) {
-                document.title = `Admin - ${config.text}`;
+          .then((res) => (res.ok ? res.json() : null))
+          .then((config) => {
+            if (!config) return;
+            window.__navbarConfig = config;
+            if (config.text) document.title = `管理 · ${config.text}`;
+            if (config.logo) {
+              const favicon = document.querySelector('link[rel="icon"]');
+              if (favicon) {
+                favicon.href = config.logo;
+                const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
+                if (ext === 'svg') favicon.type = 'image/svg+xml';
+                else if (ext === 'png') favicon.type = 'image/png';
+                else if (ext === 'jpg' || ext === 'jpeg') favicon.type = 'image/jpeg';
+                else if (ext === 'ico') favicon.type = 'image/x-icon';
+                else favicon.removeAttribute('type');
               }
-              // Update favicon with custom logo
-              if (config.logo) {
-                const favicon = document.querySelector('link[rel="icon"]');
-                if (favicon) {
-                  favicon.href = config.logo;
-                  // Auto-detect image type based on URL extension
-                  const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
-                  if (ext === 'svg') {
-                    favicon.type = 'image/svg+xml';
-                  } else if (ext === 'png') {
-                    favicon.type = 'image/png';
-                  } else if (ext === 'jpg' || ext === 'jpeg') {
-                    favicon.type = 'image/jpeg';
-                  } else if (ext === 'ico') {
-                    favicon.type = 'image/x-icon';
-                  } else {
-                    // Remove type attribute to let browser auto-detect
-                    favicon.removeAttribute('type');
-                  }
-                }
-              }
-              // Apply glassmorphism effect if enabled
-              if (config.show_glass) {
-                document.documentElement.classList.add('glass-enabled');
-              }
-              // Dispatch event when config is ready
-              window.dispatchEvent(new CustomEvent('navbarconfigready', { detail: config }));
             }
           })
-          .catch(() => {
-            // Silently fail, NavBar will handle defaults
-          });
+          .catch(() => {});
       })();
     </script>
-    <!-- Load custom CSS and JS from backend (all users see it) -->
+    <!-- Operator-supplied custom CSS / JS hook (sync XHR so injected
+         <script> tags load before DOMContentLoaded). -->
     <script is:inline>
-      (function() {
-        // Use synchronous XMLHttpRequest to load config BEFORE page renders
-        // This ensures external scripts load early enough for DOMContentLoaded
+      (function () {
         try {
           var xhr = new XMLHttpRequest();
-          xhr.open('GET', '/api/navbar/config', false); // false = synchronous
+          xhr.open('GET', '/api/navbar/config', false);
           xhr.send();
-          
-          if (xhr.status === 200) {
-            var config = JSON.parse(xhr.responseText);
-            
-            // Apply glassmorphism effect immediately (before render)
-            if (config.show_glass) {
-              document.documentElement.classList.add('glass-enabled');
+          if (xhr.status !== 200) return;
+          var config = JSON.parse(xhr.responseText);
+          if (config.custom_css && config.custom_css.trim()) {
+            var style = document.createElement('style');
+            style.textContent = config.custom_css;
+            document.head.appendChild(style);
+          }
+          if (config.custom_js && config.custom_js.trim()) {
+            var customJS = config.custom_js;
+            var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+            var matches = [];
+            var m;
+            while ((m = scriptTagRegex.exec(customJS)) !== null) {
+              matches.push({ attrs: m[1], content: m[2] });
             }
-            
-            // Inject CSS if exists
-            if (config.custom_css && config.custom_css.trim()) {
-              var style = document.createElement('style');
-              style.textContent = config.custom_css;
-              document.head.appendChild(style);
-            }
-            
-            // Inject JS if exists
-            if (config.custom_js && config.custom_js.trim()) {
-              var customJS = config.custom_js;
-              
-              // Check if it's a complete <script> tag (external or with attributes)
-              var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
-              var scriptMatches = [];
-              var match;
-              while ((match = scriptTagRegex.exec(customJS)) !== null) {
-                scriptMatches.push({attrs: match[1], content: match[2]});
-              }
-              
-              if (scriptMatches.length > 0) {
-                // Has <script> tags - parse and inject each
-                scriptMatches.forEach(function(scriptData) {
-                  var script = document.createElement('script');
-                  
-                  // Check if it has src attribute (external script)
-                  var srcMatch = scriptData.attrs.match(/src=["']([^"']+)["']/);
-                  if (srcMatch) {
-                    script.src = srcMatch[1];
-                    // Force synchronous loading for external scripts
-                    script.async = false;
-                    script.defer = false;
-                  } else if (scriptData.content.trim()) {
-                    // Inline script
-                    script.textContent = scriptData.content;
-                  }
-                  
-                  if (script.src || script.textContent) {
-                    document.head.appendChild(script);
-                  }
-                });
-              } else {
-                // Plain JS code without tags - inject directly
-                var script = document.createElement('script');
-                script.textContent = customJS;
-                document.head.appendChild(script);
-              }
+            if (matches.length > 0) {
+              matches.forEach(function (data) {
+                var s = document.createElement('script');
+                var srcMatch = data.attrs.match(/src=["']([^"']+)["']/);
+                if (srcMatch) {
+                  s.src = srcMatch[1];
+                  s.async = false;
+                  s.defer = false;
+                } else if (data.content.trim()) {
+                  s.textContent = data.content;
+                }
+                if (s.src || s.textContent) document.head.appendChild(s);
+              });
+            } else {
+              var s = document.createElement('script');
+              s.textContent = customJS;
+              document.head.appendChild(s);
             }
           }
         } catch (err) {
@@ -241,140 +129,128 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       })();
     </script>
   </head>
-  <body class="min-h-screen overflow-x-hidden bg-[#fafafa] dark:bg-[#151515] text-[#151515] dark:text-[#f5f5f5]">
-    <div id="auth-check" class="hidden min-h-screen flex flex-col">
-      <div class="px-2 sm:px-4 md:px-6 animate-navbar">
-        <NavBar isAdmin={true} />
-      </div>
-      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 pb-2 sm:pb-4 animate-content">
+  <body class="hotaru-theme light min-h-screen">
+    <div id="auth-check" class="hotaru-admin-shell" hidden>
+      <main>
         <AdminDashboard apiBase={apiBase} />
       </main>
-      <div class="px-2 sm:px-4 md:px-6">
-        <Footer />
-      </div>
+      <Footer />
     </div>
+
     <!--
-      Auth-gate overlay — see index.astro for the full rationale.
-      TL;DR: `fixed inset-0` + opacity transition so the spinner cross-
-      fades out while the admin content fades in beneath, instead of
-      snapping out of the layout and leaving a one-frame blank gap
-      before `.animate-content` (delay: 0.1s) begins its entrance.
+      Auth-gate overlay — same cross-fade pattern as before but
+      without dark variants. White hotaru bg + neutral spinner.
     -->
-    <div id="login-redirect" class="fixed inset-0 z-50 flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] transition-opacity duration-200 ease-out">
-      <div class="text-center animate-page-in">
-        <div class="w-8 h-8 border-[3px] border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin-smooth mx-auto mb-4"></div>
-        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">Checking authentication...</p>
+    <div id="login-redirect" class="hotaru-auth-redirect">
+      <div class="hotaru-auth-redirect__inner">
+        <span class="hotaru-auth-redirect__spinner" aria-hidden="true"></span>
+        <p class="hotaru-auth-redirect__text">正在校验登录状态…</p>
       </div>
     </div>
   </body>
 </html>
 
+<style>
+  /* Page-local styles for the auth-gate overlay. Kept out of the
+     global hotaru-theme.css since they only apply on this page.    */
+  .hotaru-auth-redirect {
+    position: fixed;
+    inset: 0;
+    z-index: 9990;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    transition: opacity 0.2s ease-out;
+  }
+  .hotaru-auth-redirect__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8rem;
+  }
+  .hotaru-auth-redirect__spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(0, 0, 0, 0.08);
+    border-top-color: #525252;
+    border-radius: 50%;
+    animation: hotaru-auth-spin 0.8s linear infinite;
+  }
+  .hotaru-auth-redirect__text {
+    margin: 0;
+    color: var(--hotaru-muted);
+    font-size: 0.9rem;
+  }
+  @keyframes hotaru-auth-spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+
 <script>
-  // Get API base URL - same logic as LoginForm
   function getApiBase() {
     const root = document.documentElement;
     if (root?.dataset?.apiBase && root.dataset.apiBase.trim() !== '') {
       return root.dataset.apiBase.trim();
     }
-    // Use current origin (works with nginx reverse proxy)
     return window.location.origin;
   }
-  
+
   const apiBase = getApiBase();
-  
-  // Check authentication on page load
-  // Note: Admin page requires login in normal mode, but not in privacy mode
+
   (async () => {
-    const authCheck = document.getElementById('auth-check');
+    const authCheck     = document.getElementById('auth-check');
     const loginRedirect = document.getElementById('login-redirect');
-    
-    // First check if password is set - if not, allow access to setup
+
+    /* If no admin password has been set yet, route the visitor
+       through /login so they can configure one. */
     try {
       const statusRes = await fetch(`${apiBase}/api/auth/status`);
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         if (!statusData.set) {
-          // Password not set yet, redirect to login to set it up
           window.location.href = '/login?redirect=/admin';
           return;
         }
       }
-    } catch (err) {
-      // Continue with privacy check
-    }
-    
-    // Check privacy mode
-    let privacyEnabled = false;
-    try {
-      const privacyRes = await fetch(`${apiBase}/api/privacy/config`);
-      if (privacyRes.ok) {
-        const privacyConfig = await privacyRes.json();
-        privacyEnabled = privacyConfig.enabled || false;
-      }
-    } catch (err) {
-      // Privacy check failed, assume normal mode
-    }
-    
-    // Get stored token
+    } catch (_) {}
+
     const token = localStorage.getItem('admin_auth_token');
-    
-    // Both normal mode and privacy mode require token verification
-    // In privacy mode, if user logged in at index page, they can use the same token for admin
     if (!token) {
-      // No token, redirect to login
       window.location.href = '/login?redirect=/admin';
       return;
     }
-    
-    // Verify token (same logic for both modes)
+
     try {
       const res = await fetch(`${apiBase}/api/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
+        body: JSON.stringify({ token }),
       });
-      
-      if (res.ok) {
-        const data = await res.json();
-        if (data.valid) {
-          // Token is valid — cross-fade the overlay out so the admin
-          // dashboard appears smoothly beneath. `.animate-content` on
-          // <main> has a 100 ms animation-delay, and the overlay's
-          // `transition: opacity 200ms` keeps the spinner visible
-          // through that window so the user never sees an empty frame.
-          // `pointer-events: none` drops the overlay out of the hit-
-          // testing path immediately so clicks land on the NavBar /
-          // content while the fade is in progress, instead of being
-          // swallowed by the still-present (but fading) `z-50` layer.
-          // `.hidden` is deferred until after the transition completes.
-          authCheck.classList.remove('hidden');
-          loginRedirect.style.pointerEvents = 'none';
-          loginRedirect.style.opacity = '0';
-          setTimeout(() => loginRedirect.classList.add('hidden'), 220);
-          
-          // Set token in all API requests
-          const originalFetch = window.fetch;
-          window.fetch = function(...args) {
-            const [url, options = {}] = args;
-            if (typeof url === 'string' && (url.startsWith(apiBase) || url.startsWith('/api/'))) {
-              options.headers = {
-                ...options.headers,
-                'Authorization': `Bearer ${token}`
-              };
-            }
-            return originalFetch.apply(this, [url, options]);
+      if (!res.ok) throw new Error('verify failed');
+      const data = await res.json();
+      if (!data.valid) throw new Error('token invalid');
+
+      // Show the dashboard, fade the overlay out.
+      authCheck.removeAttribute('hidden');
+      loginRedirect.style.pointerEvents = 'none';
+      loginRedirect.style.opacity = '0';
+      setTimeout(() => loginRedirect.setAttribute('hidden', ''), 220);
+
+      // Inject the auth token into all subsequent fetch calls so
+      // AdminDashboard's API calls authenticate transparently.
+      const originalFetch = window.fetch;
+      window.fetch = function (...args) {
+        const [url, options = {}] = args;
+        if (typeof url === 'string' && (url.startsWith(apiBase) || url.startsWith('/api/'))) {
+          options.headers = {
+            ...options.headers,
+            Authorization: `Bearer ${token}`,
           };
-        } else {
-          // Token is invalid, redirect to login
-          localStorage.removeItem('admin_auth_token');
-          window.location.href = '/login?redirect=/admin';
         }
-      } else {
-        // Verification failed, redirect to login
-        localStorage.removeItem('admin_auth_token');
-        window.location.href = '/login?redirect=/admin';
-      }
-    } catch (err) {
+        return originalFetch.apply(this, [url, options]);
+      };
+    } catch (_) {
       localStorage.removeItem('admin_auth_token');
       window.location.href = '/login?redirect=/admin';
     }

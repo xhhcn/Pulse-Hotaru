@@ -1,0 +1,1574 @@
+/* ============================================================
+   Hotaru-style theme overlay for Pulse — light-mode only
+   ------------------------------------------------------------
+   Original Astro/Tailwind re-implementation that captures the
+   visual language of cokemine/hotaru_theme:
+
+     • tiled pastel page background
+     • translucent white cards with soft drop shadow
+     • near-black body text (#616366) with #919699 / #9da2a6
+       muted greys for secondary copy and table headers
+     • rounded chunky progress bars
+     • Semantic UI green / yellow (#F2C037) / red status colors
+
+   Hotaru itself uses pink (#ff779a) only for the footer link
+   colour, which we do not use. There is therefore no pink in
+   our theme — the admin / login pages use a neutral dark-grey
+   (#404040 / #262626) accent which matches hotaru's overall
+   gray-on-white aesthetic.
+   No Pixiv artwork is bundled — the cover SVG is original.
+   ============================================================ */
+
+/* Hotaru loads Lato via Semantic UI's first @import line:
+   `@import url(https://fonts.googleapis.com/css?family=Lato:400,700,...)`.
+   We mirror that exactly so Latin text renders in real Lato (not a
+   Helvetica fallback) — same geometry hotaru actually paints in
+   production deployments.                                          */
+@import url('https://fonts.googleapis.com/css?family=Lato:400,700,400italic,700italic&subset=latin');
+
+:root {
+  --hotaru-text:        #616366;   /* main text  (hotaru's own #616366) */
+  --hotaru-muted:       #919699;   /* card secondary  */
+  --hotaru-faint:       #9da2a6;   /* table head      */
+  --hotaru-line:        rgba(0, 0, 0, 0.06);
+
+  --hotaru-card-bg:     rgba(255, 255, 255, 0.8);
+  /* Hotaru: TableItem.vue sets `tr.tableRow { background-color:
+     rgba(249, 249, 249, .8) }`. We keep the literal value — the
+     row bg is hotaru's exact spec.                                */
+  --hotaru-row-bg:      rgba(249, 249, 249, 0.8);
+  --hotaru-row-hover:   rgba(255, 255, 255, 0.95);
+  /* Semantic UI's `.ui.basic.table tbody tr { border-bottom: 1px
+     solid rgba(0, 0, 0, .1) }` is what gives hotaru its visible
+     row separator. Hotaru's `tr td { border: none !important }`
+     only nullifies td borders, so this 1px tr-level hairline
+     survives and renders between rows. We mirror it on td-bottom
+     (works the same in `border-collapse: separate` mode and is
+     more reliable across browsers).                               */
+  --hotaru-row-divider: rgba(0, 0, 0, 0.1);
+
+  --hotaru-shadow:      5px 5px 25px 0 rgba(46, 61, 73, 0.2);
+  --hotaru-shadow-sm:   0 2px 6px rgba(46, 61, 73, 0.08);
+
+  --hotaru-radius:      8px;
+  --hotaru-radius-lg:   12px;
+  --hotaru-radius-xl:   18px;
+
+  --hotaru-status-ok:   #21BA45;   /* semantic-ui .success */
+  --hotaru-status-warn: #F2C037;   /* semantic-ui .warning (exact: #f2c037) */
+  --hotaru-status-bad:  #DB2828;   /* semantic-ui .error   */
+  --hotaru-status-off:  #9b9fa3;
+}
+
+/* ------------------------------------------------------------
+   Root font size — Semantic UI (which hotaru depends on) sets
+   `html { font-size: 14px }` globally. This makes 1rem = 14px
+   and is why hotaru's bar/table specs use values like 0.9rem
+   (= 12.6px) and 0.78em cells. Without this the bars render at
+   14.4px (0.9 × 16px default) instead of 12.6px, visibly too
+   large. The responsive overrides below (13px / 12px) match
+   hotaru's own @media rules in App.vue.
+   Font family: Semantic UI ships with Lato first; we mirror the
+   exact same stack so layout metrics stay identical.
+   ------------------------------------------------------------ */
+html, html.dark, html.light {
+  font-size: 14px;
+  color-scheme: light !important;
+  /* Reserve space for the vertical scrollbar so the table width does
+     not shift when the first data rows paint (common "header drift"). */
+  scrollbar-gutter: stable;
+}
+
+body.hotaru-theme {
+  /* Plain near-white surface. Hotaru's stock theme uses a tiled
+     bg.png as its body background — visually a clean, almost-white
+     paper texture. We don't reproduce that image asset; instead we
+     use a flat #ffffff so the rows' rgba(249,249,249,.8) reads as
+     a faint grey band on white, which is the contrast direction
+     hotaru's deployments end up with anyway.                       */
+  background: #ffffff !important;
+  /* Mirror Semantic UI body exactly:
+       color rgba(0,0,0,.87)        — near-black, NOT #616366
+       line-height 1.4285em         — Semantic UI body line-height
+       font-family Lato fallback    — same stack as Semantic UI body
+       -webkit-font-smoothing antialiased — same antialiasing
+     The td/th overrides further down still pull their own colors
+     (#616366 for cells, #9da2a6 for headers) — body color governs
+     the "最后更新", error message, and any other un-styled text.   */
+  color: rgba(0, 0, 0, 0.87) !important;
+  line-height: 1.4285em;
+  font-family: Lato, 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* The cover-image masthead from upstream `TheHeader.vue` (a 25 rem
+   tall hero with a title/subtitle overlay) was deliberately dropped
+   from this build per user request — none of the three pages render
+   one. The associated `.hotaru-banner*` rule set used to live here
+   and has been removed to keep the compiled CSS lean. The exact
+   values (font-size 3.57rem title, 1.5rem subtitle, 25→20 rem height
+   at ≤768 px) can be re-derived from upstream Hotaru's
+   `TheHeader.vue` if a future build wants to bring the banner back. */
+
+/* ============================================================
+   Page container & section spacing
+   ============================================================ */
+.hotaru-container {
+  max-width: 1155px;
+  margin: 0 auto;
+  padding: 0 0.8rem;
+}
+@media (min-width: 1200px) { .hotaru-container { width: 1155px; } }
+
+/* When the index page drops its banner the table needs a bit of
+   breathing room at the top so it doesn't kiss the viewport edge. */
+.hotaru-container--top { padding-top: 2.4rem; }
+@media (max-width: 768px) { .hotaru-container--top { padding-top: 1.4rem; } }
+
+/* ============================================================
+   Update time line
+   ============================================================ */
+.hotaru-updated {
+  /* Hotaru's UpdateTime.vue:
+       `.updated { margin-bottom: -15px; margin-left: 5px }`
+     No color set → inherits body's rgba(0, 0, 0, 0.87) (near-black).
+     We deliberately leave color unset to inherit the same. The
+     -15px bottom pulls the text up so it tucks against the table
+     bottom and the 5px left aligns it just inside the table edge. */
+  margin: 0 0 -15px 5px;
+}
+.hotaru-updated[data-fresh="false"] {
+  /* Stale tick (>30 s old) only — "从未." keeps data-fresh="true"
+     so it stays at var(--hotaru-text) like hotaru's calm update line. */
+  color: var(--hotaru-status-bad);
+}
+
+/* ============================================================
+   Server table
+   ------------------------------------------------------------
+   Hotaru's table strategy: NO horizontal scroll — the table is
+   always 100% of its container, columns shrink, and at narrow
+   breakpoints whole columns are hidden until what remains
+   comfortably fits. This matches the "ui basic unstackable
+   table" feel of the original without any overflow trick.
+   ============================================================ */
+.hotaru-table-wrap {
+  padding-top: 0.6rem;
+  /* No overflow-x — we never want horizontal scrolling.        */
+  /* `min-width: 0` lets the wrapper actually shrink inside its
+     flex/grid parent so cell content with white-space:nowrap
+     can't push the page wider than the viewport.               */
+  min-width: 0;
+}
+
+.hotaru-table {
+  width: 100%;
+  table-layout: auto;
+  /* Match hotaru exactly: Semantic UI's `.ui.basic.unstackable.table`
+     default border-spacing is 0, so rows abut each other directly
+     and the thead sits flush against the first tbody row — no gap.
+     The visual rhythm between rows comes from the off-white row
+     background contrasting with the white page, not from gaps.    */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 1rem;
+  text-align: center;
+  vertical-align: middle;
+  border: none;
+  margin: 0;
+  /* Subtle layer promo — reduces occasional 1px thead/body shimmer when
+     rows first paint (harmless with hotaru's flat aesthetic).        */
+  backface-visibility: hidden;
+}
+
+/* ============================================================
+   Full-page initial loader
+   ------------------------------------------------------------
+   Pulse-original (hotaru has no loader). A fixed-positioned
+   centred plain-text "Loading" + an animated ellipsis veils
+   the empty layout until the first metrics response lands.
+   No spinner, no coloured dots — just the same near-black
+   body text colour hotaru itself uses (#616366-ish), so it
+   reads as a single calm word, then disappears.
+
+   The whole page (`<main class="hotaru-app">`) is hidden
+   underneath via `opacity: 0; visibility: hidden`. When the
+   first response (success or error) lands we add `.is-ready`
+   to <main> (fades the content in) and `.is-done` to the
+   loader (fades the veil out, then it's removed from the DOM).
+   Times are deliberately short (~320ms) — hotaru's aesthetic
+   is calm but not slow.                                       */
+.hotaru-initial-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  /* Match hotaru's gray palette — same tone TheError/ServersTable
+     use for muted text. No pink anywhere in the original theme.   */
+  color: #616366;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  /* Same easing curve as the expand-row open animation so the
+     overall page motion feels consistent.                     */
+  transition: opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hotaru-initial-loader.is-done {
+  opacity: 0;
+  pointer-events: none;
+}
+.hotaru-initial-loader__text {
+  font-weight: 500;
+  /* Reserve space for the trailing "..." so the word "Loading"
+     doesn't shift horizontally as dots appear/disappear.        */
+  display: inline-block;
+}
+.hotaru-initial-loader__ellipsis {
+  display: inline-block;
+  /* Width of three "."s in Lato 1rem ≈ 0.9em — fixed so the
+     centring stays pixel-stable across the cycle.              */
+  width: 1em;
+  text-align: left;
+  letter-spacing: 0.05em;
+}
+.hotaru-initial-loader__ellipsis > span {
+  opacity: 0;
+  /* steps(1) gives a clean snap rather than fade — the dots
+     read as text appearing/disappearing, not as blinking lights. */
+  animation: 1.4s steps(1, end) infinite;
+}
+.hotaru-initial-loader__ellipsis > span:nth-child(1) { animation-name: hotaru-ellipsis-1; }
+.hotaru-initial-loader__ellipsis > span:nth-child(2) { animation-name: hotaru-ellipsis-2; }
+.hotaru-initial-loader__ellipsis > span:nth-child(3) { animation-name: hotaru-ellipsis-3; }
+
+/* Cycle (1.4s):
+     0–25%   "Loading."
+     25–50%  "Loading.."
+     50–75%  "Loading..."
+     75–100% "Loading"        ← brief pause, then loop          */
+@keyframes hotaru-ellipsis-1 {
+  0%, 74.99% { opacity: 1; }
+  75%, 100%  { opacity: 0; }
+}
+@keyframes hotaru-ellipsis-2 {
+  0%, 24.99%  { opacity: 0; }
+  25%, 74.99% { opacity: 1; }
+  75%, 100%   { opacity: 0; }
+}
+@keyframes hotaru-ellipsis-3 {
+  0%, 49.99%  { opacity: 0; }
+  50%, 74.99% { opacity: 1; }
+  75%, 100%   { opacity: 0; }
+}
+
+.hotaru-app {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hotaru-app.is-ready {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* First-paint stagger
+   ----------------------------------------------------------------
+   Once the initial loader fades out and `.hotaru-app.is-ready`
+   reveals the page, the table rows and summary cards are
+   already in place — the cross-fade carries them in as a single
+   block. That looks fine but feels a touch flat. To give the
+   dashboard a little life on arrival, the first batch of rows
+   that the smart-diff renderer mounts is tagged
+   `.hotaru-row--fresh`; same for cards on `.hotaru-card--fresh`.
+   Each tagged element runs a single 240ms fade-up from
+   `translateY(4px)`, with a small per-index delay (capped at
+   ~6 items so a 30-server fleet never staggers visibly long).
+
+   Subsequent SSE pushes never add the class, so live updates
+   are instantaneous — the animation only celebrates the very
+   first render and then disappears from the runtime.
+
+   Both animations honour `prefers-reduced-motion: reduce`
+   (defined in the block below) by skipping the keyframes and
+   landing the elements at their final state immediately.       */
+@keyframes hotaru-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hotaru-table tbody tr.hotaru-row--fresh {
+  animation: hotaru-row-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--hotaru-stagger, 0) * 1ms);
+}
+.hotaru-cards-grid .hotaru-card--fresh {
+  animation: hotaru-row-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--hotaru-stagger, 0) * 1ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hotaru-initial-loader,
+  .hotaru-app {
+    transition: none !important;
+  }
+  .hotaru-initial-loader__ellipsis > span {
+    animation: none;
+    opacity: 1;
+  }
+  .hotaru-table tbody tr.hotaru-row--fresh,
+  .hotaru-cards-grid .hotaru-card--fresh {
+    animation: none !important;
+  }
+}
+
+/* Error / empty placeholder rows
+   ----------------------------------------------------------------
+   Single merged <td colspan=10> centred, painted dynamically by
+   paintPlaceholder() on error / empty-list states.                */
+.hotaru-table tbody tr.hotaru-skeleton {
+  vertical-align: middle;
+  cursor: default;
+}
+.hotaru-table tbody tr.hotaru-skeleton td.hotaru-skeleton-td {
+  color: var(--hotaru-faint) !important;
+  font-weight: 600 !important;
+  background: transparent !important;
+  border: none !important;
+  white-space: nowrap !important;
+  padding: 1.6em 0.78571429em !important;
+  font-size: 1rem !important;
+  letter-spacing: 0.02em;
+  text-align: center !important;
+}
+.hotaru-table tbody tr.hotaru-skeleton td.hotaru-skeleton-td--merged {
+  text-align: center;
+}
+
+/* The header underline is THE most distinctive hotaru table cue.
+   It comes from Semantic UI's default .ui.table thead th rule
+   (border-bottom 1px rgba(34,36,38,.1)) which hotaru preserves
+   because hotaru's td-only border reset doesn't touch th.
+   Padding matches Semantic UI's exact spec — vertical .92857143em,
+   horizontal .78571429em — slightly taller than tbody td so the
+   header sits with a touch more breathing room than data rows.   */
+.hotaru-table thead th {
+  color: var(--hotaru-faint);
+  font-weight: 700;
+  white-space: nowrap;
+  padding: 0.92857143em 0.78571429em;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(34, 36, 38, 0.1);
+  font-size: 1rem;
+}
+
+.hotaru-table tbody tr.hotaru-row {
+  /* Row background sits on the td (not the tr) so we can clip it
+     with `background-clip: padding-box` and let the td's transparent
+     bottom border show the page colour through. That's how we get
+     a visible row-to-row gap WITHOUT widening thead↔first-row.    */
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.hotaru-table tbody tr.hotaru-row td {
+  color: var(--hotaru-text);
+  font-weight: bold;
+  background-color: var(--hotaru-row-bg);
+  /* Hotaru's `tr td { border: none !important }` — no borders on
+     any td. The visible row-to-row gap is contributed by the
+     EXPAND row's td padding, not by anything on this row.
+     Padding matches Semantic UI's `.78571429em` exact value.     */
+  border: none;
+  white-space: nowrap;
+  padding: 0.78571429em 0.78571429em;
+  font-variant-numeric: tabular-nums;
+  font-size: 1rem;
+  /* Smooth background fade on hover, matching the 0.1s timing
+     Semantic UI uses across .ui.button / .ui.label / .ui.input.
+     Without this, the row hover would snap from the translucent
+     base colour to its saturated hover variant, which looks
+     jumpy next to the soft fades elsewhere on the page.        */
+  transition: background-color 0.1s ease;
+}
+/* Network / traffic cells inherit the row's `font-size: 1rem` and
+   `font-weight: bold` like every other cell — hotaru never gives
+   these columns a smaller font. The compact B/K/M/G/T format
+   (see HotaruServerTable.astro) keeps them from pushing wide.   */
+
+/* Name column truncates with ellipsis instead of pushing wide. */
+.hotaru-table tbody tr.hotaru-row td.hotaru-cell-name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pipe separator inherits the cell's bold + #616366 so it reads
+   as one continuous string, identical to hotaru's plain " | "
+   text concatenation. Hotaru renders network/traffic as a single
+   string `${rx} | ${tx}` — pipe surrounded by only a single normal
+   space (~0.25em). We use 0.1em side margin so the rendered total
+   spacing (margin + inherent space-glyph) is ≈ 0.3em, matching
+   hotaru's visual rhythm.                                        */
+.hotaru-table .hotaru-pipe {
+  color: inherit;
+  font-weight: inherit;
+  margin: 0 0.1em;
+}
+
+@media (max-width: 1200px) {
+  .hotaru-table thead th,
+  .hotaru-table tbody tr.hotaru-row td { padding: 0.7em; }
+}
+
+/* Density tiers — hotaru App.vue: `html, body { font-size: 13px }`
+   @ 992 px, then 12 px @ 768 px. Those drive every `rem` in the UI.
+
+   IMPORTANT: the base rule above also targets `html.light` /
+   `html.dark` at selector specificity (type+class). A plain
+   `@media … { html { font-size: 12px } }` NEVER wins against that —
+   phones would keep 14 px roots and tables would render oversized
+   vs real hotaru. Mirror hotaru exactly by repeating the compound
+   html selectors inside each tier.                                   */
+@media (max-width: 992px) {
+  html,
+  html.dark,
+  html.light,
+  body {
+    font-size: 13px;
+  }
+}
+@media (max-width: 768px) {
+  html,
+  html.dark,
+  html.light,
+  body {
+    font-size: 12px;
+  }
+}
+
+/* Progressive column hiding mirrors hotaru's exact breakpoints,
+   adjusted to the 10-column layout (load column dropped — Pulse
+   has no load metric, see HotaruServerTable.astro):
+   1 status | 2 name | 3 type | 4 location | 5 uptime
+   6 net    | 7 traffic | 8 cpu | 9 ram | 10 disk                */
+@media (max-width: 1075px) { .hotaru-table th:nth-child(3),  .hotaru-table td:nth-child(3)  { display: none; } } /* type     */
+@media (max-width: 910px)  { .hotaru-table th:nth-child(4),  .hotaru-table td:nth-child(4)  { display: none; } } /* location */
+@media (max-width: 720px)  { .hotaru-table th:nth-child(5),  .hotaru-table td:nth-child(5)  { display: none; } } /* uptime   */
+@media (max-width: 600px)  { .hotaru-table th:nth-child(7),  .hotaru-table td:nth-child(7)  { display: none; } } /* traffic  */
+/* ≤533 px tier — verbatim from hotaru's App.vue:
+
+     #name, tr td:nth-child(2) {
+       min-width: 20px;
+       max-width: 60px;
+       text-overflow: ellipsis;
+       overflow: hidden;
+     }
+     #hdd, tr td:nth-child(11) { display: none; }
+     #cpu, #ram               { min-width: 20px; max-width: 40px; }
+
+   Pulse's column numbering omits hotaru's `load` column (col 6 in
+   upstream / never present in Pulse), so the disk column is at
+   nth-child(10) here vs (11) in hotaru. The cell-clamp values are
+   identical.
+
+   No additional Pulse-only tightening at this tier. With the html
+   root font now correctly resolving to 12 px under ≤768 (see the
+   compound `html, html.dark, html.light, body` rule above), the
+   .7em cell padding from the ≤1200 tier renders at ~8.4 px each
+   side on phones — exactly hotaru's deployed metric — and the
+   table fits cleanly inside the viewport without a defensive
+   overflow rule.                                                   */
+@media (max-width: 533px) {
+  .hotaru-table th:nth-child(2),  .hotaru-table td:nth-child(2)  { min-width: 20px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; }
+  .hotaru-table th:nth-child(10), .hotaru-table td:nth-child(10) { display: none; } /* disk */
+  .hotaru-table th:nth-child(8),  .hotaru-table td:nth-child(8),
+  .hotaru-table th:nth-child(9),  .hotaru-table td:nth-child(9)  { min-width: 20px; max-width: 40px; }
+}
+
+/* Expand row underneath each tr.hotaru-row.
+   Hotaru style: transparent td that inherits Semantic UI's default
+   `.ui.table td { padding: .78571429em .78571429em }`. That padding
+   gives the td ~25px of always-there height even when its inner
+   div is collapsed (max-height: 0) — and THAT is what creates the
+   visible row-to-row gap in hotaru's deployment. The page bg
+   shows through this strip because the td is transparent.        */
+.hotaru-table tbody tr.hotaru-expand td {
+  background: transparent !important;
+  padding: 0.78em 0.78em !important;
+  border: none !important;
+}
+/* Offline rows (with history): behave just like online ones
+   layout-wise. The expand panel opens, bars stay coloured (just
+   red), detail lines keep the agent's last-reported values, and
+   the tcping chart loads its DB-resident history and freezes at
+   the most recent sample. This is Pulse's native "freeze on
+   disconnect, resume on reconnect" model — visually the user sees
+   a snapshot of the server at the moment it dropped, which is
+   what's useful for diagnosing why it dropped.
+
+   Pristine rows (brand-new, never reported): the agent has been
+   added in the admin panel but has never said hello. There's
+   genuinely nothing to put in an expand row — no cpu_model, no
+   memory_info, no tcping samples — so we follow hotaru's lead
+   and refuse to expand the row at all. The cursor reverts to
+   default to signal the row isn't interactive, and the expand
+   panel is locked at 0fr regardless of any stale .is-open class
+   the row may have carried in from a previous live state.       */
+.hotaru-table tbody tr.hotaru-row.is-pristine {
+  cursor: default;
+}
+.hotaru-table tbody tr.hotaru-row.is-pristine + tr.hotaru-expand
+  .hotaru-expand-inner {
+  grid-template-rows: 0fr !important;
+}
+
+/* The expand wrapper uses the `grid-template-rows: 0fr → 1fr` trick
+   instead of `max-height` because the body's intrinsic height varies
+   (CPU/mem/swap/disk lines + an optional 140-px tcping chart). max-
+   height needs a fixed upper bound, which either clips the chart
+   when it loads or spends most of the animation on empty space when
+   no chart is present. Grid-rows interpolates the actual content
+   height, so open/close stays smooth at any size.                 */
+.hotaru-table tbody tr.hotaru-expand .hotaru-expand-inner {
+  display: grid;
+  grid-template-rows: 0fr;
+  /* Material-style ease-out curve: starts fast, decelerates into
+     the final position. Feels much more natural than `ease`.     */
+  transition: grid-template-rows 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hotaru-table tbody tr.hotaru-expand.is-open .hotaru-expand-inner {
+  grid-template-rows: 1fr;
+}
+
+/* The single grid item: holds every detail line + the chart. Needs
+   `min-height: 0` so the 0fr track is allowed to fully collapse,
+   and `overflow: hidden` to hide content during the animation
+   without leaking past the row's bounds.                          */
+.hotaru-table tbody tr.hotaru-expand .hotaru-expand-body {
+  overflow: hidden;
+  min-height: 0;
+  /* Hotaru's `tr td { color:#616366; font-weight:bold }` rule
+     applies to EVERY td in the table, expand row included.       */
+  text-align: center;
+  font-size: 1rem;
+  font-weight: bold;
+  color: var(--hotaru-text);
+}
+
+/* Inner detail lines.
+
+   Hotaru's TableItem.vue puts no padding/margin on its expand-row
+   inner divs at all — they rely on the parent td's default
+   Semantic UI padding (`.78em`) for spacing and let the divs flow
+   with default block layout. We mirror that exactly: no per-line
+   padding, no first/last-child top/bottom bumps, just plain
+   `line-height: 1.55` (which lines up with hotaru's CSS reset).
+   This keeps the expand panel as compact as hotaru's deployment.   */
+.hotaru-expand-body > div {
+  line-height: 1.55;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* ============================================================
+   Tag pills inside the expand row.
+   ------------------------------------------------------------
+   Hotaru itself never had tags, so there's no direct precedent
+   in the upstream theme — but hotaru ships Semantic UI's full
+   stylesheet, and Semantic UI's `.ui.tiny.label` is the canonical
+   pill primitive that anything tag-shaped in this design system
+   would inherit. We mirror that recipe verbatim:
+
+       background-color: #e8e8e8
+       color:            rgba(0, 0, 0, 0.6)
+       font-weight:      700
+       padding:          .5833em .833em
+       border-radius:    .28571429rem
+       font-size:        .71428571rem      (`.tiny` size)
+       line-height:      1
+       transition:       background .1s ease
+
+   Plus a small left margin between consecutive pills (mirrors
+   `.ui.label`'s margin: 0 .14285714em). The label prefix
+   "标签:" follows the same plain-text rhythm as its siblings
+   ("CPU 型号:", "内存信息:", ...) so the whole expand row reads
+   as a single metadata block.
+
+   The line is hidden via the `hidden` attribute when the
+   server has no tags, so it never adds an empty row of
+   white-space to the expand panel.
+   ============================================================ */
+/* Centered like its siblings inside `.hotaru-expand-body`
+   (which sets `text-align: center`). Flex children are not
+   centred by `text-align`, so we add `justify-content: center`
+   explicitly — that's what makes the line of pills sit under
+   the centerline of "CPU 型号: ..." / "内存信息: ..." rather
+   than left-bumping against the card edge.                   */
+.hotaru-tag-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  line-height: 1.55;
+}
+.hotaru-tag-line[hidden] { display: none !important; }
+.hotaru-tag-line__label  { flex-shrink: 0; }
+.hotaru-tag-line__list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35em;
+}
+
+/* Default (greyscale) tag — Semantic UI's `.ui.tiny.label`
+   recipe verbatim:
+     background-color: #e8e8e8
+     color:            rgba(0, 0, 0, 0.6)
+     font-weight:      700
+     padding:          .5833em .833em
+     border-radius:    .28571429rem
+     font-size:        .71428571rem      (tiny)
+     line-height:      1                                   */
+.hotaru-tag {
+  display: inline-block;
+  vertical-align: baseline;
+  background-color: #e8e8e8;
+  color: rgba(0, 0, 0, 0.6);
+  font-weight: 700;
+  /* Semantic UI `.ui.small.label` size — was `.ui.tiny.label`
+     (0.71428571rem ≈ 10 px). At 14 px root size the tiny variant
+     squeezed CJK glyphs (the strokes ran together, hairlines
+     disappeared on hi-dpi); 11 px reads cleanly while still
+     staying comfortably below the surrounding 1rem body text so
+     the pills remain visually subordinate.                       */
+  font-size: 0.78571429rem;
+  line-height: 1;
+  padding: 0.5833em 0.833em;
+  border: 0 solid transparent;
+  border-radius: 0.28571429rem;
+  transition: background-color 0.1s ease, color 0.1s ease;
+  word-break: keep-all;
+  white-space: nowrap;
+}
+.hotaru-tag:hover {
+  background-color: #d4d4d4;
+  color: rgba(0, 0, 0, 0.75);
+}
+
+/* Coloured tag variants — exact `.ui.<colour>.label` values
+   from the Semantic UI stylesheet that hotaru ships:
+     red    →  bg #db2828   hover #d01919
+     yellow →  bg #fbbd08   hover #eaae00
+     blue   →  bg #2185d0   hover #1678c2
+   White text on every variant for ≥ 3:1 contrast (Semantic UI's
+   own colour-label rule). These map to Pulse's `spr:` / `spy:`
+   / `spb:` tag prefixes so existing tag conventions keep working
+   without admin-side changes.                                  */
+.hotaru-tag--red {
+  background-color: #db2828;
+  color: #ffffff;
+}
+.hotaru-tag--red:hover {
+  background-color: #d01919;
+  color: #ffffff;
+}
+.hotaru-tag--yellow {
+  background-color: #fbbd08;
+  color: #ffffff;
+}
+.hotaru-tag--yellow:hover {
+  background-color: #eaae00;
+  color: #ffffff;
+}
+.hotaru-tag--blue {
+  background-color: #2185d0;
+  color: #ffffff;
+}
+.hotaru-tag--blue:hover {
+  background-color: #1678c2;
+  color: #ffffff;
+}
+
+/* ============================================================
+   TCPing chart — minimalist hotaru-themed line chart inside the
+   expand row. Hidden by default; the `ensureTcpingChart` JS in
+   HotaruServerTable.astro flips `hidden` off on first open if
+   the deployment has any tcping targets configured.
+   ============================================================ */
+/* ------------------------------------------------------------------
+   TCPing chart card.
+
+   Flat light-grey card sitting inside the row's expand panel.
+   Just target tabs (no "all", no stats badges) on top of a clean
+   single-line latency chart. Matches the simplified spec in the
+   user-supplied reference.
+   ------------------------------------------------------------------ */
+.hotaru-tcping {
+  margin: 0.8em 0 0.2em !important;
+  padding: 0.9em 1.1em 1em !important;
+  text-align: left;
+  background: #f5f5f5;
+  /* Match the theme's small-radius token (--hotaru-radius = 8 px,
+     same value used by every other panel-shaped surface in this
+     stylesheet). 6 px was a one-off that nothing else uses.       */
+  border-radius: var(--hotaru-radius);
+  box-shadow: none;
+  border: none;
+  /* Reset the bold/coloured inheritance from .hotaru-expand-body so
+     the chart card reads as a fresh surface, not a continuation of
+     the surrounding details text.                                  */
+  font-weight: 500;
+  color: var(--hotaru-text);
+}
+.hotaru-tcping[hidden] { display: none !important; }
+
+.hotaru-tcping__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-bottom: 0.7em;
+}
+
+.hotaru-tcping__tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
+  align-items: center;
+}
+
+/* Right-aligned summary pills for the active target.
+   margin-left:auto pushes them flush to the right edge of the
+   head row regardless of how many tabs are present; they wrap
+   under the tabs on narrow viewports rather than crowding them
+   on the same line. Hidden by default — applyTcpingDataset
+   toggles the [hidden] attribute once the active target's
+   points have been counted.                                     */
+.hotaru-tcping__stats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  align-items: center;
+  margin-left: auto;
+}
+.hotaru-tcping__stats[hidden] { display: none !important; }
+
+/* Frosted-grey summary chip.
+
+   Design notes (matches the user's "more refined / quality"
+   feedback):
+     * No border. Hard 1-px outlines on small chips read as
+       "form-control" affordances; we want metadata, not UI
+       you can click. Removing the border immediately makes
+       the pill feel softer.
+     * Translucent dark wash for the surface. `rgba(0,0,0,0.06)`
+       sits *on* the chart card's #f5f5f5 surface and lets a
+       hint of that grey come through the chip — the pill
+       feels embedded in the card rather than glued on top.
+     * Hairline inner-top highlight (`inset 0 1px 0 0 rgba(255,255,255,.55)`)
+       gives a single-pixel lighter edge on the top of the pill.
+       This is the "frosted glass" / "refined" cue — barely
+       visible (well under 5 % effective contrast) but enough
+       to give the chip dimensionality without an outline.
+     * Tabular nums on the value so the digits don't wiggle
+       between successive updates (23ms → 24ms aligns).         */
+.hotaru-tcping__stat {
+  display: inline-flex;
+  align-items: baseline;
+  /* Fixed minimum width so the chip's silhouette is identical
+     in the loading "···" state and the live "1.23ms" state.
+     Without this, the chip would visibly grow when the value
+     lands, defeating the whole point of the skeleton — the
+     surface should arrive first and stay still while the
+     digits inside fade in.                                  */
+  min-width: 3.6em;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.7);
+  font-size: 0.78571429rem;
+  line-height: 1;
+  font-weight: 700;
+  padding: 0.5em 0.833em;
+  border: 0;
+  border-radius: 0.28571429rem;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Smooth colour fade when the chip transitions from its
+     loading placeholder to the live value (and vice versa
+     on tab-switch).                                          */
+  transition: color 0.24s ease;
+}
+/* Skeleton state — visible *before* numbers arrive.
+   The pill background is rendered immediately when the chart
+   card opens, so the user sees the silhouette of the two
+   chips even while the data fetch is still in flight. The
+   inner glyphs default to "···" with a soft 1.4-s breathe
+   so the chip reads as "loading", not "broken / value zero".
+   When updateTcpingStats() lands real numbers it removes
+   `data-state="loading"`, the colour transitions to its
+   normal value, and the breathe animation stops.            */
+.hotaru-tcping__stat[data-state="loading"] {
+  color: rgba(0, 0, 0, 0.28);
+  animation: hotaru-tcping-stat-breathe 1.4s ease-in-out infinite;
+}
+@keyframes hotaru-tcping-stat-breathe {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 0.95; }
+}
+/* When new numbers land, fade them in by replaying a tiny
+   240ms opacity animation. Removing the `data-state` attr
+   triggers this via the [data-fresh] one-shot below.        */
+.hotaru-tcping__stat[data-fresh="1"] {
+  animation: hotaru-tcping-stat-fade-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes hotaru-tcping-stat-fade-in {
+  from { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+.hotaru-tcping__tab {
+  padding: 0.35em 0.85em;
+  /* 6 px matches .hotaru-bar's corner radius — same "soft chip"
+     shape used elsewhere in the theme for chunky, button-style
+     elements. 4 px was sharper than anything else in the UI.    */
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hotaru-faint);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  line-height: 1.2;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hotaru-tcping__tab:hover {
+  background: rgba(33, 186, 69, 0.08);
+  color: var(--hotaru-text);
+}
+.hotaru-tcping__tab--active,
+.hotaru-tcping__tab--active:hover {
+  background: var(--hotaru-status-ok);
+  color: #ffffff;
+}
+
+.hotaru-tcping__chart {
+  position: relative;
+  width: 100%;
+  height: 200px;
+}
+.hotaru-tcping__chart canvas {
+  width: 100% !important;
+  height: 100% !important;
+  /* Soft fade-in for the canvas itself.
+     ----------------------------------------------------------
+     Chart.js's first-paint pass (axis/tick layout, scale
+     calc, font measurement) runs synchronously and on dense
+     traces (200 + samples) can stall the main thread for
+     30–80 ms. With the canvas at opacity:0 during that work
+     the user only sees the loading dots — no flash of a
+     half-rendered chart, no perceived stutter. After the
+     first frame commits, the JS toggles `is-ready` on the
+     parent .hotaru-tcping__chart container which flips the
+     canvas to opacity:1, and the GPU-side fade is essentially
+     free.                                                       */
+  opacity: 0;
+  transition: opacity 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hotaru-tcping__chart.is-ready canvas {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hotaru-tcping__chart canvas { transition: none; opacity: 1; }
+  .hotaru-tcping__stat[data-state="loading"] { animation: none; }
+  .hotaru-tcping__stat[data-fresh="1"]       { animation: none; }
+}
+
+/* Indeterminate "loading" indicator that overlays the chart area
+   while Chart.js + tcping history are still being fetched. Three
+   subtle gray dots pulsing in sequence — matches the muted
+   hotaru palette (var(--hotaru-faint)) and disappears the moment
+   the canvas paints its first frame.                            */
+.hotaru-tcping__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.hotaru-tcping__loading span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hotaru-faint);
+  animation: hotaru-tcping-dot 1.2s ease-in-out infinite;
+}
+.hotaru-tcping__loading span:nth-child(2) { animation-delay: 0.15s; }
+.hotaru-tcping__loading span:nth-child(3) { animation-delay: 0.30s; }
+.hotaru-tcping__loading[hidden] { display: none !important; }
+@keyframes hotaru-tcping-dot {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50%      { opacity: 0.85; transform: translateY(-2px); }
+}
+
+.hotaru-tcping__empty {
+  text-align: center;
+  color: var(--hotaru-faint);
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 2em 0 1.2em;
+}
+.hotaru-tcping__empty[hidden] { display: none !important; }
+
+/* Mobile font-size floor for Pulse-extension chips.
+   ----------------------------------------------------
+   Hotaru's own @media cascade in App.vue drops the root
+   font to 12 px on ≤768 px viewports. That's fine for
+   1rem text (lands on 12 px) and acceptable for the
+   bar text at 0.9rem (10.8 px — the smallest size
+   upstream tolerates). But three Pulse-only elements
+   live in the table expand row at sub-1rem sizes that,
+   left unscaled, fall below 10 px on mobile and become
+   unreadable for CJK glyphs:
+
+     | element                   | desktop value   | mobile px (root 12) |
+     |---------------------------|-----------------|---------------------|
+     | .hotaru-tag               | 0.78571429rem   |  9.4 px             |
+     | .hotaru-tcping__stat      | 0.78571429rem   |  9.4 px             |
+     | .hotaru-tcping__tab       | 0.82rem         |  9.8 px             |
+
+   These have no upstream precedent (Hotaru never had
+   tags or a tcping chart), so we follow Hotaru's own
+   mobile idiom from `App.vue` — when the root shrinks,
+   bump sub-1rem rem values up so the rendered px stays
+   in the readable band. The bumps land on 11 px (tags
+   and stats — exactly the desktop visual size, which
+   is also Semantic UI's `.ui.small.label` value in
+   absolute terms) and 10.3 px for the tabs (parity
+   with the bar text's 10.8 px tolerance).             */
+@media (max-width: 768px) {
+  .hotaru-tag,
+  .hotaru-tcping__stat { font-size: 0.92rem; }   /* 11.0 px */
+  .hotaru-tcping__tab  { font-size: 0.86rem; }   /* 10.3 px */
+}
+
+@media (max-width: 600px) {
+  .hotaru-tcping        { padding: 0.8em 0.9em 0.95em !important; }
+  .hotaru-tcping__chart { height: 150px; }
+  .hotaru-tcping__head  { gap: 0.3em; }
+  /* Tighter padding only — font-size is set by the ≤768 px
+     mobile-floor rule above and intentionally left alone
+     here so phone-portrait viewports don't inherit a
+     smaller-than-readable size.                            */
+  .hotaru-tcping__tab   { padding: 0.3em 0.7em; }
+  /* Drop the auto-margin so the stats wrap to a new line
+     under the tabs instead of getting visually compressed
+     when both groups are on the same row.                  */
+  .hotaru-tcping__stats { margin-left: 0; width: 100%; }
+  .hotaru-tcping__stat  { padding: 0.45em 0.7em; }
+}
+
+/* ============================================================
+   Progress bars — 50×25 px chunky bar, full-bar text inside.
+   Used for CPU / RAM / Disk AND for the Status column (always
+   100% filled). Matches hotaru's "ui progress" bar dimensions.
+   ============================================================ */
+.hotaru-bar {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  height: 25px;
+  width: 50px;
+  border-radius: 6px;
+  background: rgba(120, 130, 145, 0.14);
+  vertical-align: middle;
+  margin-bottom: 0;
+}
+.hotaru-bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--hotaru-status-ok);
+  /* Match Semantic UI's `.ui.progress .bar` exactly:
+       transition: width .1s ease, background-color .1s ease.
+     Pulse used to run a slow 0.5s width / 0.3s background fade,
+     which felt sluggish on every SSE tick (we get a metric every
+     few seconds and the bar would still be lazily catching up).
+     Hotaru's snappy 0.1s feels alive and matches the upstream. */
+  transition: width 0.1s ease, background-color 0.1s ease;
+  border-radius: 6px;
+}
+.hotaru-bar > span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  line-height: 25px;
+  color: #ffffff;
+  z-index: 1;
+}
+@media (max-width: 768px) { .hotaru-bar { width: 40px; } }
+
+.hotaru-bar[data-level="warn"] > i { background: var(--hotaru-status-warn); }
+.hotaru-bar[data-level="bad"]  > i { background: var(--hotaru-status-bad); }
+/* Offline rows are rendered as `data-level="bad"` (same red as a
+   normally-bad value) but with the bar width still set to the
+   last reported percentage — see setBar() in HotaruServerTable.
+   The dedicated "off" level used to force the bar to 100 % red
+   with the text "维护中" inside, which discarded the last-known
+   metric. Pulse's native table preserves it instead, and that's
+   what users actually want when diagnosing why a server dropped. */
+
+/* Status bar variant — hotaru's TableItem.vue gives EVERY `.progress`
+   the same `width: 50px` (or 40px under 768px), regardless of whether
+   it's the running-status pill or a CPU/RAM/Disk bar. We mirror that
+   exactly: status pill uses the SAME 50px / 40px box as the metric
+   bars. The `.bar` inside is 100% width and the inner span centres
+   "运行中" / "维护中" within those 50px — at the .9rem font hotaru
+   uses, three Chinese chars measure ≈ 43px and sit comfortably.    */
+.hotaru-bar.hotaru-bar--status {
+  /* No width override — inherits the base .hotaru-bar { width: 50px }
+     so it stays a 50px box exactly like hotaru's source.             */
+}
+
+/* "服务器位置" column — plain text (简体中文国名，由 `locationToZh` 生成)，
+   与其它数字列相同的字重与字号，无额外样式类。                      */
+
+/* "系统" column — plain text (虚拟化 / OS)，无 icon。               */
+
+/* ============================================================
+   Card grid (3-col under the table)
+   ============================================================ */
+.hotaru-cards-section {
+  padding-top: 3.4rem;
+  padding-bottom: 3.5rem;
+}
+
+.hotaru-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.2rem;
+}
+/* Card-grid breakpoints mirror Semantic UI's `.ui.doubling.three.column.grid`
+   that upstream's `ServersCard.vue` uses — that's the authoritative
+   reference for "what hotaru looks like on tablet / phone":
+     ≥ 992 px  → 3 columns                  (default 33.33% width)
+     768–991px → 2 columns                  (`doubling` halves the count)
+     ≤ 767 px  → 1 column                   (`CardItem.vue` override
+                                             forces `width: 100%`)
+   Pulse used to switch at 900/560 which produced 2 cards/row on
+   phone-sized portraits (~600 px) where upstream is already showing
+   one. Aligning to 992/768 puts the breakpoints exactly where every
+   hotaru deployment ships them.                                     */
+@media (max-width: 991px) { .hotaru-cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 767px) { .hotaru-cards-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.hotaru-card {
+  padding: 24px;
+  background: var(--hotaru-card-bg);
+  border-radius: 0.5rem;
+  box-shadow: var(--hotaru-shadow);
+  /* Hotaru's CardItem.vue defines no hover effect — cards stay
+     flat. Pulse used to lift cards by 2 px on hover, which felt
+     more "modern dashboard" than "calm Hotaru". We instead
+     deepen the existing drop shadow slightly on hover (the same
+     vocabulary Semantic UI uses for `.ui.cards>.card:hover`),
+     keeping motion to a minimum and respecting the upstream's
+     poster-on-paper aesthetic. The 0.1s ease curve mirrors
+     Semantic UI's standard transition timing.                  */
+  transition: box-shadow 0.1s ease;
+}
+.hotaru-card:hover {
+  box-shadow: 6px 6px 28px 0 rgba(46, 61, 73, 0.26);
+}
+
+.hotaru-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.2rem;
+  min-height: 2rem;
+}
+/* Card header flag — Pulse emojione-v1 via iconify (same as before). */
+.hotaru-card__flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 70px;
+  height: auto;
+  min-height: 46px;
+  flex-shrink: 0;
+  line-height: 0;
+  margin-right: 8px;
+  vertical-align: middle;
+  background: transparent;
+  overflow: hidden;
+}
+.hotaru-card__flag svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.hotaru-card__name {
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--hotaru-text);
+  vertical-align: middle;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Hotaru's CardItem.vue:
+     `div.card div.card-header p { color: #919699 }`
+   No font-size override — inherits body's 1rem. Margin is the
+   browser <p> default (`margin: 0 0 1em`); Semantic UI re-applies
+   that exact rule so the gap to the progress bar reads as hotaru.
+   We use the same here.                                            */
+.hotaru-card__type {
+  color: var(--hotaru-muted);
+  margin: 0 0 1em 0;
+}
+.hotaru-card__bar {
+  position: relative;
+  margin: 1.2em 0;
+  /* hotaru `ui tiny progress` is roughly 8-10 px tall.            */
+  height: 10px;
+  background: rgba(120, 130, 145, 0.14);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.hotaru-card__bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--hotaru-status-ok);
+  /* Same Semantic UI alignment as `.hotaru-bar > i` above. */
+  transition: width 0.1s ease, background-color 0.1s ease;
+}
+.hotaru-card__bar[data-level="warn"] > i { background: var(--hotaru-status-warn); }
+.hotaru-card__bar[data-level="bad"]  > i { background: var(--hotaru-status-bad); }
+/* The dedicated "off" level (full grey 100 % bar) is no longer
+   used: offline cards now keep their last memory percentage and
+   paint as `data-level="bad"` (red) instead, matching Pulse's
+   freeze-on-disconnect rendering.                               */
+
+/* Card content lines — hotaru renders two short lines under the
+   progress bar (Network / 负载状态). Compact, no bottom margin
+   on the inner <p>s exactly like the original.                  */
+.hotaru-card__content {
+  margin: 0;
+  color: var(--hotaru-text);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+.hotaru-card__content p {
+  margin: 0;
+}
+
+.hotaru-card__empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--hotaru-faint);
+  padding: 2.5rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+/* Mobile card sizing — hotaru bumps the card name up to 1.55rem
+   and inner content paragraphs to 1.25rem under 768 px viewports
+   so cards remain readable when they stack into a single column. */
+@media (max-width: 768px) {
+  .hotaru-card__name { font-size: 1.55rem; }
+  .hotaru-card__content { font-size: 1.25rem; }
+  .hotaru-card__content p { margin-bottom: 0.6rem; }
+  .hotaru-card__content p:last-child { margin-bottom: 0; }
+}
+
+/* ============================================================
+   Footer
+   ============================================================ */
+/* Footer is now an empty placeholder (the user removed both
+   attribution lines). We only keep ~24px of bottom padding so the
+   card grid above doesn't collide with the viewport edge.        */
+.hotaru-footer {
+  padding: 0 0 24px;
+}
+
+/* Hotaru's TheError.vue: `p.error { text-align: center; color: #616366;
+   margin-bottom: 0 }`. No font-size override — inherits the body's 1rem
+   (= 14px at our hotaru-aligned root). Top margin uses the browser
+   default for <p> so the message has natural breathing room above the
+   table when it shows on first load.                                  */
+.hotaru-error {
+  text-align: center;
+  color: var(--hotaru-text);
+  margin-bottom: 0;
+}
+
+/* ============================================================
+   Light-mode patch for the admin page
+   ------------------------------------------------------------
+   The admin page reuses the existing AdminDashboard component
+   tree but is rewrapped in a hotaru shell — no navbar, no dark
+   mode, no pink. All cards / panels / inputs adopt the hotaru
+   palette: translucent white on the tiled bg, soft drop shadow,
+   gray text. No pink anywhere — the theme accent is a slightly
+   darker neutral grey (matches hotaru's actual visual identity).
+   ============================================================ */
+
+/* Admin page top spacing — without a navbar the dashboard would
+   sit flush against the viewport. Add the same vertical breathing
+   room hotaru's container uses on the public page. Background
+   inherits the body's plain near-white — no decorative gradient,
+   no warm tint, just a clean canvas.                              */
+.hotaru-admin-shell {
+  padding: 1.6rem 1rem 2rem;
+  min-height: 100vh;
+}
+@media (min-width: 768px) {
+  .hotaru-admin-shell { padding: 2rem 1.25rem 2.5rem; }
+}
+
+/* Inline section wrapper for the systems list. No card chrome,
+   no divider line, no shadow — just the title + toolbar row,
+   then the list. Other admin panels (modals etc.) still use
+   `.glass-card` which carries the proper hotaru card vocabulary. */
+.hotaru-admin-section {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* Admin cards / panels — exact hotaru `CardItem.vue` vocabulary:
+     background-color: rgba(255, 255, 255, .8)
+     box-shadow:       5px 5px 25px 0 rgba(46, 61, 73, .2)
+     border-radius:    .5rem
+     padding:          24px (left to inline modal class strings)
+   This is what hotaru actually paints — a translucent white card
+   with a soft, slightly-offset drop shadow.                       */
+body.hotaru-theme .glass-card,
+body.hotaru-theme .panel {
+  background: rgba(255, 255, 255, 0.8) !important;
+  border: none !important;
+  box-shadow: 5px 5px 25px 0 rgba(46, 61, 73, 0.2) !important;
+  border-radius: 0.5rem !important;
+  color: var(--hotaru-text) !important;
+}
+
+body.hotaru-theme .glass-inner {
+  background: rgba(255, 255, 255, 0.5) !important;
+  border-color: var(--hotaru-line) !important;
+  box-shadow: none !important;
+}
+
+/* Admin systems-list rows — hotaru's `tableRow` background of
+   rgba(249, 249, 249, .8) (TableItem.vue), rounded so individual
+   rows read as soft chips on the white card surface.              */
+body.hotaru-theme .system-row {
+  background: rgba(249, 249, 249, 0.8) !important;
+  margin: 6px 8px !important;
+  border-radius: 0.5rem !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+body.hotaru-theme .system-row:hover {
+  background: rgba(255, 255, 255, 0.95) !important;
+  box-shadow: none !important;
+}
+
+/* Modals — same hotaru card vocabulary as .glass-card: same
+   translucent white, same 5/5/25 drop shadow, same .5rem radius.
+   The `[data-modal-content]` selector targets only the inner
+   white panel of each modal (not the dark backdrop overlay).     */
+body.hotaru-theme [data-modal-content] {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: none !important;
+  box-shadow: 5px 5px 25px 0 rgba(46, 61, 73, 0.2) !important;
+  border-radius: 0.5rem !important;
+}
+
+/* Tailwind's stock .hover-lift adds a heavy drop shadow on
+   hover. We disable the lift on hotaru pages — hotaru cards are
+   already shadowed, no extra elevation needed.                   */
+body.hotaru-theme .hover-lift:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Admin form controls — Semantic UI `.ui.input>input` recipe:
+     border:        1px solid rgba(34, 36, 38, .15)
+     border-radius: .28571429rem
+     color:         rgba(0, 0, 0, .87)
+     transition:    box-shadow .1s ease, border-color .1s ease
+   Same shape used on the login card so the two surfaces feel
+   like part of one design system.                              */
+body.hotaru-theme input,
+body.hotaru-theme textarea,
+body.hotaru-theme select {
+  background: #ffffff !important;
+  border: 1px solid rgba(34, 36, 38, 0.15) !important;
+  border-radius: 0.28571429rem !important;
+  color: rgba(0, 0, 0, 0.87) !important;
+  transition: box-shadow 0.1s ease, border-color 0.1s ease;
+}
+body.hotaru-theme input:focus,
+body.hotaru-theme textarea:focus,
+body.hotaru-theme select:focus {
+  border-color: rgba(34, 36, 38, 0.35) !important;
+  box-shadow: 0 0 0 0 rgba(34, 36, 38, 0.15) inset !important;
+  outline: none !important;
+}
+
+/* Hide the navbar entirely if any stray instance remains, plus
+   the theme + language toggles (light/zh-only).                 */
+body.hotaru-theme nav.glass-nav,
+body.hotaru-theme #theme-btn,
+body.hotaru-theme #language-btn { display: none !important; }
+
+/* ------------------------------------------------------------
+   Admin typography — small hotaru DNA echoes.
+   No new lines, no new panels, just heading rhythm + state
+   voice tuned to hotaru. The section title sits in the same
+   weight/size hotaru uses on its `.ui.header` (Lato 600 with a
+   touch of letter-spacing) and the loading / empty rows borrow
+   `TheError.vue`'s muted-grey, centered voice.                  */
+body.hotaru-theme #system-list-title {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  color: var(--hotaru-text);
+  line-height: 1.28571429em;
+}
+
+body.hotaru-theme [data-modal-content] h2 {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  color: var(--hotaru-text);
+  letter-spacing: 0.005em;
+}
+
+/* Inline loading row inside the systems list. Hotaru's loaders
+   speak in muted grey (`TheError.vue` is `#616366`); we echo
+   that here and animate the trailing ellipsis so the wait reads
+   as a soft, alive pulse instead of a dead string of dots. The
+   trailing dots are appended via `::after` (the literal "..."
+   was removed from the source markup), animated by a 4-step
+   width clip so the cycle reads as: "加载服务中" → "加载服务中."
+   → "加载服务中.." → "加载服务中..." → loop.                     */
+body.hotaru-theme #loading-systems-text {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  color: #616366;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: baseline;
+}
+body.hotaru-theme #loading-systems-text::after {
+  content: '...';
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  letter-spacing: 0.05em;
+  animation: hotaru-loading-ellipsis 1.4s steps(4, end) infinite;
+}
+@keyframes hotaru-loading-ellipsis {
+  to { width: 1em; }
+}
+
+/* Empty state row inside the systems list — `renderSystems()`
+   injects a simple "暂无服务" paragraph when the API returns
+   an empty array. Mirror `TheError.vue`'s minimal voice rather
+   than tailwind's default look.                                 */
+body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
+  font-family: 'Lato', 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  color: #616366 !important;
+  text-align: center;
+  margin: 0;
+}
+
+/* ============================================================
+   Login page — fully hotaru-styled, light-only, zh-only.
+   Self-contained block: layout shell, card, form, button.
+   ============================================================ */
+.hotaru-login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  /* Inherit the body bg — clean near-white, no decorative
+     gradient, no warm tint.                                     */
+}
+
+.hotaru-login-card {
+  /* Same hotaru `CardItem.vue` recipe used on dashboard cards:
+       background:    rgba(255, 255, 255, .8)
+       box-shadow:    5px 5px 25px 0 rgba(46, 61, 73, .2)
+       border-radius: .5rem
+       padding:       24px
+     A single, simple translucent card with a soft drop shadow.   */
+  width: 100%;
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.8);
+  border: none;
+  border-radius: 0.5rem;
+  box-shadow: 5px 5px 25px 0 rgba(46, 61, 73, 0.2);
+  padding: 24px;
+}
+
+.hotaru-login-header {
+  text-align: center;
+  margin-bottom: 1.6rem;
+}
+/* Title typography mirrors Semantic UI's `.ui.header`:
+     font-weight: 700; line-height: 1.28571429em; no letter-spacing.
+   The size is dialled down from Semantic's 2rem default to a card-
+   appropriate 1.5rem so the login card reads as compact rather
+   than masthead.                                                  */
+.hotaru-login-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--hotaru-text);
+  margin: 0 0 0.5rem;
+  line-height: 1.28571429em;
+}
+/* Subtitle matches Semantic UI's `.ui.header .sub.header`:
+     font-weight: 400; line-height: 1.2em.
+   Colour is hotaru's CardItem subtitle (#919699), not Semantic's
+   rgba(0,0,0,.6) — the warmer hotaru muted reads better in the
+   translucent-white card context.                                  */
+.hotaru-login-subtitle {
+  font-size: 0.92rem;
+  font-weight: 400;
+  color: var(--hotaru-muted);
+  margin: 0;
+  line-height: 1.2em;
+}
+
+/* Login alerts — match hotaru `TheError.vue`'s minimal voice:
+   centered, gray-on-transparent, no boxed panel. The success and
+   error variants only differ by colour (and a tiny status dot for
+   accessibility), but neither paints a heavy alert panel. This
+   reads as part of the page rather than as a Bootstrap-style
+   notification ribbon.                                            */
+.hotaru-login-alert {
+  text-align: center;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.hotaru-login-alert p {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+}
+.hotaru-login-alert p::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.hotaru-login-alert--error      { color: var(--hotaru-status-bad); }
+.hotaru-login-alert--error p::before { background: var(--hotaru-status-bad); }
+.hotaru-login-alert--ok         { color: var(--hotaru-status-ok); }
+.hotaru-login-alert--ok p::before    { background: var(--hotaru-status-ok); }
+
+.hotaru-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.hotaru-login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.hotaru-login-field label {
+  font-size: 0.86rem;
+  color: var(--hotaru-text);
+  font-weight: 500;
+}
+/* Inputs mirror Semantic UI's `.ui.input>input` exactly:
+     padding: .67857143em 1em
+     border:  1px solid rgba(34, 36, 38, .15)
+     border-radius: .28571429rem
+     color:   rgba(0, 0, 0, .87)
+     line-height:    1.21428571em
+     transition:     box-shadow .1s ease, border-color .1s ease
+   This is the authentic Semantic UI input shape used throughout
+   hotaru's admin and form surfaces.                              */
+.hotaru-login-field input {
+  width: 100%;
+  background: #fff;
+  border: 1px solid rgba(34, 36, 38, 0.15);
+  border-radius: 0.28571429rem;
+  padding: 0.67857143em 1em;
+  font-size: 1rem;
+  line-height: 1.21428571em;
+  color: rgba(0, 0, 0, 0.87);
+  font-family: inherit;
+  transition: box-shadow 0.1s ease, border-color 0.1s ease;
+}
+.hotaru-login-field input:focus {
+  border-color: rgba(34, 36, 38, 0.35);
+  box-shadow: 0 0 0 0 rgba(34, 36, 38, 0.15) inset;
+  outline: none;
+}
+.hotaru-login-field input::placeholder { color: var(--hotaru-faint); }
+
+/* Button shape mirrors Semantic UI's `.ui.button`:
+     padding:        .78571429em 1.5em
+     border-radius:  .28571429rem
+     font-weight:    700
+     line-height:    1em
+     transition:     background-color .1s ease, color .1s ease
+   Colour is hotaru-monochrome dark grey rather than Semantic
+   blue — the repo never settles on Semantic's primary blue and
+   the dark grey reads as the cleanest submit affordance against
+   the translucent white card.                                   */
+.hotaru-login-button {
+  margin-top: 0.4rem;
+  background: #404040;
+  color: #fff;
+  border: none;
+  border-radius: 0.28571429rem;
+  padding: 0.78571429em 1.5em;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1em;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+.hotaru-login-button:hover  { background: #262626; }
+.hotaru-login-button:active { background: #1a1a1a; }
+.hotaru-login-button:disabled,
+.hotaru-login-button.is-loading {
+  background: #737373;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+@media (max-width: 480px) {
+  .hotaru-login-card { padding: 1.5rem 1.25rem; }
+  .hotaru-login-title { font-size: 1.3rem; }
+}

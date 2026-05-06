@@ -1,0 +1,58 @@
+---
+/**
+ * HotaruUpdateTime.astro
+ *
+ * Tiny status line shown between the table and the card grid that
+ * reports how long ago the last successful /api/metrics tick was.
+ * Listens on `pulse:metrics-tick` (broadcast by HotaruServerTable)
+ * and re-renders once per second using a relative-time formatter.
+ */
+---
+
+<div class="hotaru-container">
+  <p class="hotaru-updated" id="hotaru-updated">最后更新: 从未.</p>
+</div>
+
+<script is:inline>
+  (function () {
+    const el = document.getElementById('hotaru-updated');
+    if (!el) return;
+
+    /* Hotaru's update-time line is hardcoded Chinese with the
+       trailing "." style: 最后更新: 几秒前. / X 分钟前. / X 小时前.
+       / X 日前. / X 月前. / X 年前. — we replicate that exact
+       phrasing including the period.                              */
+    let lastAt = 0;
+
+    function fmt(s) {
+      if (!s) return '从未.';
+      const diff = Math.floor((Date.now() - s) / 1000);
+      if (diff < 5)        return '几秒前.';
+      if (diff < 60)       return diff + ' 秒前.';
+      const m = Math.floor(diff / 60);
+      if (m < 60)          return m + ' 分钟前.';
+      const h = Math.floor(m / 60);
+      if (h < 24)          return h + ' 小时前.';
+      const d = Math.floor(h / 24);
+      if (d < 30)          return d + ' 日前.';
+      const mo = Math.floor(d / 30);
+      if (mo < 12)         return mo + ' 月前.';
+      const y = Math.floor(d / 365);
+      return y + ' 年前.';
+    }
+    function paint() {
+      el.textContent = '最后更新: ' + fmt(lastAt);
+      /* Hotaru: keep normal body colour for "从未." (no tick yet).
+         Red only when we *have* a timestamp and it is older than 30 s. */
+      let stale = false;
+      if (lastAt) stale = (Date.now() - lastAt) >= 30000;
+      el.dataset.fresh = stale ? 'false' : 'true';
+    }
+    paint();
+    setInterval(paint, 1000);
+    window.addEventListener('pulse:metrics-tick', (e) => {
+      lastAt = (e && e.detail && e.detail.at) || Date.now();
+      paint();
+    });
+  })();
+</script>

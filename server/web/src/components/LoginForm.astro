@@ -1,180 +1,86 @@
 ---
-// Login form component for admin authentication
+// Login form — light-mode only, Chinese only, no navbar.
+// Visual language matches the hotaru cards (translucent white, soft
+// drop shadow, rounded). All copy is hardcoded zh-CN.
 ---
 
-<div class="min-h-screen flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] glass-login-wrapper px-3 sm:px-4">
-  <div class="w-full max-w-md">
-    <div class="glass-login bg-white dark:bg-[#1a1a1a] rounded-xl border border-[#d4d4d4]/50 dark:border-[#404040]/50 p-4 sm:p-6 md:p-8 shadow-lg animate-login-card">
-      <!-- Logo/Title -->
-      <div class="text-center mb-6 sm:mb-8 animate-form-field" style="animation-delay: 0.1s;">
-        <h1 class="text-xl sm:text-2xl font-bold text-[#0a0a0a] dark:text-[#f5f5f5] mb-2" data-translate-login="title">Admin Login</h1>
-        <p class="text-xs sm:text-sm text-[#525252] dark:text-[#a3a3a3]" data-translate-login="subtitle">Enter your password to access the admin panel</p>
-      </div>
-
-      <!-- Error message -->
-      <div id="login-error" class="hidden mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/50 animate-scale-in">
-        <p class="text-sm text-red-500" id="login-error-text"></p>
-      </div>
-
-      <!-- Success message (for password setup) -->
-      <div id="login-success" class="hidden mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/50 animate-scale-in">
-        <p class="text-sm text-emerald-500" id="login-success-text"></p>
-      </div>
-
-      <!-- Login Form -->
-      <form id="login-form" class="space-y-4">
-        <div class="animate-form-field" style="animation-delay: 0.2s;">
-          <label for="password" class="block text-sm font-medium text-[#525252] dark:text-[#a3a3a3] mb-2" data-translate-login="password">Password</label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            required
-            autocomplete="current-password"
-            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] outline-none transition-colors duration-200 focus:border-[#737373] dark:focus:border-[#525252] placeholder:text-[#737373] dark:placeholder:text-[#737373]"
-            placeholder="Enter password"
-          />
-        </div>
-
-        <div id="confirm-password-field" class="hidden animate-form-field" style="animation-delay: 0.25s;">
-          <label for="confirm-password" class="block text-sm font-medium text-[#525252] dark:text-[#a3a3a3] mb-2" data-translate-login="confirmPassword">Confirm Password</label>
-          <input
-            type="password"
-            id="confirm-password"
-            name="confirm-password"
-            autocomplete="new-password"
-            class="w-full px-4 py-2 rounded-lg border border-[#d4d4d4]/50 dark:border-[#404040]/50 bg-white dark:bg-[#151515] text-[#0a0a0a] dark:text-[#f5f5f5] outline-none transition-colors duration-200 focus:border-[#737373] dark:focus:border-[#525252] placeholder:text-[#737373] dark:placeholder:text-[#737373]"
-            placeholder="Confirm password"
-          />
-        </div>
-
-        <div class="animate-form-field" style="animation-delay: 0.3s;">
-          <button
-            type="submit"
-            id="login-submit"
-            class="w-full py-2 px-4 rounded-lg bg-[#404040] hover:bg-[#525252] text-white font-medium outline-none transition-colors duration-200 btn-press"
-            data-translate-login="submit"
-          >
-            Login
-          </button>
-        </div>
-      </form>
+<div class="hotaru-login-shell">
+  <div class="hotaru-login-card" id="login-card">
+    <div class="hotaru-login-header">
+      <h1 id="login-title" class="hotaru-login-title">管理员登录</h1>
+      <p id="login-subtitle" class="hotaru-login-subtitle">请输入密码以访问管理面板</p>
     </div>
+
+    <div id="login-error" class="hotaru-login-alert hotaru-login-alert--error" hidden>
+      <p id="login-error-text"></p>
+    </div>
+    <div id="login-success" class="hotaru-login-alert hotaru-login-alert--ok" hidden>
+      <p id="login-success-text"></p>
+    </div>
+
+    <form id="login-form" class="hotaru-login-form" novalidate>
+      <div class="hotaru-login-field">
+        <label for="password">密码</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          required
+          autocomplete="current-password"
+          placeholder="请输入密码"
+        />
+      </div>
+
+      <button type="submit" id="login-submit" class="hotaru-login-button">登录</button>
+    </form>
   </div>
 </div>
 
 <script>
-  // Get API base URL - same logic as other components
   function getApiBase() {
     const root = document.documentElement;
     if (root?.dataset?.apiBase && root.dataset.apiBase.trim() !== '') {
       return root.dataset.apiBase.trim();
     }
-    // Use current origin (works with nginx reverse proxy)
     return window.location.origin;
   }
-  
+
   const apiBase = getApiBase();
-  
-  // Translations
-  const translations = {
-    en: {
-      title: 'Admin Login',
-      subtitle: 'Enter your password to access the admin panel',
-      password: 'Password',
-      confirmPassword: 'Confirm Password',
-      submit: 'Login',
-      setupPassword: 'Setup Password',
-      setupSubtitle: 'Set up your admin password (first time only)',
-      error: 'Error',
-      invalidPassword: 'Invalid password',
-      passwordMismatch: 'Passwords do not match',
-      passwordTooShort: 'Password must be at least 6 characters',
-      setupSuccess: 'Password set successfully! Redirecting...',
-      loginSuccess: 'Login successful! Redirecting...'
-    },
-    zh: {
-      title: '管理员登录',
-      subtitle: '输入密码以访问管理面板',
-      password: '密码',
-      confirmPassword: '确认密码',
-      submit: '登录',
-      setupPassword: '设置密码',
-      setupSubtitle: '设置您的管理员密码（仅首次）',
-      error: '错误',
-      invalidPassword: '密码错误',
-      passwordMismatch: '密码不匹配',
-      passwordTooShort: '密码至少需要6个字符',
-      setupSuccess: '密码设置成功！正在跳转...',
-      loginSuccess: '登录成功！正在跳转...'
-    }
+
+  /* All login copy is hardcoded zh-CN — no language switch on this page.
+     Login page is single-field by design: even on first-time setup,
+     only one password input is shown. The user is the operator setting
+     their own password, so the usual "confirm" guard adds friction
+     without value (they can always change it later from the admin
+     panel via the dedicated change-password flow).                    */
+  const T = {
+    titleLogin:        '管理员登录',
+    titleSetup:        '设置管理员密码',
+    subtitleLogin:     '请输入密码以访问管理面板',
+    subtitleSetup:     '首次使用，请设置一个管理员密码',
+    submitLogin:       '登录',
+    submitSetup:       '设置密码',
+    invalidPassword:   '密码错误',
+    passwordTooShort:  '密码长度至少为 6 个字符',
+    setupSuccess:      '密码设置成功，正在跳转…',
+    loginSuccess:      '登录成功，正在跳转…',
+    networkError:      '网络错误，请重试',
+    genericError:      '操作失败，请重试',
   };
 
-  function getSystemLanguage() {
-    const sysLang = navigator.language || (navigator.languages && navigator.languages[0]) || 'en';
-    // Check if system language is Chinese (zh, zh-CN, zh-TW, etc.)
-    if (sysLang.toLowerCase().startsWith('zh')) {
-      return 'zh';
-    }
-    return 'en';
-  }
-
-  function getCurrentLanguage() {
-    const stored = localStorage.getItem('preferred-language');
-    if (stored === 'zh' || stored === 'en') {
-      return stored;
-    }
-    // Default to system language
-    return getSystemLanguage();
-  }
-
-  // SECURITY: Validate redirect parameter to prevent open redirect attacks
-  // Only allow relative paths (starting with /) and prevent protocol-relative or absolute URLs
+  /* SECURITY: only allow a relative path (no protocol-relative, no
+     absolute URLs, no parent-traversal). The redirect query param is
+     attacker-controllable, and otherwise allows phishing redirects.   */
   function validateRedirect(redirect) {
-    if (!redirect || typeof redirect !== 'string') {
-      return '/admin';
-    }
-
-    // Trim whitespace
+    if (!redirect || typeof redirect !== 'string') return '/admin';
     redirect = redirect.trim();
-
-    // Must start with / (relative path)
-    if (!redirect.startsWith('/')) {
-      return '/admin';
-    }
-
-    // Prevent protocol-relative URLs (//example.com)
-    if (redirect.startsWith('//')) {
-      return '/admin';
-    }
-
-    // Prevent any protocol (http:, https:, javascript:, etc.)
-    if (redirect.includes(':')) {
-      return '/admin';
-    }
-
-    // Prevent parent directory traversal (../)
-    if (redirect.includes('..')) {
-      return '/admin';
-    }
-
-    // Allow only safe relative paths
+    if (!redirect.startsWith('/')) return '/admin';
+    if (redirect.startsWith('//')) return '/admin';
+    if (redirect.includes(':')) return '/admin';
+    if (redirect.includes('..')) return '/admin';
     return redirect;
   }
 
-  function updateTranslations() {
-    const lang = getCurrentLanguage();
-    const t = translations[lang];
-    
-    document.querySelectorAll('[data-translate-login]').forEach(el => {
-      const key = el.getAttribute('data-translate-login');
-      if (key && t[key]) {
-        el.textContent = t[key];
-      }
-    });
-  }
-
-  // Check if password is already set
   async function checkPasswordStatus() {
     try {
       const res = await fetch(`${apiBase}/api/auth/status`);
@@ -182,208 +88,122 @@
         const data = await res.json();
         return data.set;
       }
-    } catch (err) {
-      // Status check failed silently
-    }
+    } catch (_) {}
     return false;
   }
 
-  // Setup password (first time)
   async function setupPassword(password) {
     try {
       const res = await fetch(`${apiBase}/api/auth/setup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ password }),
       });
-      
       if (!res.ok) {
         const errorText = await res.text();
-        return { success: false, error: errorText || 'Failed to setup password' };
+        return { success: false, error: errorText || T.genericError };
       }
-      
       return { success: true };
     } catch (err) {
-      return { success: false, error: err.message || 'Network error' };
+      return { success: false, error: T.networkError };
     }
   }
 
-  // Login with password
   async function login(password) {
     try {
       const res = await fetch(`${apiBase}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ password }),
       });
-      
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          // Store auth token
           localStorage.setItem('admin_auth_token', data.token);
           return true;
         }
       }
       return false;
-    } catch (err) {
+    } catch (_) {
       return false;
     }
   }
 
-  function showError(message) {
-    const errorDiv = document.getElementById('login-error');
-    const errorText = document.getElementById('login-error-text');
-    errorText.textContent = message;
-    errorDiv.classList.remove('hidden');
-    setTimeout(() => {
-      errorDiv.classList.add('hidden');
-    }, 5000);
-  }
+  function showAlert(kind, message) {
+    const errEl = document.getElementById('login-error');
+    const errTxt = document.getElementById('login-error-text');
+    const okEl = document.getElementById('login-success');
+    const okTxt = document.getElementById('login-success-text');
 
-  function showSuccess(message) {
-    const successDiv = document.getElementById('login-success');
-    const successText = document.getElementById('login-success-text');
-    successText.textContent = message;
-    successDiv.classList.remove('hidden');
-  }
-
-  // Theme management - just apply stored theme, no toggle button
-  function getSystemTheme() {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-    return 'light';
-  }
-
-  function getCurrentTheme() {
-    const stored = localStorage.getItem('preferred-theme');
-    if (stored === 'dark' || stored === 'light') {
-      return stored;
-    }
-    // Default to system theme
-    return getSystemTheme();
-  }
-
-  function applyTheme(theme) {
-    const html = document.documentElement;
-    const body = document.body;
-    if (theme === 'dark') {
-      html.classList.add('dark');
-      html.classList.remove('light');
-      body.classList.add('dark');
-      body.classList.remove('light');
+    if (kind === 'error') {
+      errTxt.textContent = message;
+      errEl.removeAttribute('hidden');
+      okEl.setAttribute('hidden', '');
+      window.clearTimeout(showAlert._t);
+      showAlert._t = window.setTimeout(() => errEl.setAttribute('hidden', ''), 5000);
     } else {
-      html.classList.add('light');
-      html.classList.remove('dark');
-      body.classList.add('light');
-      body.classList.remove('dark');
+      okTxt.textContent = message;
+      okEl.removeAttribute('hidden');
+      errEl.setAttribute('hidden', '');
     }
   }
 
-  // Initialize
   (async () => {
-    // Initialize theme from localStorage
-    const currentTheme = getCurrentTheme();
-    applyTheme(currentTheme);
-    
-    updateTranslations();
-    
-    // Listen for language changes
-    window.addEventListener('languagechange', updateTranslations);
-    window.addEventListener('translate', updateTranslations);
-
     const isPasswordSet = await checkPasswordStatus();
-    const form = document.getElementById('login-form');
-    const passwordField = document.getElementById('password');
-    const confirmPasswordField = document.getElementById('confirm-password-field');
-    const confirmPasswordInput = document.getElementById('confirm-password');
-    const submitButton = document.getElementById('login-submit');
-    const title = document.querySelector('[data-translate-login="title"]');
-    const subtitle = document.querySelector('[data-translate-login="subtitle"]');
+
+    const titleEl    = document.getElementById('login-title');
+    const subtitleEl = document.getElementById('login-subtitle');
+    const submitBtn  = document.getElementById('login-submit');
+    const form       = document.getElementById('login-form');
+    const passwordEl = document.getElementById('password');
 
     if (!isPasswordSet) {
-      // First time setup
-      const lang = getCurrentLanguage();
-      title.textContent = translations[lang].setupPassword;
-      subtitle.textContent = translations[lang].setupSubtitle;
-      confirmPasswordField.classList.remove('hidden');
-      confirmPasswordInput.required = true;
-      submitButton.textContent = translations[lang].setupPassword;
+      titleEl.textContent    = T.titleSetup;
+      subtitleEl.textContent = T.subtitleSetup;
+      submitBtn.textContent  = T.submitSetup;
     }
 
-    // Guard against double-submission. On slow networks a fast double
-    // click on the submit button would fire two /api/auth/login requests
-    // (the server rate-limits, but the UI still felt unresponsive). We
-    // disable the button for the duration of the async flow and always
-    // re-enable it in finally so a failed login doesn't permanently
-    // lock the user out of retrying.
-    let submitInFlight = false;
+    let inFlight = false;
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (submitInFlight) return;
+      if (inFlight) return;
 
-      const password = passwordField.value.trim();
-      const confirmPassword = confirmPasswordInput.value.trim();
+      const password = passwordEl.value.trim();
 
-      // Validation
       if (password.length < 6) {
-        const lang = getCurrentLanguage();
-        showError(translations[lang].passwordTooShort);
+        showAlert('error', T.passwordTooShort);
         return;
       }
 
-      submitInFlight = true;
-      submitButton.disabled = true;
-      submitButton.classList.add('opacity-60', 'cursor-not-allowed');
+      inFlight = true;
+      submitBtn.disabled = true;
+      submitBtn.classList.add('is-loading');
 
       try {
         if (!isPasswordSet) {
-          // Setup password
-          if (password !== confirmPassword) {
-            const lang = getCurrentLanguage();
-            showError(translations[lang].passwordMismatch);
-            return;
-          }
-
-          const result = await setupPassword(password);
-          if (result && result.success) {
-            // After setup, automatically login
-            const loginResult = await login(password);
-            if (loginResult) {
-              // SECURITY: Validate redirect parameter to prevent open redirect
-              const urlParams = new URLSearchParams(window.location.search);
-              const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
-              window.location.href = redirect;
-            } else {
-              // Setup succeeded but login failed, redirect anyway (shouldn't happen)
-              // SECURITY: Validate redirect parameter to prevent open redirect
-              const urlParams = new URLSearchParams(window.location.search);
-              const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
-              window.location.href = redirect;
-            }
+          const setup = await setupPassword(password);
+          if (setup && setup.success) {
+            showAlert('ok', T.setupSuccess);
+            await login(password);
+            const params = new URLSearchParams(window.location.search);
+            window.location.href = validateRedirect(params.get('redirect') || '/admin');
           } else {
-            const lang = getCurrentLanguage();
-            const errorMsg = (result && result.error) ? result.error : translations[lang].error;
-            showError(errorMsg);
+            showAlert('error', (setup && setup.error) || T.genericError);
           }
         } else {
-          // Login
-          const success = await login(password);
-          if (success) {
-            // SECURITY: Validate redirect parameter to prevent open redirect
-            const urlParams = new URLSearchParams(window.location.search);
-            const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
-            window.location.href = redirect;
+          const ok = await login(password);
+          if (ok) {
+            showAlert('ok', T.loginSuccess);
+            const params = new URLSearchParams(window.location.search);
+            window.location.href = validateRedirect(params.get('redirect') || '/admin');
           } else {
-            const lang = getCurrentLanguage();
-            showError(translations[lang].invalidPassword);
+            showAlert('error', T.invalidPassword);
           }
         }
       } finally {
-        submitInFlight = false;
-        submitButton.disabled = false;
-        submitButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        inFlight = false;
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('is-loading');
       }
     });
   })();

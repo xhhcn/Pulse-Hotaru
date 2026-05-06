@@ -1,394 +1,182 @@
 ---
-import '../styles/global.css';
-import NavBar from '../components/NavBar.astro';
-import SystemTable from '../components/SystemTable.astro';
-import Footer from '../components/Footer.astro';
+import '../styles/hotaru-theme.css';
+import HotaruServerTable  from '../components/HotaruServerTable.astro';
+import HotaruUpdateTime   from '../components/HotaruUpdateTime.astro';
+import HotaruCardGrid     from '../components/HotaruCardGrid.astro';
 
-// API base will be auto-detected by client-side script
-// Can be overridden by PUBLIC_API_BASE environment variable
+// Optional override for the API base URL via build-time env. The
+// runtime script defaults to window.location.origin which is what
+// the embedded Go backend uses, so this is rarely needed.
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
 ---
 
-<html lang="en" class="dark overflow-x-hidden">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Pulse Monitor — a lightweight, real-time server monitoring dashboard." />
-    <!-- Self-hosted private dashboard: do not index individual instances. -->
-    <meta name="robots" content="noindex, nofollow" />
-    <meta name="googlebot" content="noindex, nofollow" />
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
-    <meta name="format-detection" content="telephone=no" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)" />
-    <meta property="og:title" content="Pulse Monitor" />
-    <meta property="og:description" content="Lightweight, real-time server monitoring dashboard." />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pulse Monitor" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Pulse Monitor" />
-    <meta name="twitter:description" content="Lightweight, real-time server monitoring dashboard." />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
-    <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
-    <title>Pulse Monitor</title>
-    <!-- View Transitions API styling for smooth theme switching -->
-    <style>
-      /* View Transitions API support for smooth cross-fade */
-      ::view-transition-old(root),
-      ::view-transition-new(root) {
-        animation-duration: 0.15s;
-        animation-timing-function: ease-in-out;
-      }
-      
-      ::view-transition-old(root) {
-        animation-name: fade-out;
-      }
-      
-      ::view-transition-new(root) {
-        animation-name: fade-in;
-      }
-      
-      @keyframes fade-out {
-        from { opacity: 1; }
-        to { opacity: 0; }
-      }
-      
-      @keyframes fade-in {
-        from { opacity: 0; }
-        to { opacity: 1; }
-      }
-      
-      /* Disable all transitions when theme-switching class is present */
-      html.theme-switching *,
-      html.theme-switching *::before,
-      html.theme-switching *::after {
-        transition: none !important;
-        animation-duration: 0s !important;
-      }
-    </style>
-    <!-- Preload Chart.js for faster TCPing chart rendering -->
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" as="script" crossorigin="anonymous" />
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js" as="script" crossorigin="anonymous" />
-    <!-- Initialize language and theme before page render to prevent FOUC -->
-    <script is:inline>
-      (function() {
-        // Get system language (convert to 'zh' or 'en')
-        function getSystemLanguage() {
-          const sysLang = navigator.language || (navigator.languages && navigator.languages[0]) || 'en';
-          // Check if system language is Chinese (zh, zh-CN, zh-TW, etc.)
-          if (sysLang.toLowerCase().startsWith('zh')) {
-            return 'zh';
-          }
-          return 'en';
-        }
-        
-        // Get system theme
-        function getSystemTheme() {
-          if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            return 'dark';
-          }
-          return 'light';
-        }
-        
-        // Get language preference (use system language as default)
-        const storedLang = localStorage.getItem('preferred-language');
-        const lang = storedLang || getSystemLanguage();
-        document.documentElement.lang = lang;
-        
-        // Get theme preference (use system theme as default)
-        const storedTheme = localStorage.getItem('preferred-theme');
-        const theme = (storedTheme === 'dark' || storedTheme === 'light') ? storedTheme : getSystemTheme();
-        
-        // Apply theme immediately to html
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Pulse Monitor — lightweight server status dashboard." />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="googlebot" content="noindex, nofollow" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="color-scheme" content="light" />
+  <!-- Match the actual hotaru body background (`body.hotaru-theme {
+       background: #ffffff }`). The earlier #fbf6f7 was a faint pink
+       holdover from the pre-hotaru palette and made mobile browser
+       chrome render with a warm tint that didn't match the page. -->
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>Server Status</title>
+
+  <!-- Force light mode: clear any leftover .dark from previous
+       Pulse builds before the body paints, so the hotaru palette
+       renders on a pristine surface. Also load the navbar config
+       (logo, custom CSS/JS, hide_cards toggle) early — the
+       synchronous XHR is deliberate so the rest of the page can
+       rely on `window.__navbarConfig` without races. -->
+  <script is:inline>
+    (function () {
+      try {
         const html = document.documentElement;
-        if (theme === 'dark') {
-          html.classList.add('dark');
-          html.classList.remove('light');
+        html.classList.remove('dark');
+        html.classList.add('light');
+        // Honour stored language pref (zh / en); default to system.
+        const stored = localStorage.getItem('preferred-language');
+        if (stored === 'zh' || stored === 'en') {
+          html.lang = stored;
         } else {
-          html.classList.add('light');
-          html.classList.remove('dark');
+          const sys = (navigator.language || '').toLowerCase();
+          html.lang = sys.startsWith('zh') ? 'zh' : 'en';
         }
-        
-        // Apply theme to body when it's available
-        function applyThemeToBody() {
-          const body = document.body;
-          if (body) {
-            if (theme === 'dark') {
-              body.classList.add('dark');
-              body.classList.remove('light');
-            } else {
-              body.classList.add('light');
-              body.classList.remove('dark');
-            }
-          } else {
-            // Body not ready yet, try again
-            requestAnimationFrame(applyThemeToBody);
+      } catch (_) {}
+
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', '/api/navbar/config', false);
+        xhr.send();
+        if (xhr.status === 200) {
+          const cfg = JSON.parse(xhr.responseText);
+          window.__navbarConfig = cfg;
+          if (cfg.text) document.title = cfg.text;
+          if (cfg.logo) {
+            const link = document.querySelector('link[rel="icon"]');
+            if (link) link.href = cfg.logo;
+          }
+          if (cfg.custom_css && cfg.custom_css.trim()) {
+            const s = document.createElement('style');
+            s.textContent = cfg.custom_css;
+            document.head.appendChild(s);
+          }
+          if (cfg.custom_js && cfg.custom_js.trim()) {
+            const s = document.createElement('script');
+            s.textContent = cfg.custom_js;
+            document.head.appendChild(s);
+          }
+          /* Honour the "显示首页卡片" admin toggle by injecting a
+             hard CSS rule before the <body> paints. Doing this in
+             the synchronous early-script block (this XHR is
+             intentionally synchronous so the rest of the page
+             can rely on cfg without races) means the card grid
+             never flashes into view and is then hidden — it
+             simply renders display:none from the first frame.   */
+          if (cfg.hide_cards === true) {
+            const s = document.createElement('style');
+            s.textContent = '.hotaru-cards-section { display: none !important; }';
+            document.head.appendChild(s);
           }
         }
-        applyThemeToBody();
-        
-        // Preload navbar config early (non-blocking)
-        const apiBase = window.location.origin;
-        fetch(`${apiBase}/api/navbar/config`)
-          .then(res => res.ok ? res.json() : null)
-          .then(config => {
-            if (config) {
-              // Store config for NavBar component to use
-              window.__navbarConfig = config;
-              // Update page title with navbar text
-              if (config.text) {
-                document.title = config.text;
-              }
-              // Update favicon with custom logo
-              if (config.logo) {
-                const favicon = document.querySelector('link[rel="icon"]');
-                if (favicon) {
-                  favicon.href = config.logo;
-                  // Auto-detect image type based on URL extension
-                  const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
-                  if (ext === 'svg') {
-                    favicon.type = 'image/svg+xml';
-                  } else if (ext === 'png') {
-                    favicon.type = 'image/png';
-                  } else if (ext === 'jpg' || ext === 'jpeg') {
-                    favicon.type = 'image/jpeg';
-                  } else if (ext === 'ico') {
-                    favicon.type = 'image/x-icon';
-                  } else {
-                    // Remove type attribute to let browser auto-detect
-                    favicon.removeAttribute('type');
-                  }
-                }
-              }
-              // Apply glassmorphism effect if enabled
-              if (config.show_glass) {
-                document.documentElement.classList.add('glass-enabled');
-              }
-              // Dispatch event when config is ready
-              window.dispatchEvent(new CustomEvent('navbarconfigready', { detail: config }));
-            }
-          })
-          .catch(() => {
-            // Silently fail, NavBar will handle defaults
-          });
-      })();
-    </script>
-    <!-- Load custom CSS and JS from backend (all users see it) -->
-    <script is:inline>
-      (function() {
-        // Use synchronous XMLHttpRequest to load config BEFORE page renders
-        // This ensures external scripts load early enough for DOMContentLoaded
-        try {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', '/api/navbar/config', false); // false = synchronous
-          xhr.send();
-          
-          if (xhr.status === 200) {
-            var config = JSON.parse(xhr.responseText);
-            
-            // Apply glassmorphism effect immediately (before render)
-            if (config.show_glass) {
-              document.documentElement.classList.add('glass-enabled');
-            }
-            
-            // Inject CSS if exists
-            if (config.custom_css && config.custom_css.trim()) {
-              var style = document.createElement('style');
-              style.textContent = config.custom_css;
-              document.head.appendChild(style);
-            }
-            
-            // Inject JS if exists
-            if (config.custom_js && config.custom_js.trim()) {
-              var customJS = config.custom_js;
-              
-              // Check if it's a complete <script> tag (external or with attributes)
-              var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
-              var scriptMatches = [];
-              var match;
-              while ((match = scriptTagRegex.exec(customJS)) !== null) {
-                scriptMatches.push({attrs: match[1], content: match[2]});
-              }
-              
-              if (scriptMatches.length > 0) {
-                // Has <script> tags - parse and inject each
-                scriptMatches.forEach(function(scriptData) {
-                  var script = document.createElement('script');
-                  
-                  // Check if it has src attribute (external script)
-                  var srcMatch = scriptData.attrs.match(/src=["']([^"']+)["']/);
-                  if (srcMatch) {
-                    script.src = srcMatch[1];
-                    // Force synchronous loading for external scripts
-                    script.async = false;
-                    script.defer = false;
-                  } else if (scriptData.content.trim()) {
-                    // Inline script
-                    script.textContent = scriptData.content;
-                  }
-                  
-                  if (script.src || script.textContent) {
-                    document.head.appendChild(script);
-                  }
-                });
-              } else {
-                // Plain JS code without tags - inject directly
-                var script = document.createElement('script');
-                script.textContent = customJS;
-                document.head.appendChild(script);
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to load custom styles:', err);
-        }
-      })();
-    </script>
-  </head>
-  <body class="min-h-screen overflow-x-hidden flex flex-col bg-[#fafafa] dark:bg-[#151515] text-[#151515] dark:text-[#f5f5f5]">
-    <div id="auth-check" class="hidden min-h-screen flex flex-col">
-      <div class="px-2 sm:px-4 md:px-6 animate-navbar">
-        <NavBar />
-      </div>
-      <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-4 pb-2 sm:pb-4 animate-content">
-        <SystemTable apiBase={apiBase} />
-      </main>
-      <div class="px-2 sm:px-4 md:px-6">
-        <Footer />
-      </div>
+      } catch (_) {
+        // No navbar config — continue with defaults.
+      }
+    })();
+  </script>
+</head>
+
+<body class="hotaru-theme" data-api-base={apiBase}>
+  <!-- Full-page initial loader. Sits fixed-positioned over a hidden
+       <main> until the first metrics response (success OR failure)
+       arrives, then fades out and reveals the content beneath.
+       HotaruServerTable's render() / showError() both call
+       window.__dismissHotaruLoader() to trigger the cross-fade.   -->
+  <div class="hotaru-initial-loader" id="hotaru-initial-loader" role="status" aria-label="Loading">
+    <span class="hotaru-initial-loader__text"
+      >Loading<span class="hotaru-initial-loader__ellipsis" aria-hidden="true"
+        ><span>.</span><span>.</span><span>.</span></span
+      ></span>
+  </div>
+
+  <main class="hotaru-app" id="hotaru-app">
+    <div class="hotaru-container hotaru-container--top">
+      <HotaruServerTable />
+      <HotaruUpdateTime />
     </div>
-    <!--
-      Auth-gate overlay. Positioned `fixed inset-0` with an opaque body-
-      matching background so it covers the page while auth resolves, and
-      carries a 200 ms opacity transition. When auth passes we don't snap
-      it out with `display: none` — that would leave a visible gap
-      frame between spinner-gone and main-content-faded-in (the `.animate-
-      content` class has a 0.1 s animation-delay). Instead we set
-      `opacity: 0` first, let the fade play, and only THEN apply `hidden`.
-      During those 200 ms the main content's own entrance animations run
-      underneath, so the perceived transition is a clean cross-fade
-      rather than a snap-out / blank-frame / fade-in. The `z-50` ensures
-      the overlay stays above the main content while it fades.
-    -->
-    <div id="login-redirect" class="fixed inset-0 z-50 flex items-center justify-center bg-[#fafafa] dark:bg-[#151515] transition-opacity duration-200 ease-out">
-      <div class="text-center animate-page-in">
-        <div class="w-8 h-8 border-[3px] border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin-smooth mx-auto mb-4"></div>
-        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">Checking access...</p>
-      </div>
-    </div>
-  </body>
-</html>
+    <HotaruCardGrid />
+  </main>
 
-<script>
-  // Get API base URL
-  function getApiBase() {
-    const apiBase = import.meta.env.PUBLIC_API_BASE;
-    if (apiBase && apiBase.trim() !== '') {
-      return apiBase.trim();
-    }
-    return window.location.origin;
-  }
-  
-  const apiBase = getApiBase();
-  
-  // Check privacy mode and authentication on page load
-  (async () => {
-    const authCheck = document.getElementById('auth-check');
-    const loginRedirect = document.getElementById('login-redirect');
+  <!-- Footer intentionally empty: the user asked to drop both the
+       "Powered by Pulse" line and the hotaru attribution. Keeping
+       the element as a structural placeholder so any sibling /
+       layout rules that rely on a <footer> still resolve.       -->
+  <footer class="hotaru-footer hotaru-container" aria-hidden="true"></footer>
 
-    // Reveal the authenticated page with a smooth cross-fade:
-    //  1. Un-hide #auth-check so its child animations (.animate-navbar
-    //     / .animate-content) start their entrance keyframes.
-    //  2. Drop the overlay out of the hit-testing path (`pointer-events:
-    //     none`) so during the 200 ms fade the user can already
-    //     interact with the NavBar / content underneath — otherwise
-    //     the still-present (but fading) overlay sitting at `z-50`
-    //     would swallow clicks for that window, which on a slow tap
-    //     is user-visible.
-    //  3. Set the overlay's opacity to 0 so its 200 ms CSS transition
-    //     carries the spinner out while the content fades in.
-    //  4. After the fade (220 ms gives a small buffer over the 200 ms
-    //     transition to avoid a one-frame flash) apply `.hidden` so
-    //     the overlay leaves the layout tree.
-    // The overlay is `position: fixed` so step 3's opacity fade does
-    // not cause a layout shift below the auth-check content.
-    function revealAuthContent() {
-      authCheck.classList.remove('hidden');
-      loginRedirect.style.pointerEvents = 'none';
-      loginRedirect.style.opacity = '0';
-      setTimeout(() => loginRedirect.classList.add('hidden'), 220);
-    }
+  <!-- Silent auth check — no UI, just a background privacy gate -->
+  <script is:inline>
+    (function () {
+      const isZh = () => (document.documentElement.lang || '').toLowerCase().startsWith('zh');
 
-    // Get token from URL parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const shareToken = urlParams.get('token');
-    
-    // Check privacy config
-    try {
-      const privacyRes = await fetch(`${apiBase}/api/privacy/config`);
-      if (privacyRes.ok) {
-        const privacyConfig = await privacyRes.json();
-        
-        // If privacy is not enabled, allow access
-        if (!privacyConfig.enabled) {
-          revealAuthContent();
-          return;
-        }
-        
-        // Privacy is enabled, check authentication
-        // If share token is provided, verify it
-        if (shareToken) {
-          const verifyRes = await fetch(`${apiBase}/api/privacy/verify-token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: shareToken }),
-          });
-          
-          if (verifyRes.ok) {
-            const verifyData = await verifyRes.json();
-            if (verifyData.valid) {
-              // Token is valid, allow access
-              revealAuthContent();
-              return;
-            }
+      function applyDocI18n() {
+        document.querySelectorAll('[data-zh][data-en]').forEach((el) => {
+          if (el.children.length === 0) {
+            el.textContent = isZh() ? el.dataset.zh : el.dataset.en;
           }
-        }
-        
-        // Check if user has admin auth token
-        const adminToken = localStorage.getItem('admin_auth_token');
-        if (adminToken) {
-          // Verify admin token
-          try {
-            const verifyRes = await fetch(`${apiBase}/api/auth/verify`, {
+        });
+      }
+      applyDocI18n();
+      document.addEventListener('pulse:language-changed', applyDocI18n);
+
+      function redirectLogin() {
+        window.location.href = '/login?redirect=/';
+      }
+
+      const url = new URL(window.location.href);
+      const shareToken = url.searchParams.get('token');
+      const adminToken = localStorage.getItem('admin_auth_token');
+
+      // Background privacy check — fails open so a broken backend
+      // doesn't brick the dashboard. The page is already rendered;
+      // we only redirect if privacy is on AND we have no valid auth.
+      fetch('/api/privacy/config', { cache: 'no-store' })
+        .then((r) => r.ok ? r.json() : null)
+        .then((cfg) => {
+          if (!cfg || !cfg.enabled) return;
+          if (!shareToken && !adminToken) { redirectLogin(); return; }
+          if (shareToken) {
+            return fetch('/api/privacy/verify-token', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token: adminToken }),
-            });
-            
-            if (verifyRes.ok) {
-              const verifyData = await verifyRes.json();
-              if (verifyData.valid) {
-                // Admin token is valid, allow access
-                revealAuthContent();
-                return;
-              }
-            }
-          } catch (err) {
-            // Verification failed, continue to login
+              body: JSON.stringify({ token: shareToken })
+            }).then((r) => r.ok ? r.json() : null)
+              .then((v) => { if (!v || !v.valid) redirectLogin(); });
           }
-        }
-        
-        // No valid token, redirect to login with redirect parameter
-        window.location.href = '/login?redirect=/';
-      } else {
-        // Privacy config check failed, allow access (fail open)
-        revealAuthContent();
+          return fetch('/api/auth/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: adminToken })
+          }).then((r) => r.ok ? r.json() : null)
+            .then((v) => { if (!v || !v.valid) redirectLogin(); });
+        })
+        .catch(() => { /* fail open */ });
+    })();
+
+    // Translation event — when language toggles elsewhere in the app
+    // (or via storage) we rebroadcast so listeners can repaint.
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'preferred-language') {
+        document.documentElement.lang = e.newValue || 'en';
+        document.dispatchEvent(new Event('pulse:language-changed'));
       }
-    } catch (err) {
-      // Privacy config check failed, allow access (fail open)
-      revealAuthContent();
-    }
-  })();
-</script>
+    });
+  </script>
+</body>
+</html>

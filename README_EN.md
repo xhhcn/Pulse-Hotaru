@@ -2,11 +2,11 @@
   <img src="assets/logo.svg" width="120" height="120" alt="Pulse Logo">
 </p>
 
-<h1 align="center">Pulse</h1>
+<h1 align="center">Pulse-Hotaru</h1>
 
 <p align="center">
-  <b>Lightweight Server Monitoring System</b><br>
-  Real-time monitoring of CPU, memory, disk, network and other metrics
+  <b>Hotaru-themed distribution of Pulse</b><br>
+  Keeps Pulse backend/data compatibility while shipping a Hotaru-focused UI
 </p>
 
 <p align="center">
@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xhhcn/Pulse/releases"><img src="https://img.shields.io/github/v/release/xhhcn/Pulse?style=flat-square&color=blue" alt="Release"></a>
-  <a href="https://hub.docker.com/r/xhh1128/pulse"><img src="https://img.shields.io/docker/pulls/xhh1128/pulse?style=flat-square&color=blue" alt="Docker Pulls"></a>
-  <a href="https://hub.docker.com/r/xhh1128/pulse"><img src="https://img.shields.io/docker/image-size/xhh1128/pulse/latest?style=flat-square&color=blue" alt="Docker Size"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/xhhcn/Pulse?style=flat-square&color=green" alt="License"></a>
+  <a href="https://github.com/xhhcn/Pulse-Hotaru/releases"><img src="https://img.shields.io/github/v/release/xhhcn/Pulse-Hotaru?style=flat-square&color=blue" alt="Release"></a>
+  <a href="https://hub.docker.com/r/xhh1128/pulse-hotaru"><img src="https://img.shields.io/docker/pulls/xhh1128/pulse-hotaru?style=flat-square&color=blue" alt="Docker Pulls"></a>
+  <a href="https://hub.docker.com/r/xhh1128/pulse-hotaru"><img src="https://img.shields.io/docker/image-size/xhh1128/pulse-hotaru/latest?style=flat-square&color=blue" alt="Docker Size"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/xhhcn/Pulse-Hotaru?style=flat-square&color=green" alt="License"></a>
 </p>
 
 <p align="center">
@@ -37,11 +37,11 @@
 
 ---
 
-## ✨ What's New in v1.3.0
+## ✨ v1.0.0 Release Notes
 
-- 🔐 **Shared Secret Authentication** - All clients use a unified shared secret to connect to the server, simplifying deployment
-- 🏷️ **Special Tag Support** - New `traffic:in/out` and `speed:in/out` tags for real-time traffic statistics and network speed display
-- 🎨 **Custom CSS/JS** - Support for site-wide custom styles and scripts to create a personalized monitoring dashboard
+- 🎨 **Hotaru-style frontend** across dashboard, admin, and login pages
+- 🔁 **Pulse data compatibility**: reuse existing `metrics.db` directly
+- 🔧 **Separated distribution**: dedicated repo/image (`Pulse-Hotaru` / `xhh1128/pulse-hotaru`) without overwriting Pulse releases
 
 ---
 
@@ -52,7 +52,7 @@
 #### One-line Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/install-pulse-server.sh | sudo bash
 ```
 
 The script will automatically:
@@ -65,12 +65,12 @@ The script will automatically:
 
 **amd64:**
 ```bash
-sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-amd64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
 ```
 
 **arm64:**
 ```bash
-sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-arm64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
 ```
 
 #### Uninstall Server
@@ -100,7 +100,7 @@ sudo systemctl daemon-reload
 **Linux (amd64)**
 ```bash
 # Download
-wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64
+wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-amd64
 chmod +x pulse-server-standalone-linux-amd64
 
 # Run
@@ -110,7 +110,7 @@ chmod +x pulse-server-standalone-linux-amd64
 **Linux (arm64)**
 ```bash
 # Download
-wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64
+wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-arm64
 chmod +x pulse-server-standalone-linux-arm64
 
 # Run
@@ -121,15 +121,45 @@ Access `http://YOUR_IP:8008` to view the monitoring dashboard
 
 ---
 
+### Switch from Pulse to Pulse-Hotaru without data loss
+
+If you already run Pulse and only want to switch to the Hotaru-themed frontend while keeping all existing data (systems, admin auth, TCPing history, shared secrets), just replace the server binary in place:
+
+> The commands below do **not** delete `/opt/pulse/data/metrics.db`.
+
+**amd64:**
+```bash
+sudo systemctl stop pulse-server
+sudo wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-amd64 -O /opt/pulse/pulse-server
+sudo chmod +x /opt/pulse/pulse-server
+sudo systemctl start pulse-server
+```
+
+**arm64:**
+```bash
+sudo systemctl stop pulse-server
+sudo wget https://github.com/xhhcn/Pulse-Hotaru/releases/latest/download/pulse-server-standalone-linux-arm64 -O /opt/pulse/pulse-server
+sudo chmod +x /opt/pulse/pulse-server
+sudo systemctl start pulse-server
+```
+
+Client side remains unchanged — keep using the official Pulse client installer:
+```bash
+curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- \
+  --id <ID> --server <SERVER_URL> --secret <SECRET>
+```
+
+---
+
 ### Method 2: Docker Deployment (Recommended for Production)
 
-[![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse)
+[![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse--hotaru-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse-hotaru)
 
 #### Docker Compose
 
 ```bash
 mkdir pulse && cd pulse
-curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml
+curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/docker-compose.yaml -o docker-compose.yaml
 docker compose up -d
 ```
 
@@ -143,7 +173,7 @@ docker run -d \
   -p 8008:8008 \
   -v $(pwd)/pulse-data:/app/data \
   --restart unless-stopped \
-  xhh1128/pulse:latest
+  xhh1128/pulse-hotaru:latest
 ```
 
 Access `http://YOUR_IP:8008` to view the monitoring dashboard
@@ -199,7 +229,7 @@ Pulse supports IPv4/IPv6 dual-stack. If your server requires IPv6 support, pleas
    ```yaml
    services:
      pulse:
-       image: xhh1128/pulse:latest
+      image: xhh1128/pulse-hotaru:latest
        container_name: pulse-monitor
        ports:
          - 8008:8008
@@ -361,23 +391,24 @@ server/web/
 │   │   ├── index.astro           #   /        public dashboard
 │   │   ├── admin.astro           #   /admin   admin panel
 │   │   └── login.astro           #   /login   login page
-│   ├── components/               # 9 reusable components, Astro + Tailwind throughout
-│   │   ├── SystemTable.astro     #     main table + TCPing chart
-│   │   ├── AdminDashboard.astro  #     admin tables + modals
-│   │   ├── NavBar.astro / Footer.astro / LoadingState.astro
-│   │   ├── LoginForm.astro / Icon.astro
-│   │   └── SystemTableHeader.astro / SystemTableHeaderRow.astro
-│   ├── styles/global.css         # global animations + custom Tailwind utilities
-│   └── utils/i18n.ts             # English / Chinese strings (48 keys); add a language by extending the Language type
-├── tailwind.config.mjs           # color palette + dark-mode config
+│   ├── components/               # Hotaru-oriented Astro components
+│   │   ├── HotaruServerTable.astro
+│   │   ├── HotaruCardGrid.astro
+│   │   ├── HotaruUpdateTime.astro
+│   │   ├── AdminDashboard.astro
+│   │   ├── LoginForm.astro
+│   │   └── Footer.astro / Icon.astro
+│   ├── styles/hotaru-theme.css   # Main Hotaru styles for all three pages
+│   └── styles/global.css         # Shared Tailwind base styles
+├── tailwind.config.mjs           # Tailwind build config
 └── astro.config.mjs              # Astro / Vite config (includes the dev proxy, see below)
 ```
 
 ### Local dev workflow
 
 ```bash
-git clone https://github.com/<your-username>/Pulse.git
-cd Pulse/server
+git clone https://github.com/<your-username>/Pulse-Hotaru.git
+cd Pulse-Hotaru/server
 
 # Terminal 1: run the backend on :8080
 go run .
@@ -452,13 +483,13 @@ All of Pulse's server state (registered systems, shared secrets, TCPing history,
 #    A. Standalone binary (systemd) — recommended, lowest overhead
 #       The installer also drops backup/restore/migrate into /opt/pulse/scripts/
 #       and creates the pulse-migrate / pulse-backup / pulse-restore commands.
-curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/install-pulse-server.sh | sudo bash
 
 #    B. Docker Compose
 # mkdir pulse && cd pulse && \
-# curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml && \
+# curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/docker-compose.yaml -o docker-compose.yaml && \
 # docker compose up -d && \
-# curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/scripts/migrate.sh -o migrate.sh && chmod +x migrate.sh
+# curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse-Hotaru/main/scripts/migrate.sh -o migrate.sh && chmod +x migrate.sh
 #       migrate.sh will auto-fetch its backup.sh/restore.sh siblings from the repo — one file is enough.
 
 # 2) One command — prompts for the OLD admin password (never shown on screen)

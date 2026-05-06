@@ -1,0 +1,329 @@
+---
+/**
+ * HotaruCardGrid.astro
+ *
+ * 3-column responsive summary cards rendered below the table.
+ * Original Astro implementation. Listens on the
+ * `pulse:metrics-updated` event broadcast by HotaruServerTable so
+ * we don't issue a second `/api/metrics` request — the cards stay
+ * perfectly in sync with the table (and only repaint when SSE
+ * actually pushes a fresh snapshot).
+ *
+ * Each card shows: Pulse iconify flag (when location resolves),
+ * server name, OS text line, RAM bar, Network, uptime. Servers with
+ * no location or location literally "Unknown" are omitted from
+ * the card grid entirely.
+ */
+---
+
+<section class="hotaru-cards-section" aria-label="Server overview cards">
+  <div class="hotaru-container">
+    <div class="hotaru-cards-grid" id="hotaru-cards-grid" aria-busy="true"></div>
+  </div>
+</section>
+
+<script>
+  (function () {
+    const grid = document.getElementById('hotaru-cards-grid');
+    if (!grid) return;
+
+    const isZh = () => (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+    const t = (zh, en) => isZh() ? zh : en;
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    /* Same compact B/K/M/G/T formatter the table uses, so the
+       card "Network: 1.4M | 13K" line stays consistent with the
+       table row above. The "B/s" unit is implied by the label.   */
+    function fmtBytesShort(n) {
+      const v = Number(n) || 0;
+      if (v < 1024)              return v.toFixed(0) + 'B';
+      if (v < 1048576)           return (v / 1024).toFixed(0) + 'K';
+      if (v < 1073741824)        return (v / 1048576).toFixed(1) + 'M';
+      if (v < 1099511627776)     return (v / 1073741824).toFixed(2) + 'G';
+      return (v / 1099511627776).toFixed(2) + 'T';
+    }
+    function fmtRateShort(mbps) {
+      return fmtBytesShort((Number(mbps) || 0) * 1024 * 1024);
+    }
+
+    function levelOf(p) {
+      const v = Number(p) || 0;
+      if (v >= 90) return 'bad';
+      if (v >= 70) return 'warn';
+      return 'ok';
+    }
+
+    /* ----------------------------------------------------------------
+       Smart-diff DOM helpers
+       ----------------------------------------------------------------
+       Cards are built once and mutated in place on each SSE push, so
+       updates don't reflow the whole grid and any text the user has
+       selected stays selected.
+       ---------------------------------------------------------------- */
+    function setText(el, text) {
+      if (el.textContent !== text) el.textContent = text;
+    }
+    function setAttr(el, name, value) {
+      if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+    }
+
+    /* Localize backend's English uptime "5h"/"160d" → "5小时"/"160天".
+       See HotaruServerTable.astro for the rationale (wire-format
+       stability lives in the backend; translation lives at render). */
+    function formatUptimeZh(value) {
+      if (typeof value !== 'string' || value.length === 0) return value;
+      const m = /^(\d+)([dh])$/.exec(value);
+      if (!m) return value;
+      return m[2] === 'd' ? (m[1] + '天') : (m[1] + '小时');
+    }
+
+    function resolveFlagIcon(country) {
+      const helper = window.__hotaruFlag;
+      if (!helper || typeof helper.flagIcon !== 'function') return null;
+      return helper.flagIcon(country);
+    }
+
+    /** No card for empty location or literal Unknown (any case). */
+    function cardExcluded(item) {
+      const loc = String(item.location ?? '').trim();
+      if (!loc) return true;
+      if (/^unknown$/i.test(loc)) return true;
+      return false;
+    }
+
+    function buildCardEl(item) {
+      const article = document.createElement('article');
+      article.className = 'hotaru-card';
+      article.dataset.cardId = String(item.id || item.name || '');
+
+      // Header: flag (iconify) + name — same as earlier Pulse hotaru port
+      const head = document.createElement('div');
+      head.className = 'hotaru-card__head';
+      const flag = document.createElement('span');
+      flag.className = 'hotaru-card__flag';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'hotaru-card__name';
+      head.append(flag, nameSpan);
+      article.appendChild(head);
+
+      // Type paragraph (always present; empty-when-blank)
+      const typeP = document.createElement('p');
+      typeP.className = 'hotaru-card__type';
+      article.appendChild(typeP);
+
+      // RAM progress bar
+      const bar  = document.createElement('div');
+      bar.className = 'hotaru-card__bar';
+      bar.dataset.level = 'ok';
+      const fill = document.createElement('i');
+      fill.style.width = '0%';
+      bar.appendChild(fill);
+      article.appendChild(bar);
+
+      // Two info lines: "Network: X | Y" and "在线时间: Z"
+      const content = document.createElement('div');
+      content.className = 'hotaru-card__content';
+      const netP    = document.createElement('p');
+      const netLbl  = document.createTextNode('Network: ');
+      const netVal  = document.createElement('span');
+      netP.append(netLbl, netVal);
+      const uptimeP   = document.createElement('p');
+      const uptimeLbl = document.createTextNode('在线时间: ');
+      const uptimeVal = document.createElement('span');
+      uptimeP.append(uptimeLbl, uptimeVal);
+      content.append(netP, uptimeP);
+      article.appendChild(content);
+
+      return {
+        article,
+        refs: { flag, name: nameSpan, type: typeP, bar, fill, netVal, uptimeVal },
+        last: { icon: null, country: null },
+      };
+    }
+
+    function updateCardEl(entry, item) {
+      const isOffline = !!item.alert;
+      const r = entry.refs;
+
+      const name = item.name || '–';
+      setText(r.name, name);
+      setAttr(r.name, 'title', name);
+
+      /* 系统：OS 优先（如 Debian），否则虚拟化类型（与表格一致）        */
+      const sys = item.os || item.virtualization_type || 'Unknown';
+      setText(r.type, sys);
+      r.type.style.display = '';
+
+      /* Flag — only rows that pass cardExcluded() reach the grid, so
+         `location` always resolves to an icon here.                 */
+      const country = item.location || '';
+      if (entry.last.country !== country) {
+        entry.last.country = country;
+        const icon = resolveFlagIcon(country);
+        r.flag.className = 'hotaru-card__flag';
+        r.flag.removeAttribute('data-icon');
+        r.flag.removeAttribute('data-icon-loaded');
+        r.flag.innerHTML = '';
+        r.flag.removeAttribute('aria-label');
+        r.flag.removeAttribute('title');
+        if (icon) {
+          r.flag.classList.add('flag-icon');
+          r.flag.dataset.icon = icon;
+          r.flag.title = country;
+          r.flag.setAttribute('aria-label', country);
+          r.flag.removeAttribute('aria-hidden');
+          r.flag.style.display = '';
+          entry.last.icon = icon;
+        } else {
+          r.flag.setAttribute('aria-hidden', 'true');
+          r.flag.style.display = 'none';
+          entry.last.icon = null;
+        }
+      }
+
+      /* Three-state rendering, aligned with hotaru's TableItem +
+         CardItem rules:
+           pristine (alert + no metric strings)  → 100 % red bar
+           offline-with-history (alert only)     → last % on red bar
+           online                                → percent-driven level
+         Pristine forces a full red bar (analogous to hotaru's
+         `memory_total === undefined ? 100 : ...`) since the actual
+         memory value is genuinely 0 / undefined and a 0 %-wide bar
+         reads as "broken" rather than "offline".                 */
+      const isPristine = isOffline
+                         && !item.cpu_model
+                         && !item.memory_info
+                         && !item.disk_info;
+      const memPct  = Math.max(0, Math.min(100, Number(item.memory) || 0));
+      const memLevel = isOffline ? 'bad' : levelOf(memPct);
+      const fillW   = (isPristine ? 100 : memPct).toFixed(1) + '%';
+      if (r.bar.dataset.level !== memLevel) r.bar.dataset.level = memLevel;
+      if (r.fill.style.width !== fillW)     r.fill.style.width   = fillW;
+
+      /* Network rate — three-state rendering matching the table:
+           Online: live rate.
+           Offline-with-history (disconnected): keep the last
+           sample. Pulse's broadcast preserves it server-side, so
+           a card that drops at 12 K/s still shows that figure
+           rather than collapsing to "–".
+           Pristine: genuinely no data → "–".                       */
+      const netIn  = fmtRateShort(item.net_in_mb_s  || 0);
+      const netOut = fmtRateShort(item.net_out_mb_s || 0);
+      setText(r.netVal, isPristine ? '–' : `${netIn} | ${netOut}`);
+
+      /* 在线时间 follows hotaru's `server.uptime || '–'`:
+         disconnected-with-history keeps its last uptime string
+         (e.g. "160d"), pristine rows fall through to '–'. Force
+         '–' explicitly on pristine rather than relying on
+         `item.time`'s falsiness — the broadcast can occasionally
+         carry an empty-but-truthy placeholder for a pristine row. */
+      setText(r.uptimeVal, isPristine ? '–' : formatUptimeZh(item.time || '–'));
+    }
+
+    /* Smart diff render. Maintains a Map<id, entry> keyed by server
+       id. Builds new cards on first sight, mutates existing cards
+       in place, removes ones that drop out, and reorders only when
+       `order` actually shifts.                                     */
+    const cardMap = new Map();
+    let inEmptyState = false;
+    /* True until the first non-empty render has run. Used to scope
+       the cascade-fade to first paint only — later SSE pushes that
+       add cards (because a new server registered) snap them in
+       place, matching the table's behaviour above.                */
+    let cardsFirstRender = true;
+
+    function paintEmpty() {
+      cardMap.clear();
+      grid.innerHTML = `<div class="hotaru-card__empty">${t('暂无数据', 'No data')}</div>`;
+      inEmptyState = true;
+    }
+
+    function render(list) {
+      if (!Array.isArray(list)) return;
+      grid.removeAttribute('aria-busy');
+
+      // Returning from an empty placeholder — drop the placeholder
+      // before diffing so we don't try to insertBefore against it.
+      if (inEmptyState) {
+        cardMap.clear();
+        grid.innerHTML = '';
+        inEmptyState = false;
+      }
+
+      if (list.length === 0) { paintEmpty(); return; }
+
+      const sorted = list.slice()
+        .filter((it) => !cardExcluded(it))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (sorted.length === 0) { paintEmpty(); return; }
+
+      const seenIds = new Set();
+      let prevNode = null;
+      let needFlagLoad = false;
+      const isFirstPaintStagger = cardsFirstRender;
+      let staggerIdx = 0;
+
+      sorted.forEach((item) => {
+        const id = String(item.id || item.name || '');
+        seenIds.add(id);
+        let entry = cardMap.get(id);
+
+        if (!entry) {
+          entry = buildCardEl(item);
+          cardMap.set(id, entry);
+          updateCardEl(entry, item);
+          if (isFirstPaintStagger) {
+            const stepIdx = Math.min(staggerIdx++, 6);
+            entry.article.style.setProperty('--hotaru-stagger', String(stepIdx * 50));
+            entry.article.classList.add('hotaru-card--fresh');
+            entry.article.addEventListener('animationend', () => {
+              entry.article.classList.remove('hotaru-card--fresh');
+              entry.article.style.removeProperty('--hotaru-stagger');
+            }, { once: true });
+          }
+          const after = prevNode ? prevNode.nextSibling : grid.firstChild;
+          grid.insertBefore(entry.article, after);
+          if (entry.refs.flag.dataset.icon) needFlagLoad = true;
+        } else {
+          const prevIcon = entry.refs.flag.dataset.icon || null;
+          updateCardEl(entry, item);
+          const newIcon = entry.refs.flag.dataset.icon || null;
+          if (newIcon && newIcon !== prevIcon) needFlagLoad = true;
+          const expected = prevNode ? prevNode.nextSibling : grid.firstChild;
+          if (entry.article !== expected) {
+            grid.insertBefore(entry.article, expected);
+          }
+        }
+        prevNode = entry.article;
+      });
+
+      for (const [id, entry] of Array.from(cardMap)) {
+        if (!seenIds.has(id)) {
+          entry.article.remove();
+          cardMap.delete(id);
+        }
+      }
+
+      if (needFlagLoad
+          && window.__hotaruFlag
+          && typeof window.__hotaruFlag.loadFlagIcons === 'function') {
+        window.__hotaruFlag.loadFlagIcons(grid).catch(() => {});
+      }
+
+      if (cardsFirstRender) cardsFirstRender = false;
+    }
+
+    // Subscribe to broadcasts from HotaruServerTable. We deliberately
+    // do NOT issue our own /api/metrics request — keeping a single
+    // source of truth halves the network load and guarantees the
+    // cards stay in lockstep with the table.
+    window.addEventListener('pulse:metrics-updated', (e) => {
+      if (e && Array.isArray(e.detail)) render(e.detail);
+    });
+  })();
+</script>

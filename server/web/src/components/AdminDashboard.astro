@@ -35,34 +35,41 @@ const customCodePlaceholder = [
 ].join('\n');
 ---
 
-<div class="mx-auto max-w-7xl">
-  <!-- System List -->
-  <div class="glass-card mb-4 sm:mb-6 rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-3 sm:p-4 md:p-6">
+<div class="hotaru-admin-page mx-auto max-w-7xl">
+  <!-- System List
+       The list is intentionally unwrapped: no card panel, no shadow,
+       no border. Just a section title + the inline action buttons,
+       then the list itself. This matches the requested minimal admin
+       layout (no card / no shadow on the systems list).               -->
+  <div class="hotaru-admin-section mb-4 sm:mb-6 p-0">
     <div class="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <h2 id="system-list-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="systemList">Service List</h2>
+      <h2 id="system-list-title" class="text-lg sm:text-xl font-semibold text-[#262626]" data-translate="systemList">服务列表</h2>
       <div class="flex items-center gap-1.5 sm:gap-2">
-        <button id="add-system-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600" title="Add Service" aria-label="Add Service" data-title-en="Add Service" data-title-zh="添加服务">
+        <a href="/" id="home-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] inline-flex items-center" title="主页" aria-label="主页" data-title-en="Home" data-title-zh="主页">
+          <Icon name="home" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </a>
+        <button id="add-system-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 hover:text-emerald-600" title="添加服务" aria-label="添加服务" data-title-en="Add Service" data-title-zh="添加服务">
           <Icon name="plus" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="privacy-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600" title="Privacy Settings" aria-label="Privacy Settings" data-title-en="Privacy Settings" data-title-zh="隐私设置">
+        <button id="privacy-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 hover:text-orange-600" title="隐私设置" aria-label="隐私设置" data-title-en="Privacy Settings" data-title-zh="隐私设置">
           <Icon name="shield" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="navbar-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-purple-400 dark:hover:text-purple-400 hover:text-purple-600" title="Customization Settings" aria-label="Customization Settings" data-title-en="Customization Settings" data-title-zh="自定义设置">
+        <button id="navbar-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-purple-400 hover:text-purple-600" title="自定义设置" aria-label="自定义设置" data-title-en="Customization Settings" data-title-zh="自定义设置">
           <Icon name="palette" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="tcping-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600" title="TCPing Settings" aria-label="TCPing Settings" data-title-en="TCPing Settings" data-title-zh="TCPing 设置">
+        <button id="tcping-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 hover:text-blue-600" title="TCPing 设置" aria-label="TCPing 设置" data-title-en="TCPing Settings" data-title-zh="TCPing 设置">
           <Icon name="settings" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="refresh-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Refresh" aria-label="Refresh" data-title-en="Refresh" data-title-zh="刷新">
+        <button id="refresh-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="刷新" aria-label="刷新" data-title-en="Refresh" data-title-zh="刷新">
           <Icon name="refresh-cw" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="backup-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600 disabled:pointer-events-none disabled:opacity-60" title="Download Backup" aria-label="Download Backup" data-title-en="Download Backup" data-title-zh="下载备份">
+        <button id="backup-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-emerald-400 hover:text-emerald-600 disabled:pointer-events-none disabled:opacity-60" title="下载备份" aria-label="下载备份" data-title-en="Download Backup" data-title-zh="下载备份">
           <Icon name="download" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="change-password-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-amber-400 dark:hover:text-amber-400 hover:text-amber-600" title="Change Password" aria-label="Change Password" data-title-en="Change Password" data-title-zh="修改密码">
+        <button id="change-password-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-amber-400 hover:text-amber-600" title="修改密码" aria-label="修改密码" data-title-en="Change Password" data-title-zh="修改密码">
           <Icon name="lock" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
-        <button id="logout-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600" title="Logout" aria-label="Logout" data-title-en="Logout" data-title-zh="退出登录">
+        <button id="logout-btn" class="rounded-lg p-1.5 sm:p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 hover:text-red-600" title="退出登录" aria-label="退出登录" data-title-en="Logout" data-title-zh="退出登录">
           <Icon name="log-out" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
         </button>
       </div>
@@ -70,39 +77,38 @@ const customCodePlaceholder = [
 
     <div id="systems-list" class="space-y-3 max-h-[600px] overflow-y-auto scrollbar-hide" data-draggable-list>
       <div class="flex items-center justify-center py-12">
-        <div id="loading-systems-text" class="text-sm text-[#525252] dark:text-[#737373]" data-translate="loadingSystems">Loading systems...</div>
+        <div id="loading-systems-text" class="text-sm text-[#525252]" data-translate="loadingSystems">加载服务中</div>
       </div>
     </div>
   </div>
 
   <!-- Add System Modal -->
-  <div id="add-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="add-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
-        <h2 id="add-new-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="addNewSystem">Add New System</h2>
-        <button id="close-add-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="add-new-system-title" class="text-xl font-semibold text-[#262626]" data-translate="addNewSystem">添加新服务</h2>
+        <button id="close-add-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="add-system-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="systemName">System Name</span> <span class="text-red-500 dark:text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
           <input
             type="text"
             name="name"
             required
-            placeholder=""
-            data-placeholder-en="My Server"
-            data-placeholder-zh="我的服务器"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            placeholder="我的服务器"
+            data-placeholder-en="My Server" data-placeholder-zh="我的服务器"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="displayNameForThisSystem">Display name for this system</p>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="displayNameForThisSystem">此服务的显示名称</p>
         </div>
 
-        <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
-          <p class="text-xs text-[#525252] dark:text-[#a3a3a3]">
-            <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
+        <div class="rounded-lg bg-[#282828] bg-[#f5f5f5] p-3">
+          <p class="text-xs text-[#525252]">
+            <strong data-translate="note">注意:</strong> <span data-translate="noteContent">IP 地址、位置、操作系统和指标由代理自动更新，无法手动编辑。</span>
           </p>
         </div>
 
@@ -112,15 +118,15 @@ const customCodePlaceholder = [
           <button
             type="button"
             id="cancel-add-btn"
-            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
           >
-            <span data-translate="cancel">Cancel</span>
+            <span data-translate="cancel">取消</span>
           </button>
           <button
             type="submit"
             class="flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
           >
-            <span data-translate="addSystem">Add System</span>
+            <span data-translate="addSystem">添加服务</span>
           </button>
         </div>
       </form>
@@ -128,11 +134,11 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Edit System Modal -->
-  <div id="edit-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="edit-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
-        <h2 id="edit-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="editSystem">Edit System</h2>
-        <button id="close-edit-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="edit-system-title" class="text-xl font-semibold text-[#262626]" data-translate="editSystem">编辑服务</h2>
+        <button id="close-edit-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
@@ -141,33 +147,32 @@ const customCodePlaceholder = [
         <input type="hidden" name="original-id" value="" />
         
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="systemName">System Name</span> <span class="text-red-500 dark:text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
           <input
             type="text"
             name="name"
             required
-            placeholder=""
-            data-placeholder-en="My Server"
-            data-placeholder-zh="我的服务器"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            placeholder="我的服务器"
+            data-placeholder-en="My Server" data-placeholder-zh="我的服务器"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="tags">Tags</span> <span class="text-xs text-[#737373] dark:text-[#737373]" data-translate="tagsCommaSeparated">(comma-separated)</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="tags">标签</span> <span class="text-xs text-[#737373]" data-translate="tagsCommaSeparated">（逗号分隔）</span></label>
           <input
             type="text"
             name="tags"
             id="edit-tags-input"
             placeholder="Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#a3a3a3]" data-translate="tagsHint">Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro)</p>
+          <p class="mt-1 text-xs text-[#737373]" data-translate="tagsHint">输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。</p>
         </div>
 
-        <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
-          <p class="text-xs text-[#525252] dark:text-[#a3a3a3]">
-            <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
+        <div class="rounded-lg bg-[#282828] bg-[#f5f5f5] p-3">
+          <p class="text-xs text-[#525252]">
+            <strong data-translate="note">注意:</strong> <span data-translate="noteContent">IP 地址、位置、操作系统和指标由代理自动更新，无法手动编辑。</span>
           </p>
         </div>
 
@@ -177,15 +182,15 @@ const customCodePlaceholder = [
           <button
             type="button"
             id="cancel-edit-btn"
-            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
           >
-            <span data-translate="cancel">Cancel</span>
+            <span data-translate="cancel">取消</span>
           </button>
           <button
             type="submit"
             class="flex-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
           >
-            <span data-translate="updateSystem">Update System</span>
+            <span data-translate="updateSystem">更新服务</span>
           </button>
         </div>
       </form>
@@ -193,49 +198,49 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Delete Confirmation Modal -->
-  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4">
         <div class="mb-3 flex items-center gap-3">
           <div class="rounded-full bg-red-500/10 p-2">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 dark:text-red-400">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500">
               <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
             </svg>
           </div>
-          <h2 id="delete-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="deleteSystem">Delete System</h2>
+          <h2 id="delete-system-title" class="text-xl font-semibold text-[#262626]" data-translate="deleteSystem">删除服务</h2>
         </div>
-        <p class="text-sm text-[#525252] dark:text-[#a3a3a3]">
-          <span data-translate="areYouSureYouWantToDelete">Are you sure you want to delete</span> <span class="font-medium text-[#262626] dark:text-[#d4d4d4]" id="delete-system-name"></span>?
+        <p class="text-sm text-[#525252]">
+          <span data-translate="areYouSureYouWantToDelete">您确定要删除</span> <span class="font-medium text-[#262626]" id="delete-system-name"></span>?
         </p>
-        <p class="mt-3 text-xs text-red-500/90 dark:text-red-400/80">
-          ⚠️ <span data-translate="thisActionCannotBeUndone">This action cannot be undone.</span>
+        <p class="mt-3 text-xs text-red-500/90">
+          ⚠️ <span data-translate="thisActionCannotBeUndone">此操作无法撤销。</span>
         </p>
       </div>
 
       <div class="flex gap-3">
         <button
           id="cancel-delete-btn"
-          class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+          class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
         >
-          <span data-translate="cancel">Cancel</span>
+          <span data-translate="cancel">取消</span>
         </button>
         <button
           id="confirm-delete-btn"
           class="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
         >
-          <span data-translate="delete">Delete</span>
+          <span data-translate="delete">删除</span>
         </button>
       </div>
     </div>
   </div>
 
   <!-- TCPing Config Modal -->
-  <div id="tcping-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm overflow-hidden" data-modal>
-    <div class="mx-2 sm:mx-4 w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white shadow-2xl overflow-hidden" data-modal-content>
+  <div id="tcping-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm overflow-hidden" data-modal>
+    <div class="mx-2 sm:mx-4 w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white shadow-2xl overflow-hidden" data-modal-content>
       <!-- Header - Fixed -->
       <div class="flex items-center justify-between p-4 sm:p-6 pb-0 shrink-0">
-        <h2 id="tcping-config-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="tcpingSettings">TCPing Settings</h2>
-        <button id="close-tcping-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="tcping-config-title" class="text-lg sm:text-xl font-semibold text-[#262626]" data-translate="tcpingSettings">TCPing 设置</h2>
+        <button id="close-tcping-config-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
@@ -244,8 +249,8 @@ const customCodePlaceholder = [
       <div class="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 pt-4 scrollbar-hide">
         <form id="tcping-config-form" class="space-y-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]">
-              <span data-translate="pollingInterval">Polling Interval</span> <span class="text-red-500 dark:text-red-400">*</span>
+            <label class="mb-1 block text-sm font-medium text-[#525252]">
+              <span data-translate="pollingInterval">轮询间隔</span> <span class="text-red-500">*</span>
             </label>
             <div class="flex items-center gap-2">
               <input
@@ -254,16 +259,16 @@ const customCodePlaceholder = [
                 name="interval"
                 min="1"
                 required
-                class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <span class="text-sm text-[#525252] dark:text-[#a3a3a3] shrink-0" data-translate="seconds">seconds</span>
+              <span class="text-sm text-[#525252] shrink-0" data-translate="seconds">秒</span>
             </div>
-            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="pollingIntervalDesc">How often to send tcping requests to clients</p>
+            <p class="mt-1 text-xs text-[#525252]" data-translate="pollingIntervalDesc">向客户端发送 tcping 请求的频率</p>
           </div>
 
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]">
-              <span data-translate="tcpingTargets">TCPing Targets</span> <span class="text-red-500 dark:text-red-400">*</span>
+            <label class="mb-1 block text-sm font-medium text-[#525252]">
+              <span data-translate="tcpingTargets">TCPing 目标</span> <span class="text-red-500">*</span>
             </label>
             <div id="tcping-targets-container" class="space-y-2 sm:space-y-2">
               <!-- Targets will be dynamically added here -->
@@ -271,11 +276,11 @@ const customCodePlaceholder = [
             <button
               type="button"
               id="add-target-btn"
-              class="mt-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-1.5 text-xs font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+              class="mt-2 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-1.5 text-xs font-medium text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
             >
-              <span data-translate="addTarget">+ Add Target</span>
+              <span data-translate="addTarget">+ 添加目标</span>
             </button>
-            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="targetFormatDesc">Format: name and address (e.g., Google DNS, 8.8.8.8:53)</p>
+            <p class="mt-1 text-xs text-[#525252]" data-translate="targetFormatDesc">格式：名称和地址（例如：Google DNS, 8.8.8.8:53）</p>
           </div>
 
           <div id="tcping-config-message" class="hidden text-sm"></div>
@@ -284,15 +289,15 @@ const customCodePlaceholder = [
             <button
               type="button"
               id="cancel-tcping-config-btn"
-              class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+              class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
             >
-              <span data-translate="cancel">Cancel</span>
+              <span data-translate="cancel">取消</span>
             </button>
             <button
               type="submit"
               class="flex-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
             >
-              <span data-translate="save">Save</span>
+              <span data-translate="save">保存</span>
             </button>
           </div>
         </form>
@@ -301,53 +306,50 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Change Password Modal -->
-  <div id="change-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="change-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
-        <h2 id="change-password-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="changePassword">Change Password</h2>
-        <button id="close-change-password-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="change-password-title" class="text-xl font-semibold text-[#262626]" data-translate="changePassword">修改密码</h2>
+        <button id="close-change-password-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="change-password-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="currentPassword">Current Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="currentPassword">当前密码</span> <span class="text-red-500">*</span></label>
           <input
             type="password"
             name="currentPassword"
             required
-            placeholder=""
-            data-placeholder-en="Enter current password"
-            data-placeholder-zh="输入当前密码"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            placeholder="输入当前密码"
+            data-placeholder-en="Enter current password" data-placeholder-zh="输入当前密码"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="newPassword">New Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="newPassword">新密码</span> <span class="text-red-500">*</span></label>
           <input
             type="password"
             name="newPassword"
             required
-            placeholder=""
-            data-placeholder-en="Enter new password (min 6 characters)"
-            data-placeholder-zh="输入新密码（至少6个字符）"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            placeholder="输入新密码（至少6个字符）"
+            data-placeholder-en="Enter new password (min 6 characters)" data-placeholder-zh="输入新密码（至少6个字符）"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="passwordMinLength">Password must be at least 6 characters long</p>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="passwordMinLength">密码长度至少为6个字符</p>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="confirmNewPassword">Confirm New Password</span> <span class="text-red-500 dark:text-red-400">*</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="confirmNewPassword">确认新密码</span> <span class="text-red-500">*</span></label>
           <input
             type="password"
             name="confirmNewPassword"
             required
-            placeholder=""
-            data-placeholder-en="Confirm new password"
-            data-placeholder-zh="确认新密码"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            placeholder="确认新密码"
+            data-placeholder-en="Confirm new password" data-placeholder-zh="确认新密码"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
         </div>
 
@@ -357,15 +359,15 @@ const customCodePlaceholder = [
           <button
             type="button"
             id="cancel-change-password-btn"
-            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
           >
-            <span data-translate="cancel">Cancel</span>
+            <span data-translate="cancel">取消</span>
           </button>
           <button
             type="submit"
             class="flex-1 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-600"
           >
-            <span data-translate="changePassword">Change Password</span>
+            <span data-translate="changePassword">修改密码</span>
           </button>
         </div>
       </form>
@@ -373,96 +375,96 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Navbar Config Modal -->
-  <div id="navbar-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 sm:p-7 shadow-2xl" data-modal-content style="scrollbar-width: none; -ms-overflow-style: none;">
+  <div id="navbar-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 sm:p-7 shadow-2xl" data-modal-content style="scrollbar-width: none; -ms-overflow-style: none;">
       <div class="mb-5 flex items-center justify-between">
-        <h2 id="navbar-config-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="customizationSettings">Customization Settings</h2>
-        <button id="close-navbar-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="navbar-config-title" class="text-xl font-semibold text-[#262626]" data-translate="customizationSettings">自定义设置</h2>
+        <button id="close-navbar-config-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="navbar-config-form" class="space-y-5">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="navbarText">Navbar Text</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarText">标签栏文字</span></label>
           <input
             type="text"
             name="text"
             id="navbar-text-input"
             placeholder="Pulse"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="navbarTextHint">Custom text displayed in navbar (leave empty for default: Pulse)</p>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="navbarTextHint">浏览器标签栏显示的自定义文字（留空使用默认：Pulse）</p>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="navbarLogo">Navbar Logo</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarLogo">标签栏图标</span></label>
           <input
             type="text"
             name="logo"
             id="navbar-logo-input"
             placeholder="https://example.com/logo.svg or SVG code"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="navbarLogoHint">Logo URL or SVG code (leave empty for default logo)</p>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="navbarLogoHint">浏览器标签栏 favicon 的 URL 或 SVG 代码（留空使用默认图标）</p>
+        </div>
+
+        <!-- Show Tags Toggle (homepage expand panel) -->
+        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="showTagsLabel">显示首页标签</label>
+            <p class="text-xs text-[#525252]" data-translate="showTagsDesc">在首页展开行中显示每个服务器的标签。关闭后标签行将不再展示。</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="show-tags-toggle" class="sr-only peer">
+            <div class="w-11 h-6 bg-[#d4d4d4] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+          </label>
+        </div>
+
+        <!-- Show Cards Toggle (homepage card grid) -->
+        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="showCardsLabel">显示首页卡片</label>
+            <p class="text-xs text-[#525252]" data-translate="showCardsDesc">在首页底部以卡片形式展示所有服务器。关闭后卡片网格将不再展示。</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="show-cards-toggle" class="sr-only peer">
+            <div class="w-11 h-6 bg-[#d4d4d4] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+          </label>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="sharedSecret">Shared Secret</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="sharedSecret">共享密钥</span></label>
           <div class="flex items-center gap-2">
             <input
               type="text"
               id="navbar-shared-secret-input"
               readonly
-              class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] font-mono"
+              class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#282828] bg-[#f5f5f5] px-3 py-2 text-sm text-[#262626] font-mono"
             />
             <button
               type="button"
               id="regenerate-shared-secret-btn"
               class="rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
             >
-              <span data-translate="regenerate">Regenerate</span>
+              <span data-translate="regenerate">重新生成</span>
             </button>
           </div>
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="sharedSecretHint">This secret is shared by all clients for authentication</p>
-        </div>
-
-        <!-- Show Traffic Toggle -->
-        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
-          <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showTrafficLabel">Show Traffic Info</label>
-            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="showTrafficDesc">Display real-time and total traffic in the detail dropdown section</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer ml-3">
-            <input type="checkbox" id="show-traffic-toggle" name="show_traffic" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-purple-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
-          </label>
-        </div>
-
-        <!-- Glassmorphism Toggle -->
-        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
-          <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="showGlassLabel">Glassmorphism Effect</label>
-            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="showGlassDesc">Enable frosted glass visual effect on navbar and cards</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer ml-3">
-            <input type="checkbox" id="show-glass-toggle" name="show_glass" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-purple-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
-          </label>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="sharedSecretHint">所有客户端共享此密钥进行认证</p>
         </div>
 
         <!-- Custom CSS & JavaScript -->
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
           <textarea
             id="navbar-custom-code-input"
             rows="10"
             placeholder={customCodePlaceholder}
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] font-mono"
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa] font-mono"
           ></textarea>
-          <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="customCodeHint">Custom CSS and JavaScript will be applied to all pages. Use &lt;style&gt; for CSS or &lt;script&gt; for JS</p>
-          <p class="mt-2 text-xs text-[#525252] dark:text-[#737373]">
-            <strong data-translate="customCodeSecurityWarning">⚠️ Security Warning: Custom code is publicly accessible. Do NOT include sensitive information (API keys, passwords, tokens).</strong>
+          <p class="mt-1 text-xs text-[#525252]" data-translate="customCodeHint">自定义 CSS 和 JavaScript 将应用于所有页面。使用 &lt;style&gt; 标签添加 CSS，使用 &lt;script&gt; 标签添加 JS</p>
+          <p class="mt-2 text-xs text-[#525252]">
+            <strong data-translate="customCodeSecurityWarning">⚠️ 安全提示：请勿包含敏感信息（API密钥、密码、令牌等）</strong>
           </p>
         </div>
 
@@ -472,15 +474,15 @@ const customCodePlaceholder = [
           <button
             type="button"
             id="cancel-navbar-config-btn"
-            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
           >
-            <span data-translate="cancel">Cancel</span>
+            <span data-translate="cancel">取消</span>
           </button>
           <button
             type="submit"
             class="flex-1 rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-purple-600"
           >
-            <span data-translate="save">Save</span>
+            <span data-translate="save">保存</span>
           </button>
         </div>
       </form>
@@ -488,10 +490,10 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Regenerate Secret Confirmation Modal -->
-  <div id="regenerate-secret-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="regenerate-secret-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4">
-        <h2 class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="confirmRegenerateTitle">Regenerate Shared Secret?</h2>
+        <h2 class="text-xl font-semibold text-[#262626]" data-translate="confirmRegenerateTitle">重新生成共享密钥？</h2>
       </div>
 
       <div class="mb-6">
@@ -500,8 +502,8 @@ const customCodePlaceholder = [
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <div>
-            <p class="text-sm font-semibold text-[#262626] dark:text-[#f5f5f5] mb-1" data-translate="warning">Warning</p>
-            <p class="text-sm text-[#525252] dark:text-[#a3a3a3]" data-translate="confirmRegenerateMessage">All existing clients will need to be reconfigured with the new secret!</p>
+            <p class="text-sm font-semibold text-[#262626] mb-1" data-translate="warning">警告</p>
+            <p class="text-sm text-[#525252]" data-translate="confirmRegenerateMessage">所有现有客户端将需要使用新的密钥重新配置！</p>
           </div>
         </div>
       </div>
@@ -510,73 +512,73 @@ const customCodePlaceholder = [
         <button
           type="button"
           id="cancel-regenerate-secret-btn"
-          class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+          class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
         >
-          <span data-translate="cancel">Cancel</span>
+          <span data-translate="cancel">取消</span>
         </button>
         <button
           type="button"
           id="confirm-regenerate-secret-btn"
           class="flex-1 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
         >
-          <span data-translate="regenerate">Regenerate</span>
+          <span data-translate="regenerate">重新生成</span>
         </button>
       </div>
     </div>
   </div>
 
   <!-- Privacy Config Modal -->
-  <div id="privacy-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
-    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+  <div id="privacy-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
-        <h2 id="privacy-config-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="privacySettings">Privacy Settings</h2>
-        <button id="close-privacy-config-modal-btn" class="rounded-lg p-1 text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="Close" aria-label="Close" data-title-en="Close" data-title-zh="关闭">
+        <h2 id="privacy-config-title" class="text-xl font-semibold text-[#262626]" data-translate="privacySettings">隐私设置</h2>
+        <button id="close-privacy-config-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
           <Icon name="x" size={20} />
         </button>
       </div>
 
       <form id="privacy-config-form" class="space-y-4">
         <!-- Privacy Mode Toggle -->
-        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
+        <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
           <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] dark:text-[#d4d4d4] mb-1" data-translate="enablePrivacyMode">Enable Privacy Mode</label>
-            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="privacyModeDesc">When enabled, login page will appear before index page. Admin page does not require login.</p>
+            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="enablePrivacyMode">启用隐私模式</label>
+            <p class="text-xs text-[#525252]" data-translate="privacyModeDesc">启用后，登录页将出现在首页之前。管理页面无需登录。</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="privacy-enabled" name="enabled" class="sr-only peer">
-            <div class="w-11 h-6 bg-[#d4d4d4] dark:bg-[#404040] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+            <div class="w-11 h-6 bg-[#d4d4d4] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
           </label>
         </div>
 
         <!-- Temporary Share Section -->
-        <div id="share-section" class="space-y-3 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4">
+        <div id="share-section" class="space-y-3 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="temporaryShare">Temporary Share</label>
-            <p class="text-xs text-[#525252] dark:text-[#737373]" data-translate="temporaryShareDesc">Generate a temporary share link that allows access without login. Login page will appear before admin page for share links.</p>
+            <label class="mb-1 block text-sm font-medium text-[#525252]" data-translate="temporaryShare">临时分享</label>
+            <p class="text-xs text-[#525252]" data-translate="temporaryShareDesc">生成临时分享链接，允许无需登录访问。分享链接的登录页将出现在管理页面之前。</p>
           </div>
 
           <!-- Current Share Link -->
           <div id="current-share-link-container" class="hidden">
-            <label class="mb-1 block text-xs font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="currentShareLink">Current Share Link</label>
+            <label class="mb-1 block text-xs font-medium text-[#525252]" data-translate="currentShareLink">当前分享链接</label>
             <div class="flex items-center gap-2">
               <input
                 type="text"
                 id="current-share-link"
                 readonly
-                class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] px-3 py-2 text-xs text-[#262626] dark:text-[#d4d4d4]"
+                class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#282828] bg-[#f5f5f5] px-3 py-2 text-xs text-[#262626]"
               />
               <button
                 type="button"
                 id="copy-share-link-btn"
-                class="rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-xs font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
-                data-translate="copy">Copy</button>
+                class="rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-xs font-medium text-[#262626] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0]"
+                data-translate="copy">复制</button>
             </div>
-            <p id="token-expires-info" class="mt-1 text-xs text-[#525252] dark:text-[#737373]"></p>
+            <p id="token-expires-info" class="mt-1 text-xs text-[#525252]"></p>
           </div>
 
           <!-- Generate New Share Link -->
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252] dark:text-[#a3a3a3]" data-translate="expirationHours">Expiration (Hours)</label>
+            <label class="mb-1 block text-sm font-medium text-[#525252]" data-translate="expirationHours">有效期（小时）</label>
             <input
               type="number"
               id="token-expires-hours"
@@ -584,22 +586,22 @@ const customCodePlaceholder = [
               min="1"
               max="720"
               value="1"
-              class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
-            <p class="mt-1 text-xs text-[#525252] dark:text-[#737373]" data-translate="expirationHoursHint">Number of hours until the share link expires (1-720, max 30 days)</p>
+            <p class="mt-1 text-xs text-[#525252]" data-translate="expirationHoursHint">分享链接过期前的小时数（1-720，最多30天）</p>
           </div>
 
           <button
             type="button"
             id="generate-share-link-btn"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
-            data-translate="generateShareLink">Generate Share Link</button>
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-medium text-[#262626] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            data-translate="generateShareLink">生成分享链接</button>
           
           <button
             type="button"
             id="revoke-share-link-btn"
-            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
-            data-translate="revokeShareLink">Revoke Share Link</button>
+            class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-medium text-[#262626] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            data-translate="revokeShareLink">立即停止分享链接</button>
         </div>
 
         <div id="privacy-config-message" class="hidden text-sm"></div>
@@ -608,15 +610,15 @@ const customCodePlaceholder = [
           <button
             type="button"
             id="cancel-privacy-config-btn"
-            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0]"
+            class="flex-1 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] transition-colors hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0]"
           >
-            <span data-translate="cancel">Cancel</span>
+            <span data-translate="cancel">取消</span>
           </button>
           <button
             type="submit"
             class="flex-1 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
           >
-            <span data-translate="save">Save</span>
+            <span data-translate="save">保存</span>
           </button>
         </div>
       </form>
@@ -989,7 +991,7 @@ const customCodePlaceholder = [
         const submitBtn = form.querySelector('button[type="submit"]');
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = 'Update System';
+          submitBtn.textContent = '更新服务';
         }
       }
     });
@@ -1038,7 +1040,7 @@ const customCodePlaceholder = [
     // Disable button during request
     if (confirmDeleteBtn) {
       confirmDeleteBtn.disabled = true;
-      confirmDeleteBtn.textContent = 'Deleting...';
+      confirmDeleteBtn.textContent = '删除中...';
     }
 
     try {
@@ -1054,11 +1056,11 @@ const customCodePlaceholder = [
         throw new Error(error || `HTTP ${res.status}`);
       }
     } catch (err) {
-      alert('Failed to delete system: ' + err.message);
+      alert('删除服务失败：' + err.message);
     } finally {
       if (confirmDeleteBtn) {
         confirmDeleteBtn.disabled = false;
-        confirmDeleteBtn.textContent = 'Delete';
+        confirmDeleteBtn.textContent = '删除';
       }
     }
   });
@@ -1142,7 +1144,7 @@ const customCodePlaceholder = [
 
   function renderSystemItem(system, index) {
     return `
-        <div class="draggable-item rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white p-4 cursor-move transition-colors duration-150 hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] min-h-[60px] relative" draggable="true" data-system-id="${escapeHtmlAttr(system.id || '')}" data-index="${index}">
+        <div class="draggable-item rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4 cursor-move transition-colors duration-150 hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] hover:bg-[#f0f0f0] min-h-[60px] relative" draggable="true" data-system-id="${escapeHtmlAttr(system.id || '')}" data-index="${index}">
             <!-- CPU Brand Icon - Background, centered horizontally -->
             ${(() => {
               const cpuBrandIcon = getCPUBrandIcon(system.cpu_model);
@@ -1159,7 +1161,7 @@ const customCodePlaceholder = [
             <div class="flex items-center gap-3 min-h-[28px] relative" style="z-index: 1;">
             <!-- Edit Button -->
             <button 
-              class="edit-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              class="edit-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 hover:text-blue-600 self-center"
               data-system='${escapeHtmlAttr(JSON.stringify(system))}'
               data-edit-key='${escapeHtmlAttr(
                 String(system.id || '') + '|' +
@@ -1185,9 +1187,9 @@ const customCodePlaceholder = [
             <div class="flex-1 min-w-0 flex items-center gap-3">
               <!-- Left: Name -->
               <div class="flex flex-col gap-1 flex-shrink-0" style="flex-shrink: 1; min-width: 0; max-width: 250px;">
-                <span class="system-name text-sm font-semibold text-[#262626] dark:text-[#f5f5f5]" style="word-break: break-word; overflow-wrap: break-word; display: block;">${escapeHtml(system.name || '')}</span>
+                <span class="system-name text-sm font-semibold text-[#262626]" style="word-break: break-word; overflow-wrap: break-word; display: block;">${escapeHtml(system.name || '')}</span>
                 <!-- Other Info (Virtualization Type, OS) -->
-                <div class="flex flex-wrap gap-2 text-xs text-[#404040] dark:text-[#737373] min-h-[16px]">
+                <div class="flex flex-wrap gap-2 text-xs text-[#404040] min-h-[16px]">
                   ${system.virtualization_type ? `<span class="system-virtualization-type">${escapeHtml(system.virtualization_type)}</span>` : ''}
                   ${system.os ? `<span class="system-os">• ${escapeHtml(system.os)}</span>` : ''}
                   ${!system.virtualization_type && !system.os ? '<span class="invisible">-</span>' : ''}
@@ -1200,9 +1202,9 @@ const customCodePlaceholder = [
                 ${system.ipv4 ? `
                 <!-- IPv4 Row -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
-                  <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(system.ipv4 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv4 || '')}" title="Copy IPv4" aria-label="Copy IPv4 address">
+                  <span class="text-[#404040] shrink-0">IPv4:</span>
+                  <span class="system-ipv4 text-[#262626] font-mono text-xs">${escapeHtml(system.ipv4 || '')}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv4 || '')}" title="Copy IPv4" aria-label="Copy IPv4 address">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1216,9 +1218,9 @@ const customCodePlaceholder = [
                 ${system.ipv6 ? `
                 <!-- IPv6 Row -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                  <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(system.ipv6 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv6 || '')}" title="Copy IPv6" aria-label="Copy IPv6 address">
+                  <span class="text-[#404040] shrink-0">IPv6:</span>
+                  <span class="system-ipv6 text-[#262626] font-mono text-xs">${escapeHtml(system.ipv6 || '')}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(system.ipv6 || '')}" title="Copy IPv6" aria-label="Copy IPv6 address">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1231,8 +1233,8 @@ const customCodePlaceholder = [
                 ` : (system.ipv4 && !system.ipv6) ? `
                 <!-- IPv6 Row (placeholder) -->
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                  <span class="text-[#404040] dark:text-[#737373]">-</span>
+                  <span class="text-[#404040] shrink-0">IPv6:</span>
+                  <span class="text-[#404040]">-</span>
                 </div>
                 ` : ''}
               </div>
@@ -1246,12 +1248,12 @@ const customCodePlaceholder = [
               <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
                 ${system.total_net_in_bytes ? `
                 <div class="flex items-center min-h-[22px]">
-                  <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${formatBytes(system.total_net_in_bytes)}</span>
+                  <span class="system-total-net-in text-[#525252]">In: ${formatBytes(system.total_net_in_bytes)}</span>
                 </div>
                 ` : '<div class="min-h-[22px]"></div>'}
                 ${system.total_net_out_bytes ? `
                 <div class="flex items-center min-h-[22px]">
-                  <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
+                  <span class="system-total-net-out text-[#525252]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
                 </div>
                 ` : '<div class="min-h-[22px]"></div>'}
               </div>
@@ -1260,7 +1262,7 @@ const customCodePlaceholder = [
 
             <!-- Copy Linux Install Command Button (mingcute:linux-fill) -->
             <button 
-              class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600 self-center"
+              class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 hover:text-orange-600 self-center"
               data-system-id="${system.id}"
               title="Copy Linux install command"
               aria-label="Copy Linux install command"
@@ -1275,7 +1277,7 @@ const customCodePlaceholder = [
 
             <!-- Copy Windows Install Command Button (mingcute:windows-fill) -->
             <button 
-              class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 hover:text-blue-600 self-center"
               data-system-id="${system.id}"
               title="Copy Windows install command"
               aria-label="Copy Windows install command"
@@ -1290,7 +1292,7 @@ const customCodePlaceholder = [
 
             <!-- Delete Button -->
             <button 
-              class="delete-btn shrink-0 rounded-lg p-2 text-[#525252] dark:text-[#737373] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 self-center"
+              class="delete-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 hover:text-red-600 self-center"
               data-system-id="${escapeHtmlAttr(system.id || '')}"
               data-system-name="${escapeHtmlAttr(system.name || '')}"
               title="Delete system"
@@ -1525,9 +1527,9 @@ const customCodePlaceholder = [
             // Create new IPv4 row
             const ipv4RowHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#525252] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
-                <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
-                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
+                <span class="text-[#525252] shrink-0">IPv4:</span>
+                <span class="system-ipv4 text-[#262626] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
                   <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1554,16 +1556,16 @@ const customCodePlaceholder = [
             // No container exists, need to create it
             const ipv6Placeholder = (!item.ipv6) ? `
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                  <span class="text-[#525252] dark:text-[#737373]">-</span>
+                  <span class="text-[#404040] shrink-0">IPv6:</span>
+                  <span class="text-[#525252]">-</span>
                 </div>
             ` : '';
             const ipContainerHTML = `
               <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv4:</span>
-                  <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
+                  <span class="text-[#404040] shrink-0">IPv4:</span>
+                  <span class="system-ipv4 text-[#262626] font-mono text-xs">${escapeHtml(item.ipv4 || '')}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv4 || '')}" title="Copy IPv4">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1655,9 +1657,9 @@ const customCodePlaceholder = [
             // Create new IPv6 row (append at end)
             const ipv6RowHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#525252] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
-                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
+                <span class="text-[#525252] shrink-0">IPv6:</span>
+                <span class="system-ipv6 text-[#262626] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
                   <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1679,9 +1681,9 @@ const customCodePlaceholder = [
             const ipContainerHTML = `
               <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center">
                 <div class="flex items-center gap-1.5 min-h-[22px]">
-                  <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                  <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
-                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] dark:text-[#737373] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
+                  <span class="text-[#404040] shrink-0">IPv6:</span>
+                  <span class="system-ipv6 text-[#262626] font-mono text-xs">${escapeHtml(item.ipv6 || '')}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#525252] hover:text-[#262626] hover:bg-[#282828] hover:bg-[#f0f0f0] transition-colors" data-ip="${escapeHtmlAttr(item.ipv6 || '')}" title="Copy IPv6">
                     <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
@@ -1728,8 +1730,8 @@ const customCodePlaceholder = [
             // Replace IPv6 row with placeholder
             const placeholderHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                <span class="text-[#525252] dark:text-[#737373]">-</span>
+                <span class="text-[#404040] shrink-0">IPv6:</span>
+                <span class="text-[#525252]">-</span>
               </div>
             `;
             const tempDiv = document.createElement('div');
@@ -1747,8 +1749,8 @@ const customCodePlaceholder = [
           if (ipv4RowExists) {
             const placeholderHTML = `
               <div class="flex items-center gap-1.5 min-h-[22px]">
-                <span class="text-[#404040] dark:text-[#a3a3a3] shrink-0">IPv6:</span>
-                <span class="text-[#525252] dark:text-[#737373]">-</span>
+                <span class="text-[#404040] shrink-0">IPv6:</span>
+                <span class="text-[#525252]">-</span>
               </div>
             `;
             const tempDiv = document.createElement('div');
@@ -1782,12 +1784,12 @@ const customCodePlaceholder = [
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
           </div>
@@ -1813,7 +1815,7 @@ const customCodePlaceholder = [
           } else if (inRow) {
             // Create the span if it doesn't exist
             netInSpan = document.createElement('span');
-            netInSpan.className = 'system-total-net-in text-[#525252] dark:text-[#737373]';
+            netInSpan.className = 'system-total-net-in text-[#525252]';
             netInSpan.textContent = `In: ${formattedIn}`;
             inRow.appendChild(netInSpan);
           }
@@ -1843,12 +1845,12 @@ const customCodePlaceholder = [
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#525252] dark:text-[#737373]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#525252] dark:text-[#737373]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="min-h-[22px]"></div>'}
           </div>
@@ -1874,7 +1876,7 @@ const customCodePlaceholder = [
           } else if (outRow) {
             // Create the span if it doesn't exist
             netOutSpan = document.createElement('span');
-            netOutSpan.className = 'system-total-net-out text-[#525252] dark:text-[#737373]';
+            netOutSpan.className = 'system-total-net-out text-[#525252]';
             netOutSpan.textContent = `Out: ${formattedOut}`;
             outRow.appendChild(netOutSpan);
           }
@@ -1910,7 +1912,7 @@ const customCodePlaceholder = [
     if (!Array.isArray(data) || data.length === 0) {
       container.innerHTML = `
         <div class="flex items-center justify-center py-12 text-center">
-          <p class="text-sm text-[#737373]">No systems found</p>
+          <p class="text-sm text-[#737373]">暂无服务</p>
         </div>
       `;
       currentData.clear();
@@ -2179,7 +2181,7 @@ const customCodePlaceholder = [
           if (copyIcon && checkIcon) {
             copyIcon.style.display = 'none';
             checkIcon.style.display = 'block';
-            newBtn.title = 'Copied!';
+            newBtn.title = '已复制！';
             setTimeout(() => {
               copyIcon.style.display = 'block';
               checkIcon.style.display = 'none';
@@ -2252,12 +2254,12 @@ const customCodePlaceholder = [
           if (linuxIcon && checkIcon) {
             linuxIcon.style.display = 'none';
             checkIcon.style.display = 'block';
-            newBtn.classList.add('text-green-600', 'dark:text-green-400');
-            newBtn.title = 'Copied!';
+            newBtn.classList.add('text-green-600');
+            newBtn.title = '已复制！';
             setTimeout(() => {
               linuxIcon.style.display = 'block';
               checkIcon.style.display = 'none';
-              newBtn.classList.remove('text-green-600', 'dark:text-green-400');
+              newBtn.classList.remove('text-green-600');
               newBtn.title = originalTitle;
             }, 1500);
           }
@@ -2302,12 +2304,12 @@ const customCodePlaceholder = [
           if (windowsIcon && checkIcon) {
             windowsIcon.style.display = 'none';
             checkIcon.style.display = 'block';
-            newBtn.classList.add('text-green-600', 'dark:text-green-400');
-            newBtn.title = 'Copied!';
+            newBtn.classList.add('text-green-600');
+            newBtn.title = '已复制！';
             setTimeout(() => {
               windowsIcon.style.display = 'block';
               checkIcon.style.display = 'none';
-              newBtn.classList.remove('text-green-600', 'dark:text-green-400');
+              newBtn.classList.remove('text-green-600');
               newBtn.title = originalTitle;
             }, 1500);
           }
@@ -2365,8 +2367,8 @@ const customCodePlaceholder = [
       console.error('Failed to load systems:', err);
       container.innerHTML = `
         <div class="text-center py-12">
-          <p class="text-sm text-red-500 dark:text-red-400">Failed to load systems</p>
-          <p class="text-xs text-[#737373] dark:text-[#a3a3a3] mt-2">${err.message || 'Unknown error'}</p>
+          <p class="text-sm text-red-500">加载服务失败</p>
+          <p class="text-xs text-[#737373] mt-2">${err.message || '未知错误'}</p>
         </div>
       `;
     }
@@ -2775,8 +2777,8 @@ const customCodePlaceholder = [
       const systemName = formData.get('name')?.trim();
       if (!systemName) {
         if (messageEl) {
-          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
-          messageEl.textContent = '❌ Service Name is required';
+          messageEl.className = 'text-sm text-red-500';
+          messageEl.textContent = '❌ 服务名称不能为空';
           messageEl.classList.remove('hidden');
         }
         return;
@@ -2834,7 +2836,7 @@ const customCodePlaceholder = [
         }
       } catch (err) {
         if (messageEl) {
-          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
+          messageEl.className = 'text-sm text-red-500';
           messageEl.textContent = '❌ Failed to add system: ' + err.message;
           messageEl.classList.remove('hidden');
         }
@@ -2857,14 +2859,14 @@ const customCodePlaceholder = [
 
       // Validate
       if (!systemId || !systemName || systemId.trim() === '' || systemName.trim() === '') {
-        alert('Service Name is required');
+        alert('服务名称不能为空');
         return;
       }
 
       // Disable submit button during request
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Updating...';
+        submitBtn.textContent = '更新中...';
       }
 
       // Parse tags from comma-separated string
@@ -2902,12 +2904,12 @@ const customCodePlaceholder = [
           throw new Error(errorText || `HTTP ${res.status}`);
         }
       } catch (err) {
-        alert('Failed to update system: ' + err.message);
+        alert('更新服务失败：' + err.message);
       } finally {
         // Re-enable submit button
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = 'Update System';
+          submitBtn.textContent = '更新服务';
         }
       }
     });
@@ -3082,23 +3084,23 @@ const customCodePlaceholder = [
 
       // Validation
       if (!currentPassword || !newPassword || !confirmNewPassword) {
-        changePasswordFormMessage.textContent = 'Please fill in all fields';
+        changePasswordFormMessage.textContent = '请填写所有字段';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500');
         return;
       }
 
       if (newPassword.length < 6) {
-        changePasswordFormMessage.textContent = 'New password must be at least 6 characters';
+        changePasswordFormMessage.textContent = '新密码长度至少为 6 个字符';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500');
         return;
       }
 
       if (newPassword !== confirmNewPassword) {
-        changePasswordFormMessage.textContent = 'New passwords do not match';
+        changePasswordFormMessage.textContent = '两次输入的新密码不一致';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
+        changePasswordFormMessage.classList.add('text-red-500');
         return;
       }
 
@@ -3106,7 +3108,7 @@ const customCodePlaceholder = [
       const submitBtn = changePasswordForm.querySelector('button[type="submit"]');
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Changing...';
+        submitBtn.textContent = '修改中...';
       }
 
       try {
@@ -3129,7 +3131,7 @@ const customCodePlaceholder = [
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(errorText || 'Failed to change password');
+          throw new Error(errorText || '修改密码失败');
         }
 
         const result = await response.json();
@@ -3137,18 +3139,18 @@ const customCodePlaceholder = [
           // Close modal immediately on success
           closeModalWithAnimation(changePasswordModal, resetChangePasswordForm);
         } else {
-          throw new Error('Failed to change password');
+          throw new Error('修改密码失败');
         }
       } catch (err) {
-        changePasswordFormMessage.textContent = err.message || 'Failed to change password';
+        changePasswordFormMessage.textContent = err.message || '修改密码失败';
         changePasswordFormMessage.classList.remove('hidden');
-        changePasswordFormMessage.classList.remove('text-emerald-600', 'dark:text-emerald-400', 'text-emerald-400');
-        changePasswordFormMessage.classList.add('text-red-500', 'dark:text-red-400');
+        changePasswordFormMessage.classList.remove('text-emerald-600', 'text-emerald-400');
+        changePasswordFormMessage.classList.add('text-red-500');
       } finally {
         // Re-enable submit button
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.innerHTML = '<span data-translate="changePassword">Change Password</span>';
+          submitBtn.innerHTML = '<span data-translate="changePassword">修改密码</span>';
           updateAdminTranslations();
         }
       }
@@ -3168,33 +3170,32 @@ const customCodePlaceholder = [
   function createTargetInput(target = { name: '', address: '' }) {
     const div = document.createElement('div');
     // Use flex-col on mobile, flex-row on larger screens
-    div.className = 'target-row flex flex-col sm:flex-row gap-2 p-3 sm:p-2 rounded-lg border border-[#404040]/30 dark:border-[#404040]/30 border-[#d4d4d4]/30 bg-[#1a1a1a] dark:bg-[#1a1a1a] bg-[#fafafa]';
+    div.className = 'target-row flex flex-col sm:flex-row gap-2 p-3 sm:p-2 rounded-lg border border-[#d4d4d4]/30 bg-[#fafafa]';
     div.innerHTML = `
       <input
         type="text"
-        class="target-name-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
-        placeholder="Target Name"
-        data-placeholder-en="Target Name"
-        data-placeholder-zh="目标名称"
+        class="target-name-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
+        placeholder="目标名称"
+        data-placeholder-en="Target Name" data-placeholder-zh="目标名称"
         value="${target.name || ''}"
         required
       />
       <input
         type="text"
-        class="target-address-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+        class="target-address-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
         placeholder="8.8.8.8:53"
         value="${target.address || ''}"
         required
       />
       <button
         type="button"
-        class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#525252] dark:text-[#a3a3a3] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 shrink-0"
+        class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 hover:text-red-600 shrink-0"
         title="Remove target"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
           <path d="M18 6L6 18M6 6l12 12"/>
         </svg>
-        <span class="sm:hidden" data-translate="remove">Remove</span>
+        <span class="sm:hidden" data-translate="remove">移除</span>
       </button>
     `;
     
@@ -3289,12 +3290,25 @@ const customCodePlaceholder = [
   const cancelNavbarConfigBtn = document.getElementById('cancel-navbar-config-btn');
   const navbarConfigForm = document.getElementById('navbar-config-form');
 
+  /* Snapshot of the last-loaded navbar config. Used by the submit
+     handler as a base object so any field the current modal has
+     no UI input for (e.g. `show_traffic` / `show_glass` after
+     those toggles were retired in the hotaru theme, or future
+     fields the operator's BoltDB record carries that this build
+     of the dashboard doesn't know about) is round-tripped back
+     verbatim instead of being silently reset to its zero value.
+     This is the same "preserve unknown fields" pattern the
+     backend already uses on the wire format and gives admins of
+     legacy Pulse instances a non-destructive save flow.        */
+  let lastLoadedNavbarConfig = {};
+
   // Function to load and display current navbar config
   async function loadNavbarConfig() {
     try {
       const res = await fetch(`${apiBase}/api/navbar/config`);
       if (res.ok) {
         const config = await res.json();
+        lastLoadedNavbarConfig = config || {};
         
         const textInput = document.getElementById('navbar-text-input');
         const logoInput = document.getElementById('navbar-logo-input');
@@ -3329,15 +3343,24 @@ const customCodePlaceholder = [
           }
           customCodeInput.value = customCode;
         }
-        // Load show_traffic toggle state
-        const showTrafficToggle = document.getElementById('show-traffic-toggle');
-        if (showTrafficToggle) {
-          showTrafficToggle.checked = config.show_traffic || false;
+        /* show_traffic / show_glass toggles were retired when
+           the hotaru theme replaced the old Pulse layout; the
+           fields are still preserved on the wire (see the
+           submit handler's spread of lastLoadedNavbarConfig)
+           but we no longer surface UI for them.              */
+        // Load hide_tags / hide_cards toggle state.
+        // Stored on the wire as inverted (`hide_*`) flags so the
+        // `false` zero value preserves legacy "show everything"
+        // behaviour for any record predating this feature; the
+        // toggle in the UI is positively phrased ("show ..."),
+        // hence the !== true negation.
+        const showTagsToggle = document.getElementById('show-tags-toggle');
+        if (showTagsToggle) {
+          showTagsToggle.checked = config.hide_tags !== true;
         }
-        // Load show_glass toggle state
-        const showGlassToggle = document.getElementById('show-glass-toggle');
-        if (showGlassToggle) {
-          showGlassToggle.checked = config.show_glass || false;
+        const showCardsToggle = document.getElementById('show-cards-toggle');
+        if (showCardsToggle) {
+          showCardsToggle.checked = config.hide_cards !== true;
         }
       }
     } catch (err) {
@@ -3414,7 +3437,7 @@ const customCodePlaceholder = [
       messageEl.textContent = currentLang === 'zh' 
         ? '✓ 新密钥已生成，请点击"保存"按钮以应用更改' 
         : '✓ New secret generated. Click "Save" to apply changes';
-      messageEl.className = 'text-sm text-orange-500 dark:text-orange-400';
+      messageEl.className = 'text-sm text-orange-500';
       messageEl.classList.remove('hidden');
     }
   }
@@ -3514,28 +3537,28 @@ const customCodePlaceholder = [
             // Check if token is expired based on server time
             if (config.token_expired === true) {
               // Token is already expired according to server
-              tokenExpiresInfo.textContent = 'Expired';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+              tokenExpiresInfo.textContent = '已过期';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
             } else {
               // Calculate time difference using server time
               const timeDiff = expiresDate.getTime() - serverTime.getTime();
               if (timeDiff > 1000) {
                 // Token is still valid (more than 1 second remaining)
                 tokenExpiresInfo.textContent = `Expires: ${formatDate(config.token_expires)}`;
-                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252]';
                 
                 // Set up a timer to update the status when it actually expires
                 // Use the calculated time difference
                 setTimeout(() => {
                   if (tokenExpiresInfo) {
-                    tokenExpiresInfo.textContent = 'Expired';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+                    tokenExpiresInfo.textContent = '已过期';
+                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
                   }
                 }, timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
-                tokenExpiresInfo.textContent = 'Expired';
-                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+                tokenExpiresInfo.textContent = '已过期';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
               }
             }
           }
@@ -3588,7 +3611,7 @@ const customCodePlaceholder = [
   generateShareLinkBtn?.addEventListener('click', async () => {
     const hours = parseInt(tokenExpiresHoursInput?.value || '1');
     if (hours < 1 || hours > 720) {
-      alert('Please enter a valid number of hours (1-720, max 30 days)');
+      alert('请输入有效的小时数（1-720，最长 30 天）');
       return;
     }
 
@@ -3610,7 +3633,7 @@ const customCodePlaceholder = [
       const estimatedExpires = new Date();
       estimatedExpires.setSeconds(estimatedExpires.getSeconds() + seconds);
       tokenExpiresInfo.textContent = `Expires: ${formatDate(estimatedExpires.toISOString())} (estimated)`;
-      tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
+      tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252]';
     }
 
     // Store temporarily in form data (will be sent to server)
@@ -3651,7 +3674,7 @@ const customCodePlaceholder = [
       currentShareLinkInput.select();
       document.execCommand('copy');
       const originalText = copyShareLinkBtn.textContent;
-      copyShareLinkBtn.textContent = 'Copied!';
+      copyShareLinkBtn.textContent = '已复制！';
       setTimeout(() => {
         copyShareLinkBtn.textContent = originalText;
       }, 2000);
@@ -3704,9 +3727,9 @@ const customCodePlaceholder = [
       submitBtn.disabled = true;
       const saveSpan = submitBtn.querySelector('span');
       if (saveSpan) {
-        saveSpan.textContent = 'Saving...';
+        saveSpan.textContent = '保存中...';
       } else {
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = '保存中...';
       }
     }
 
@@ -3730,31 +3753,31 @@ const customCodePlaceholder = [
             // Check if date is valid
             if (isNaN(expiresDate.getTime())) {
               // Invalid expiration date from server
-              tokenExpiresInfo.textContent = 'Invalid expiration date';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+              tokenExpiresInfo.textContent = '过期时间无效';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
             } else if (responseData.config.token_expired === true) {
               // Token is already expired according to server
-              tokenExpiresInfo.textContent = 'Expired';
-              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+              tokenExpiresInfo.textContent = '已过期';
+              tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
             } else {
               // Calculate time difference using server time
               const timeDiff = expiresDate.getTime() - serverTime.getTime();
               if (timeDiff > 1000) {
                 // Token is still valid (more than 1 second remaining)
                 tokenExpiresInfo.textContent = `Expires: ${formatDate(responseData.config.token_expires)}`;
-                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252] dark:text-[#737373]';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252]';
                 
                 // Set up timer to update when expired (using server time difference)
                 setTimeout(() => {
                   if (tokenExpiresInfo) {
-                    tokenExpiresInfo.textContent = 'Expired';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+                    tokenExpiresInfo.textContent = '已过期';
+                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
                   }
                 }, timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
-                tokenExpiresInfo.textContent = 'Expired';
-                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500 dark:text-red-400';
+                tokenExpiresInfo.textContent = '已过期';
+                tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
               }
             }
           }
@@ -3765,9 +3788,9 @@ const customCodePlaceholder = [
           submitBtn.disabled = false;
           const saveSpan = submitBtn.querySelector('span');
           if (saveSpan) {
-            saveSpan.textContent = 'Save';
+            saveSpan.textContent = '保存';
           } else {
-            submitBtn.textContent = 'Save';
+            submitBtn.textContent = '保存';
           }
         }
         // Close modal immediately on success
@@ -3784,13 +3807,13 @@ const customCodePlaceholder = [
         submitBtn.disabled = false;
         const saveSpan = submitBtn.querySelector('span');
         if (saveSpan) {
-          saveSpan.textContent = 'Save';
+          saveSpan.textContent = '保存';
         } else {
-          submitBtn.textContent = 'Save';
+          submitBtn.textContent = '保存';
         }
       }
       if (messageEl) {
-        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
+        messageEl.className = 'text-sm text-red-500';
         messageEl.textContent = '❌ Failed to save privacy config: ' + err.message;
         messageEl.classList.remove('hidden');
       }
@@ -3864,16 +3887,35 @@ const customCodePlaceholder = [
       }
     }
     
-    const showTrafficToggle = document.getElementById('show-traffic-toggle');
-    const showGlassToggle = document.getElementById('show-glass-toggle');
+    const showTagsToggle  = document.getElementById('show-tags-toggle');
+    const showCardsToggle = document.getElementById('show-cards-toggle');
+
+    /* Start from the last-loaded record so unknown / retired
+       fields (e.g. `show_traffic`, `show_glass`, or anything a
+       future build adds) are preserved verbatim. Then overlay
+       the fields the current modal genuinely owns — text, logo,
+       shared secret, custom CSS / JS, and the two homepage
+       visibility toggles. Anything not overridden here keeps
+       its previous value, so saving the modal can never silently
+       reset a setting whose UI was removed.                     */
     const data = {
+      ...lastLoadedNavbarConfig,
       text: formData.get('text')?.trim() || 'Pulse',
       logo: formData.get('logo')?.trim() || '',
       shared_secret: sharedSecretInput?.value || '',
       custom_css: customCSS.trim(),
       custom_js: customJS.trim(),
-      show_traffic: showTrafficToggle?.checked || false,
-      show_glass: showGlassToggle?.checked || false,
+      // Negate the positive UI label (`show ...`) into the
+      // wire-format inverted flag (`hide_*`). When the toggle
+      // is missing entirely (legacy form, future refactor), we
+      // fall back to whatever was on the record so the save is
+      // a no-op for that field instead of clobbering it.
+      hide_tags:  showTagsToggle
+        ? !showTagsToggle.checked
+        : (lastLoadedNavbarConfig.hide_tags === true),
+      hide_cards: showCardsToggle
+        ? !showCardsToggle.checked
+        : (lastLoadedNavbarConfig.hide_cards === true),
     };
 
     // Set button to saving state
@@ -3881,9 +3923,9 @@ const customCodePlaceholder = [
       submitBtn.disabled = true;
       const saveSpan = submitBtn.querySelector('span');
       if (saveSpan) {
-        saveSpan.textContent = 'Saving...';
+        saveSpan.textContent = '保存中...';
       } else {
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = '保存中...';
       }
     }
 
@@ -3909,13 +3951,13 @@ const customCodePlaceholder = [
         submitBtn.disabled = false;
         const saveSpan = submitBtn.querySelector('span');
         if (saveSpan) {
-          saveSpan.textContent = 'Save';
+          saveSpan.textContent = '保存';
         } else {
-          submitBtn.textContent = 'Save';
+          submitBtn.textContent = '保存';
         }
       }
       if (messageEl) {
-        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
+        messageEl.className = 'text-sm text-red-500';
         messageEl.textContent = '❌ Failed to save navbar config: ' + err.message;
         messageEl.classList.remove('hidden');
       }
@@ -3968,7 +4010,7 @@ const customCodePlaceholder = [
     const submitBtn = tcpingConfigForm.querySelector('button[type="submit"]');
     if (submitBtn) {
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Saving...';
+      submitBtn.textContent = '保存中...';
     }
     
     try {
@@ -3986,7 +4028,7 @@ const customCodePlaceholder = [
         const error = await res.text();
         if (messageEl) {
           messageEl.textContent = `Failed to save: ${error}`;
-          messageEl.className = 'text-sm text-red-500 dark:text-red-400';
+          messageEl.className = 'text-sm text-red-500';
           messageEl.classList.remove('hidden');
         }
       }
@@ -3994,13 +4036,13 @@ const customCodePlaceholder = [
       const messageEl = document.getElementById('tcping-config-message');
       if (messageEl) {
         messageEl.textContent = `Error: ${err.message}`;
-        messageEl.className = 'text-sm text-red-500 dark:text-red-400';
+        messageEl.className = 'text-sm text-red-500';
         messageEl.classList.remove('hidden');
       }
     } finally {
       if (submitBtn) {
         submitBtn.disabled = false;
-        submitBtn.textContent = 'Save';
+        submitBtn.textContent = '保存';
       }
     }
   });
@@ -4224,7 +4266,7 @@ const customCodePlaceholder = [
     'targetFormatDesc': { en: 'Format: name and address (e.g., Google DNS, 8.8.8.8:53)', zh: '格式：名称和地址（例如：Google DNS, 8.8.8.8:53）' },
     'targetName': { en: 'Target Name', zh: '目标名称' },
     'save': { en: 'Save', zh: '保存' },
-    'loadingSystems': { en: 'Loading services...', zh: '加载服务中...' },
+    'loadingSystems': { en: 'Loading services', zh: '加载服务中' },
     'addNewSystem': { en: 'Add New Service', zh: '添加新服务' },
     'editSystem': { en: 'Edit Service', zh: '编辑服务' },
     'deleteSystem': { en: 'Delete Service', zh: '删除服务' },
@@ -4235,7 +4277,7 @@ const customCodePlaceholder = [
     'tagsCommaSeparated': { en: '(comma-separated)', zh: '（逗号分隔）' },
     'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro). Prefix with spr:/spy:/spb: for a red/amber/blue gradient badge.', zh: '输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。' },
     'cancel': { en: 'Cancel', zh: '取消' },
-    'updateSystem': { en: 'Update System', zh: '更新服务' },
+    'updateSystem': { en: '更新服务', zh: '更新服务' },
     'areYouSureYouWantToDelete': { en: 'Are you sure you want to delete', zh: '您确定要删除' },
     'thisActionCannotBeUndone': { en: 'This action cannot be undone.', zh: '此操作无法撤销。' },
     'delete': { en: 'Delete', zh: '删除' },
@@ -4248,10 +4290,14 @@ const customCodePlaceholder = [
     'confirmNewPassword': { en: 'Confirm New Password', zh: '确认新密码' },
     'passwordMinLength': { en: 'Password must be at least 6 characters long', zh: '密码长度至少为6个字符' },
     'customizationSettings': { en: 'Customization Settings', zh: '自定义设置' },
-    'navbarText': { en: 'Navbar Text', zh: '导航栏文字' },
-    'navbarLogo': { en: 'Navbar Logo', zh: '导航栏图标' },
-    'navbarTextHint': { en: 'Custom text displayed in navbar (leave empty for default: Pulse)', zh: '导航栏显示的自定义文字（留空使用默认：Pulse）' },
-    'navbarLogoHint': { en: 'Logo URL or SVG code (leave empty for default logo)', zh: '图标URL或SVG代码（留空使用默认图标）' },
+    'navbarText': { en: 'Browser Tab Title', zh: '标签栏文字' },
+    'navbarLogo': { en: 'Browser Tab Icon', zh: '标签栏图标' },
+    'navbarTextHint': { en: 'Custom text displayed in the browser tab title (leave empty for default: Pulse)', zh: '浏览器标签栏显示的自定义文字（留空使用默认：Pulse）' },
+    'navbarLogoHint': { en: 'Favicon URL or SVG code shown in the browser tab (leave empty for default icon)', zh: '浏览器标签栏 favicon 的 URL 或 SVG 代码（留空使用默认图标）' },
+    'showTagsLabel': { en: 'Show Homepage Tags', zh: '显示首页标签' },
+    'showTagsDesc':  { en: 'Show each server\u2019s tags inside the homepage expand row. When off, the tag line is hidden.', zh: '在首页展开行中显示每个服务器的标签。关闭后标签行将不再展示。' },
+    'showCardsLabel': { en: 'Show Homepage Cards', zh: '显示首页卡片' },
+    'showCardsDesc':  { en: 'Show all servers as cards at the bottom of the homepage. When off, the card grid is hidden.', zh: '在首页底部以卡片形式展示所有服务器。关闭后卡片网格将不再展示。' },
     'sharedSecret': { en: 'Shared Secret', zh: '共享密钥' },
     'sharedSecretHint': { en: 'This secret is shared by all clients for authentication', zh: '所有客户端共享此密钥进行认证' },
     'regenerate': { en: 'Regenerate', zh: '重新生成' },
@@ -4271,14 +4317,10 @@ const customCodePlaceholder = [
     'copy': { en: 'Copy', zh: '复制' },
     'customCodeHint': { en: 'Custom CSS and JavaScript will be applied to all pages. Use <style> for CSS or <script> for JS', zh: '自定义 CSS 和 JavaScript 将应用于所有页面。使用 <style> 标签添加 CSS，使用 <script> 标签添加 JS' },
     'customCodeSecurityWarning': { en: '⚠️ Security Warning: Do NOT include sensitive information (API keys, passwords, tokens).', zh: '⚠️ 安全提示：请勿包含敏感信息（API密钥、密码、令牌等）' },
-    'showTrafficLabel': { en: 'Show Traffic Info', zh: '显示流量信息' },
-    'showTrafficDesc': { en: 'Display real-time and total traffic in the detail dropdown section', zh: '在下拉详情部分显示实时流量和总流量' },
-    'showGlassLabel': { en: 'Glassmorphism Effect', zh: '毛玻璃特效' },
-    'showGlassDesc': { en: 'Enable frosted glass visual effect on navbar and cards', zh: '为导航栏和卡片启用毛玻璃视觉效果' },
   };
 
   function updateAdminTranslations() {
-    const lang = localStorage.getItem('preferred-language') || 'en';
+    const lang = 'zh';
     
     // Update all elements with data-translate attribute
     document.querySelectorAll('[data-translate]').forEach(el => {
@@ -4299,7 +4341,7 @@ const customCodePlaceholder = [
       const enTitle = el.getAttribute('data-title-en');
       const zhTitle = el.getAttribute('data-title-zh');
       if (enTitle && zhTitle) {
-        const value = lang === 'zh' ? zhTitle : enTitle;
+        const value = zhTitle || enTitle;
         el.setAttribute('title', value);
         // Only sync aria-label if the element declared one in the source
         // markup — we don't want to silently add ARIA names to elements
@@ -4315,7 +4357,7 @@ const customCodePlaceholder = [
       const enPlaceholder = el.getAttribute('data-placeholder-en');
       const zhPlaceholder = el.getAttribute('data-placeholder-zh');
       if (enPlaceholder && zhPlaceholder) {
-        el.setAttribute('placeholder', lang === 'zh' ? zhPlaceholder : enPlaceholder);
+        el.setAttribute('placeholder', zhPlaceholder || enPlaceholder);
       }
     });
   }

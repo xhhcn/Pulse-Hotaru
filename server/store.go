@@ -756,6 +756,14 @@ func GenerateAuthToken() (string, error) {
 }
 
 // NavbarConfig represents the navbar configuration
+//
+// HideTags / HideCards intentionally use *negative* (hide_*) names
+// so the bool zero-value (`false`) corresponds to the legacy /
+// expected behaviour: tags row is shown, card grid is shown.
+// This keeps every record already in BoltDB working unchanged
+// after upgrade — `json.Unmarshal` leaves the missing fields at
+// `false`, so no migration is needed and admins who never open
+// the customization modal continue to see the same homepage.
 type NavbarConfig struct {
 	Text         string `json:"text"`          // Custom text for navbar (default: "Pulse")
 	Logo         string `json:"logo"`          // Custom logo URL or SVG (default: built-in SVG)
@@ -764,6 +772,8 @@ type NavbarConfig struct {
 	CustomJS     string `json:"custom_js"`     // Custom JavaScript for all pages
 	ShowTraffic  bool   `json:"show_traffic"`  // Show real-time and total traffic in detail dropdown
 	ShowGlass    bool   `json:"show_glass"`    // Enable glassmorphism (frosted glass) visual effect
+	HideTags     bool   `json:"hide_tags"`     // Suppress the tag row in the homepage expand panel
+	HideCards    bool   `json:"hide_cards"`    // Suppress the homepage card grid section
 }
 
 // GetNavbarConfig retrieves the navbar configuration

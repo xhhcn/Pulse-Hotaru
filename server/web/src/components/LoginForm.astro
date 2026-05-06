@@ -31,6 +31,17 @@
         />
       </div>
 
+      <div id="password-confirm-field" class="hotaru-login-field" hidden>
+        <label for="password-confirm">确认密码</label>
+        <input
+          type="password"
+          id="password-confirm"
+          name="password_confirm"
+          autocomplete="new-password"
+          placeholder="请再次输入密码"
+        />
+      </div>
+
       <button type="submit" id="login-submit" class="hotaru-login-button">登录</button>
     </form>
   </div>
@@ -47,12 +58,7 @@
 
   const apiBase = getApiBase();
 
-  /* All login copy is hardcoded zh-CN — no language switch on this page.
-     Login page is single-field by design: even on first-time setup,
-     only one password input is shown. The user is the operator setting
-     their own password, so the usual "confirm" guard adds friction
-     without value (they can always change it later from the admin
-     panel via the dedicated change-password flow).                    */
+  /* All login copy is hardcoded zh-CN — no language switch on this page. */
   const T = {
     titleLogin:        '管理员登录',
     titleSetup:        '设置管理员密码',
@@ -62,6 +68,7 @@
     submitSetup:       '设置密码',
     invalidPassword:   '密码错误',
     passwordTooShort:  '密码长度至少为 6 个字符',
+    passwordMismatch:  '两次输入的密码不一致',
     setupSuccess:      '密码设置成功，正在跳转…',
     loginSuccess:      '登录成功，正在跳转…',
     networkError:      '网络错误，请重试',
@@ -156,11 +163,20 @@
     const submitBtn  = document.getElementById('login-submit');
     const form       = document.getElementById('login-form');
     const passwordEl = document.getElementById('password');
+    const confirmFieldEl = document.getElementById('password-confirm-field');
+    const confirmEl = document.getElementById('password-confirm');
 
     if (!isPasswordSet) {
       titleEl.textContent    = T.titleSetup;
       subtitleEl.textContent = T.subtitleSetup;
       submitBtn.textContent  = T.submitSetup;
+      if (confirmFieldEl) confirmFieldEl.removeAttribute('hidden');
+      if (confirmEl) confirmEl.required = true;
+      if (passwordEl) passwordEl.autocomplete = 'new-password';
+    } else {
+      if (confirmFieldEl) confirmFieldEl.setAttribute('hidden', '');
+      if (confirmEl) confirmEl.required = false;
+      if (passwordEl) passwordEl.autocomplete = 'current-password';
     }
 
     let inFlight = false;
@@ -173,6 +189,14 @@
       if (password.length < 6) {
         showAlert('error', T.passwordTooShort);
         return;
+      }
+
+      if (!isPasswordSet) {
+        const confirmPassword = (confirmEl?.value || '').trim();
+        if (password !== confirmPassword) {
+          showAlert('error', T.passwordMismatch);
+          return;
+        }
       }
 
       inFlight = true;

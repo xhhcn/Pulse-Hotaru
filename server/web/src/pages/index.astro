@@ -63,9 +63,11 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
             const link = document.querySelector('link[rel="icon"]');
             if (link) link.href = cfg.logo;
           }
+          var cssPayload = '';
           if (cfg.custom_css && cfg.custom_css.trim()) {
+            cssPayload = cfg.custom_css;
             const s = document.createElement('style');
-            s.textContent = cfg.custom_css;
+            s.textContent = cssPayload;
             document.head.appendChild(s);
           }
           if (cfg.custom_js && cfg.custom_js.trim()) {
@@ -111,6 +113,27 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
               document.addEventListener('DOMContentLoaded', runCustomJS, { once: true });
             } else {
               runCustomJS();
+            }
+          } else if (cssPayload) {
+            /* Backward-compat fallback:
+               some old builds mis-saved raw JS into custom_css when the
+               operator pasted no-tag code. If custom_js is empty but css
+               payload strongly looks like executable JS, run it once so
+               legacy configs keep working without manual DB edits. */
+            var looksLikeJS =
+              /\b(function|const|let|var)\b/.test(cssPayload) &&
+              /document\.|window\.|addEventListener|createElement/.test(cssPayload);
+            if (looksLikeJS) {
+              var legacyRunner = function () {
+                var s = document.createElement('script');
+                s.textContent = cssPayload;
+                document.head.appendChild(s);
+              };
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', legacyRunner, { once: true });
+              } else {
+                legacyRunner();
+              }
             }
           }
           /* Honour the "显示首页卡片" admin toggle by injecting a

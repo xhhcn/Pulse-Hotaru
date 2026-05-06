@@ -392,6 +392,27 @@ body.hotaru-theme {
      jumpy next to the soft fades elsewhere on the page.        */
   transition: background-color 0.1s ease;
 }
+
+/* Column width guardrails (desktop/tablet)
+   ---------------------------------------
+   Long node names can otherwise steal too much horizontal space and
+   squeeze metric columns into unreadable pills. Keep key metric
+   columns at a minimum readable width and force the name column to
+   give way first (ellipsis). */
+.hotaru-table thead th:nth-child(1),
+.hotaru-table tbody tr.hotaru-row td:nth-child(1) {
+  min-width: 6.4rem;   /* 运行状态 */
+}
+.hotaru-table thead th:nth-child(6),
+.hotaru-table tbody tr.hotaru-row td:nth-child(6) {
+  min-width: 6.8rem;   /* 网络 */
+}
+.hotaru-table thead th:nth-child(8),
+.hotaru-table tbody tr.hotaru-row td:nth-child(8),
+.hotaru-table thead th:nth-child(9),
+.hotaru-table tbody tr.hotaru-row td:nth-child(9) {
+  min-width: 5.0rem;   /* CPU / 内存 */
+}
 /* Network / traffic cells inherit the row's `font-size: 1rem` and
    `font-weight: bold` like every other cell — hotaru never gives
    these columns a smaller font. The compact B/K/M/G/T format
@@ -399,9 +420,11 @@ body.hotaru-theme {
 
 /* Name column truncates with ellipsis instead of pushing wide. */
 .hotaru-table tbody tr.hotaru-row td.hotaru-cell-name {
-  max-width: 12rem;
+  width: 1%;
+  max-width: clamp(7rem, 18vw, 11rem);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Pipe separator inherits the cell's bold + #616366 so it reads
@@ -481,6 +504,17 @@ body.hotaru-theme {
    table fits cleanly inside the viewport without a defensive
    overflow rule.                                                   */
 @media (max-width: 533px) {
+  /* On narrow phones, keep CPU/内存 readable first and let 节点名
+     truncate more aggressively. */
+  .hotaru-table tbody tr.hotaru-row td.hotaru-cell-name {
+    max-width: 5.2rem;
+  }
+  .hotaru-table thead th:nth-child(8),
+  .hotaru-table tbody tr.hotaru-row td:nth-child(8),
+  .hotaru-table thead th:nth-child(9),
+  .hotaru-table tbody tr.hotaru-row td:nth-child(9) {
+    min-width: 4.2rem;
+  }
   .hotaru-table th:nth-child(2),  .hotaru-table td:nth-child(2)  { min-width: 20px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; }
   .hotaru-table th:nth-child(10), .hotaru-table td:nth-child(10) { display: none; } /* disk */
   .hotaru-table th:nth-child(8),  .hotaru-table td:nth-child(8),

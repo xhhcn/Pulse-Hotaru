@@ -74,31 +74,43 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
                - Newer saves can store one or more full <script> tags
                  (including external src=... tags)
                Running the payload as plain text unconditionally breaks
-               the second case with "Unexpected token '<'". */
-            var customJS = cfg.custom_js;
-            var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
-            var matches = [];
-            var m;
-            while ((m = scriptTagRegex.exec(customJS)) !== null) {
-              matches.push({ attrs: m[1], content: m[2] });
-            }
-            if (matches.length > 0) {
-              matches.forEach(function (data) {
+               the second case with "Unexpected token '<'".
+
+               IMPORTANT: this loader runs in <head> before <body> exists.
+               Many custom snippets append UI into document.body, so we
+               defer execution until DOMContentLoaded to guarantee body is
+               available and avoid null dereference crashes. */
+            var runCustomJS = function () {
+              var customJS = cfg.custom_js;
+              var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+              var matches = [];
+              var m;
+              while ((m = scriptTagRegex.exec(customJS)) !== null) {
+                matches.push({ attrs: m[1], content: m[2] });
+              }
+              if (matches.length > 0) {
+                matches.forEach(function (data) {
+                  var s = document.createElement('script');
+                  var srcMatch = data.attrs.match(/src=["']([^"']+)["']/);
+                  if (srcMatch) {
+                    s.src = srcMatch[1];
+                    s.async = false;
+                    s.defer = false;
+                  } else if (data.content.trim()) {
+                    s.textContent = data.content;
+                  }
+                  if (s.src || s.textContent) document.head.appendChild(s);
+                });
+              } else {
                 var s = document.createElement('script');
-                var srcMatch = data.attrs.match(/src=["']([^"']+)["']/);
-                if (srcMatch) {
-                  s.src = srcMatch[1];
-                  s.async = false;
-                  s.defer = false;
-                } else if (data.content.trim()) {
-                  s.textContent = data.content;
-                }
-                if (s.src || s.textContent) document.head.appendChild(s);
-              });
+                s.textContent = customJS;
+                document.head.appendChild(s);
+              }
+            };
+            if (document.readyState === 'loading') {
+              document.addEventListener('DOMContentLoaded', runCustomJS, { once: true });
             } else {
-              var s = document.createElement('script');
-              s.textContent = customJS;
-              document.head.appendChild(s);
+              runCustomJS();
             }
           }
           /* Honour the "显示首页卡片" admin toggle by injecting a

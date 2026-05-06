@@ -3864,27 +3864,20 @@ const customCodePlaceholder = [
       }
     }
     
-    // If no tags found, treat CSS (starting with /* or .) and JS (starting with //, function, var, let, const) separately
-    if (!customCSS && !customJS) {
-      const lines = customCode.split('\n');
-      let currentBlock = '';
-      let isCSS = false;
-      
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('/*') || trimmed.startsWith('.') || trimmed.startsWith('#') || trimmed.includes('{')) {
-          isCSS = true;
-        } else if (trimmed.startsWith('//') || trimmed.startsWith('function') || trimmed.startsWith('var ') || 
-                   trimmed.startsWith('let ') || trimmed.startsWith('const ') || trimmed.startsWith('console.')) {
-          isCSS = false;
-        }
-        
-        if (isCSS) {
-          customCSS += line + '\n';
-        } else if (trimmed) {
-          customJS += line + '\n';
-        }
-      }
+    /* Backward-compatible fallback when the operator pastes raw code
+       without explicit <style>/<script> tags.
+
+       Old heuristic tried to split line-by-line by braces and common
+       prefixes, but raw IIFE JavaScript (the most common case for
+       homepage widgets) contains many '{' tokens and was therefore
+       misclassified as CSS, leaving custom_js empty.
+
+       To avoid silently dropping executable code, no-tag input now
+       defaults to JavaScript. Operators who need CSS-only should wrap
+       it in <style>...</style>, which this parser already handles
+       precisely. */
+    if (!customCSS && !customJS && customCode.trim()) {
+      customJS = customCode.trim() + '\n';
     }
     
     const showTagsToggle  = document.getElementById('show-tags-toggle');

@@ -393,26 +393,6 @@ body.hotaru-theme {
   transition: background-color 0.1s ease;
 }
 
-/* Column width guardrails (desktop/tablet)
-   ---------------------------------------
-   Long node names can otherwise steal too much horizontal space and
-   squeeze metric columns into unreadable pills. Keep key metric
-   columns at a minimum readable width and force the name column to
-   give way first (ellipsis). */
-.hotaru-table thead th:nth-child(1),
-.hotaru-table tbody tr.hotaru-row td:nth-child(1) {
-  min-width: 6.4rem;   /* 运行状态 */
-}
-.hotaru-table thead th:nth-child(6),
-.hotaru-table tbody tr.hotaru-row td:nth-child(6) {
-  min-width: 6.8rem;   /* 网络 */
-}
-.hotaru-table thead th:nth-child(8),
-.hotaru-table tbody tr.hotaru-row td:nth-child(8),
-.hotaru-table thead th:nth-child(9),
-.hotaru-table tbody tr.hotaru-row td:nth-child(9) {
-  min-width: 5.0rem;   /* CPU / 内存 */
-}
 /* Network / traffic cells inherit the row's `font-size: 1rem` and
    `font-weight: bold` like every other cell — hotaru never gives
    these columns a smaller font. The compact B/K/M/G/T format
@@ -420,11 +400,9 @@ body.hotaru-theme {
 
 /* Name column truncates with ellipsis instead of pushing wide. */
 .hotaru-table tbody tr.hotaru-row td.hotaru-cell-name {
-  width: 1%;
-  max-width: clamp(7rem, 18vw, 11rem);
+  max-width: 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Pipe separator inherits the cell's bold + #616366 so it reads
@@ -504,21 +482,24 @@ body.hotaru-theme {
    table fits cleanly inside the viewport without a defensive
    overflow rule.                                                   */
 @media (max-width: 533px) {
-  /* On narrow phones, keep CPU/内存 readable first and let 节点名
-     truncate more aggressively. */
-  .hotaru-table tbody tr.hotaru-row td.hotaru-cell-name {
-    max-width: 5.2rem;
-  }
-  .hotaru-table thead th:nth-child(8),
-  .hotaru-table tbody tr.hotaru-row td:nth-child(8),
-  .hotaru-table thead th:nth-child(9),
-  .hotaru-table tbody tr.hotaru-row td:nth-child(9) {
-    min-width: 4.2rem;
-  }
+  /* Keep upstream ≤533 behaviour unchanged. */
   .hotaru-table th:nth-child(2),  .hotaru-table td:nth-child(2)  { min-width: 20px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; }
   .hotaru-table th:nth-child(10), .hotaru-table td:nth-child(10) { display: none; } /* disk */
   .hotaru-table th:nth-child(8),  .hotaru-table td:nth-child(8),
   .hotaru-table th:nth-child(9),  .hotaru-table td:nth-child(9)  { min-width: 20px; max-width: 40px; }
+}
+
+/* Extra-extreme tier (narrower than upstream):
+   preserve RAM, hide CPU, and let node name show fully. */
+@media (max-width: 420px) {
+  .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) { display: none; } /* cpu */
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-word;
+  }
 }
 
 /* Expand row underneath each tr.hotaru-row.
@@ -1059,17 +1040,8 @@ body.hotaru-theme {
    metric. Pulse's native table preserves it instead, and that's
    what users actually want when diagnosing why a server dropped. */
 
-/* Status bar variant — hotaru's TableItem.vue gives EVERY `.progress`
-   the same `width: 50px` (or 40px under 768px), regardless of whether
-   it's the running-status pill or a CPU/RAM/Disk bar. We mirror that
-   exactly: status pill uses the SAME 50px / 40px box as the metric
-   bars. The `.bar` inside is 100% width and the inner span centres
-   "运行中" / "维护中" within those 50px — at the .9rem font hotaru
-   uses, three Chinese chars measure ≈ 43px and sit comfortably.    */
-.hotaru-bar.hotaru-bar--status {
-  /* No width override — inherits the base .hotaru-bar { width: 50px }
-     so it stays a 50px box exactly like hotaru's source.             */
-}
+/* Status bar variant intentionally inherits the same 50px/40px
+   geometry as the CPU/RAM bars — no separate override block needed. */
 
 /* "服务器位置" column — plain text (简体中文国名，由 `locationToZh` 生成)，
    与其它数字列相同的字重与字号，无额外样式类。                      */

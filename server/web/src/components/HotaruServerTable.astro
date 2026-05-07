@@ -1039,7 +1039,11 @@
       const hasAny = points.length > 0;
 
       tcping.empty.hidden = hasAny;
-      tcping.canvas.parentElement.style.display = hasAny ? '' : 'none';
+      /* Keep chart box height stable even when data is empty.
+         We only destroy the chart instance; the fixed-height chart
+         container remains in layout so later data can fade in smoothly
+         without a collapse/expand jump. */
+      tcping.canvas.parentElement.style.display = '';
       updateTcpingStats(tcping, points);
 
       if (!hasAny) {

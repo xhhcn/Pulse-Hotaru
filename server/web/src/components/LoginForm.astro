@@ -90,13 +90,17 @@
 
   async function checkPasswordStatus() {
     try {
-      const res = await fetch(`${apiBase}/api/auth/status`);
+      const res = await fetch(`${apiBase}/api/auth/status`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        return data.set;
+        return !!data.set;
       }
+      /* Status endpoint unavailable / non-200:
+         fail closed into login mode (single input) so we don't
+         accidentally show "first-time setup" on an initialized site. */
+      return null;
     } catch (_) {}
-    return false;
+    return null;
   }
 
   async function setupPassword(password) {
@@ -156,7 +160,8 @@
   }
 
   (async () => {
-    const isPasswordSet = await checkPasswordStatus();
+    const status = await checkPasswordStatus();
+    let isSetupMode = (status === false);
 
     const titleEl    = document.getElementById('login-title');
     const subtitleEl = document.getElementById('login-subtitle');
@@ -166,18 +171,25 @@
     const confirmFieldEl = document.getElementById('password-confirm-field');
     const confirmEl = document.getElementById('password-confirm');
 
-    if (!isPasswordSet) {
-      titleEl.textContent    = T.titleSetup;
-      subtitleEl.textContent = T.subtitleSetup;
-      submitBtn.textContent  = T.submitSetup;
-      if (confirmFieldEl) confirmFieldEl.removeAttribute('hidden');
-      if (confirmEl) confirmEl.required = true;
-      if (passwordEl) passwordEl.autocomplete = 'new-password';
-    } else {
-      if (confirmFieldEl) confirmFieldEl.setAttribute('hidden', '');
-      if (confirmEl) confirmEl.required = false;
-      if (passwordEl) passwordEl.autocomplete = 'current-password';
+    function applyMode() {
+      if (isSetupMode) {
+        titleEl.textContent    = T.titleSetup;
+        subtitleEl.textContent = T.subtitleSetup;
+        submitBtn.textContent  = T.submitSetup;
+        if (confirmFieldEl) confirmFieldEl.removeAttribute('hidden');
+        if (confirmEl) confirmEl.required = true;
+        if (passwordEl) passwordEl.autocomplete = 'new-password';
+      } else {
+        titleEl.textContent    = T.titleLogin;
+        subtitleEl.textContent = T.subtitleLogin;
+        submitBtn.textContent  = T.submitLogin;
+        if (confirmFieldEl) confirmFieldEl.setAttribute('hidden', '');
+        if (confirmEl) confirmEl.required = false;
+        if (confirmEl) confirmEl.value = '';
+        if (passwordEl) passwordEl.autocomplete = 'current-password';
+      }
     }
+    applyMode();
 
     let inFlight = false;
     form.addEventListener('submit', async (e) => {
@@ -191,7 +203,7 @@
         return;
       }
 
-      if (!isPasswordSet) {
+      if (isSetupMode) {
         const confirmPassword = (confirmEl?.value || '').trim();
         if (password !== confirmPassword) {
           showAlert('error', T.passwordMismatch);
@@ -204,7 +216,7 @@
       submitBtn.classList.add('is-loading');
 
       try {
-        if (!isPasswordSet) {
+        if (isSetupMode) {
           const setup = await setupPassword(password);
           if (setup && setup.success) {
             showAlert('ok', T.setupSuccess);
@@ -212,7 +224,23 @@
             const params = new URLSearchParams(window.location.search);
             window.location.href = validateRedirect(params.get('redirect') || '/admin');
           } else {
-            showAlert('error', (setup && setup.error) || T.genericError);
+            const msg = (setup && setup.error) || T.genericError;
+            if (/password already set/i.test(msg)) {
+              // Status endpoint can be stale in some deployments/cache layers.
+              // Fall back to login mode immediately instead of forcing 2 fields.
+              isSetupMode = false;
+              applyMode();
+              const ok = await login(password);
+              if (ok) {
+                showAlert('ok', T.loginSuccess);
+                const params = new URLSearchParams(window.location.search);
+                window.location.href = validateRedirect(params.get('redirect') || '/admin');
+              } else {
+                showAlert('error', T.invalidPassword);
+              }
+            } else {
+              showAlert('error', msg);
+            }
           }
         } else {
           const ok = await login(password);

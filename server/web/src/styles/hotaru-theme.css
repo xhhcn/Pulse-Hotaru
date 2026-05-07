@@ -1555,6 +1555,12 @@ body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
   flex-direction: column;
   gap: 0.35rem;
 }
+/* Keep native hidden semantics for setup-only confirm field.
+   Without this, `.hotaru-login-field { display:flex }` overrides
+   `[hidden] { display:none }` and the confirm input stays visible. */
+.hotaru-login-field[hidden] {
+  display: none !important;
+}
 .hotaru-login-field label {
   font-size: 0.86rem;
   color: var(--hotaru-text);
@@ -1623,6 +1629,27 @@ body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
 }
 
 @media (max-width: 480px) {
-  .hotaru-login-card { padding: 1.5rem 1.25rem; }
+  .hotaru-login-shell {
+    align-items: center;
+    padding: max(1rem, env(safe-area-inset-top)) 0.75rem 1.25rem;
+  }
+  .hotaru-login-card {
+    max-width: none;
+    padding: 1.35rem 1rem;
+    border-radius: 0.45rem;
+  }
+  .hotaru-login-header { margin-bottom: 1.2rem; }
   .hotaru-login-title { font-size: 1.3rem; }
+  .hotaru-login-subtitle { font-size: 0.86rem; }
+  .hotaru-login-form { gap: 0.85rem; }
+  .hotaru-login-field label { font-size: 0.82rem; }
+  .hotaru-login-field input {
+    padding: 0.62em 0.82em;
+    font-size: 0.95rem;
+  }
+  .hotaru-login-button {
+    margin-top: 0.2rem;
+    padding: 0.72em 1.1em;
+    font-size: 0.96rem;
+  }
 }

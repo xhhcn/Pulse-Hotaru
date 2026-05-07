@@ -490,10 +490,10 @@ body.hotaru-theme {
 }
 
 /* Extra-extreme tier (narrower than upstream):
-   preserve RAM, hide CPU, and let node name show fully. */
+   keep CPU (drop RAM), keep network, and let node name stay full. */
 @media (max-width: 420px) {
-  /* Let remaining columns share width predictably so the last
-     memory column stays inside viewport even with long names. */
+  /* Let remaining columns share width predictably so the final
+     metric column stays inside viewport even with long names. */
   .hotaru-table {
     table-layout: fixed;
   }
@@ -501,12 +501,11 @@ body.hotaru-theme {
   .hotaru-table tbody tr.hotaru-row td {
     padding: 0.56em 0.5em;
   }
-
-  .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) { display: none; } /* cpu */
+  .hotaru-table th:nth-child(9), .hotaru-table td:nth-child(9) { display: none; } /* ram */
   .hotaru-table th:nth-child(1), .hotaru-table td:nth-child(1) { width: 23%; }
-  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) { width: 37%; }
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) { width: 39%; }
   .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6) { width: 24%; }
-  .hotaru-table th:nth-child(9), .hotaru-table td:nth-child(9) { width: 16%; }
+  .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) { width: 14%; } /* cpu */
 
   .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) {
     max-width: none;
@@ -516,12 +515,38 @@ body.hotaru-theme {
     word-break: break-word;
   }
   .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6),
-  .hotaru-table th:nth-child(9), .hotaru-table td:nth-child(9) {
+  .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) {
     min-width: 0;
     max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+/* Name grows further: drop the last metric column (CPU), keep network. */
+@media (max-width: 390px) {
+  .hotaru-table th:nth-child(8), .hotaru-table td:nth-child(8) { display: none; } /* cpu */
+  .hotaru-table th:nth-child(1), .hotaru-table td:nth-child(1) { width: 24%; }
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) { width: 48%; }
+  .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6) { width: 28%; }
+}
+
+/* Name grows even further: drop network as well, keep status + name. */
+@media (max-width: 360px) {
+  .hotaru-table th:nth-child(6), .hotaru-table td:nth-child(6) { display: none; } /* network */
+  .hotaru-table th:nth-child(1), .hotaru-table td:nth-child(1) { width: 29%; }
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) { width: 71%; }
+}
+
+/* Last resort: keep layout stable with ellipsis on ultra-narrow phones. */
+@media (max-width: 330px) {
+  .hotaru-table tbody tr.hotaru-row td.hotaru-cell-name,
+  .hotaru-table th:nth-child(2), .hotaru-table td:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: normal;
   }
 }
 
@@ -1076,7 +1101,7 @@ body.hotaru-theme {
    ============================================================ */
 .hotaru-cards-section {
   padding-top: 3.4rem;
-  padding-bottom: 3.5rem;
+  padding-bottom: 3.9rem;
 }
 
 .hotaru-cards-grid {

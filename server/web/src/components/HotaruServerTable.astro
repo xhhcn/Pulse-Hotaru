@@ -1545,19 +1545,14 @@
       body.className = 'hotaru-expand-body';
       /* Tags line — admin-defined classification metadata.
          Hidden when item.tags is missing/empty so empty rows
-         keep the same compact 4-line layout as before. The
-         "标签: " prefix follows the same pattern as the
-         siblings ("CPU 型号: ", "内存信息: ", ...) so the line
-         reads as part of the same metadata block. */
+         keep the same compact 4-line layout as before.
+         Render pills directly (no "标签:" prefix text). */
       const tagsLine     = document.createElement('div');
       tagsLine.className = 'hotaru-tag-line';
       tagsLine.hidden    = true;
-      const tagsLabel    = document.createElement('span');
-      tagsLabel.className = 'hotaru-tag-line__label';
-      tagsLabel.textContent = '标签: ';
       const tagsList     = document.createElement('span');
       tagsList.className = 'hotaru-tag-line__list';
-      tagsLine.append(tagsLabel, tagsList);
+      tagsLine.append(tagsList);
       const cpuInfo  = document.createElement('div');
       const memInfo  = document.createElement('div');
       const swapInfo = document.createElement('div');

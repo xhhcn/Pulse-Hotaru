@@ -89,12 +89,9 @@ body.hotaru-theme *::after {
 }
 
 body.hotaru-theme {
-  /* Plain near-white surface. Hotaru's stock theme uses a tiled
-     bg.png as its body background — visually a clean, almost-white
-     paper texture. We don't reproduce that image asset; instead we
-     use a flat #ffffff so the rows' rgba(249,249,249,.8) reads as
-     a faint grey band on white, which is the contrast direction
-     hotaru's deployments end up with anyway.                       */
+  /* User preference: keep the public dashboard on a plain white
+     surface instead of Hotaru's tiled bg_parts.png / bg.png page
+     texture. Rows/cards still use Hotaru's translucent fills.       */
   background: #ffffff !important;
   /* Mirror Semantic UI body exactly:
        color rgba(0,0,0,.87)        — near-black, NOT #616366
@@ -238,7 +235,7 @@ body.hotaru-theme {
   pointer-events: none;
 }
 .hotaru-initial-loader__text {
-  font-weight: 500;
+  font-weight: 400;
   /* Reserve space for the trailing "..." so the word "Loading"
      doesn't shift horizontally as dots appear/disappear.        */
   display: inline-block;
@@ -348,14 +345,15 @@ body.hotaru-theme {
   cursor: default;
 }
 .hotaru-table tbody tr.hotaru-skeleton td.hotaru-skeleton-td {
-  color: var(--hotaru-faint) !important;
-  font-weight: 600 !important;
+  color: var(--hotaru-text) !important;
+  font-weight: 400 !important;
   background: transparent !important;
   border: none !important;
-  white-space: nowrap !important;
+  white-space: normal !important;
+  word-break: break-word;
   padding: 1.6em 0.78571429em !important;
   font-size: 1rem !important;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-align: center !important;
 }
 .hotaru-table tbody tr.hotaru-skeleton td.hotaru-skeleton-td--merged {
@@ -388,7 +386,6 @@ body.hotaru-theme {
      bottom border show the page colour through. That's how we get
      a visible row-to-row gap WITHOUT widening thead↔first-row.    */
   vertical-align: middle;
-  cursor: pointer;
 }
 
 .hotaru-table tbody tr.hotaru-row td {
@@ -567,43 +564,48 @@ body.hotaru-theme {
    added in the admin panel but has never said hello. There's
    genuinely nothing to put in an expand row — no cpu_model, no
    memory_info, no tcping samples — so we follow hotaru's lead
-   and refuse to expand the row at all. The cursor reverts to
-   default to signal the row isn't interactive, and the expand
-   panel is locked at 0fr regardless of any stale .is-open class
-   the row may have carried in from a previous live state.       */
-.hotaru-table tbody tr.hotaru-row.is-pristine {
-  cursor: default;
-}
+   and refuse to expand the row at all. The expand panel is locked
+   at zero regardless of any stale .is-open class the row may have
+   carried in from a previous live state.                         */
 .hotaru-table tbody tr.hotaru-row.is-pristine + tr.hotaru-expand
   .hotaru-expand-inner {
-  grid-template-rows: 0fr !important;
+  max-height: 0 !important;
 }
 
-/* The expand wrapper uses the `grid-template-rows: 0fr → 1fr` trick
-   instead of `max-height` because the body's intrinsic height varies
-   (CPU/mem/swap/disk lines + an optional 140-px tcping chart). max-
-   height needs a fixed upper bound, which either clips the chart
-   when it loads or spends most of the animation on empty space when
-   no chart is present. Grid-rows interpolates the actual content
-   height, so open/close stays smooth at any size.                 */
+/* Expand wrapper.
+
+   Upstream Hotaru's TableItem.vue:
+     tr.expandRow td > div {
+       overflow: hidden;
+       transition: max-height .5s ease;
+       max-height: 4em;
+     }
+     tr.expandRow td > div.collapsed { max-height: 0; }
+
+   Pulse keeps extra, variable-height details (CPU model, tags and
+   tcping). JS writes an exact pixel max-height from scrollHeight
+   when a row opens so content cannot clip; the CSS values below are
+   only no-JS / first-paint fallbacks that preserve the same upstream
+   transition property and timing.                                */
 .hotaru-table tbody tr.hotaru-expand .hotaru-expand-inner {
-  display: grid;
-  grid-template-rows: 0fr;
-  /* Material-style ease-out curve: starts fast, decelerates into
-     the final position. Feels much more natural than `ease`.     */
-  transition: grid-template-rows 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: hidden;
+  transition: max-height 0.5s ease;
+  max-height: 0;
 }
 .hotaru-table tbody tr.hotaru-expand.is-open .hotaru-expand-inner {
-  grid-template-rows: 1fr;
+  max-height: 5.715em;
+}
+.hotaru-table tbody tr.hotaru-expand.is-open .hotaru-expand-inner:has(.hotaru-tag-line:not([hidden])) {
+  max-height: 7.25em;
+}
+.hotaru-table tbody tr.hotaru-expand.is-open .hotaru-expand-inner:has(.hotaru-tcping:not([hidden])) {
+  max-height: 24em;
 }
 
-/* The single grid item: holds every detail line + the chart. Needs
-   `min-height: 0` so the 0fr track is allowed to fully collapse,
-   and `overflow: hidden` to hide content during the animation
-   without leaking past the row's bounds.                          */
+/* The inner body holds the upstream detail lines and optional
+   Pulse-only extensions. Its typography follows Hotaru's inherited
+   table-cell text style.                                         */
 .hotaru-table tbody tr.hotaru-expand .hotaru-expand-body {
-  overflow: hidden;
-  min-height: 0;
   /* Hotaru's `tr td { color:#616366; font-weight:bold }` rule
      applies to EVERY td in the table, expand row included.       */
   text-align: center;
@@ -635,10 +637,12 @@ body.hotaru-theme {
    in the upstream theme — but hotaru ships Semantic UI's full
    stylesheet, and Semantic UI's `.ui.tiny.label` is the canonical
    pill primitive that anything tag-shaped in this design system
-   would inherit. We mirror that recipe verbatim:
+   would inherit. We keep the same geometry and weight, but use
+   hotaru's main text grey instead of Semantic UI's rgba black so
+   CJK tag text does not visually wash out on the pale grey pill:
 
        background-color: #e8e8e8
-       color:            rgba(0, 0, 0, 0.6)
+       color:            #616366
        font-weight:      700
        padding:          .5833em .833em
        border-radius:    .28571429rem
@@ -678,10 +682,10 @@ body.hotaru-theme {
   gap: 0.35em;
 }
 
-/* Default (greyscale) tag — Semantic UI's `.ui.tiny.label`
-   recipe verbatim:
+/* Default (greyscale) tag — Semantic UI label geometry with
+   Hotaru's main text grey for clearer CJK rendering:
      background-color: #e8e8e8
-     color:            rgba(0, 0, 0, 0.6)
+     color:            #616366
      font-weight:      700
      padding:          .5833em .833em
      border-radius:    .28571429rem
@@ -691,7 +695,7 @@ body.hotaru-theme {
   display: inline-block;
   vertical-align: baseline;
   background-color: #e8e8e8;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--hotaru-text);
   font-weight: 700;
   /* Semantic UI `.ui.small.label` size — was `.ui.tiny.label`
      (0.71428571rem ≈ 10 px). At 14 px root size the tiny variant
@@ -842,7 +846,7 @@ body.hotaru-theme {
   min-width: 3.6em;
   justify-content: center;
   background-color: rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--hotaru-text);
   font-size: 0.78571429rem;
   line-height: 1;
   font-weight: 700;
@@ -891,9 +895,9 @@ body.hotaru-theme {
      elements. 4 px was sharper than anything else in the UI.    */
   border-radius: 6px;
   background: transparent;
-  color: var(--hotaru-faint);
+  color: var(--hotaru-text);
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   border: none;
   line-height: 1.2;
@@ -976,7 +980,7 @@ body.hotaru-theme {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--hotaru-faint);
+  color: var(--hotaru-text);
   pointer-events: none;
 }
 .hotaru-tcping__empty svg {
@@ -1145,15 +1149,23 @@ body.hotaru-theme {
   margin-bottom: 0;
   min-height: 2rem;
 }
-/* Card header flag — Pulse emojione-v1 via iconify (same as before). */
+/* Card header flag.
+
+   Upstream Hotaru sets `.flag-icon { width: 70px }`. Pulse's flag is
+   an iconify-injected emojione SVG, whose natural viewBox is square,
+   and the loader sets the inner svg to width/height:100%. A 70x46
+   box makes that square icon resolve to only 46px; an unbounded inline
+   box can inflate. A stable 70px square is the right compromise:
+   same visual weight as upstream's 70px flag, but hard-bounded for
+   iconify's percentage-sized SVG. */
 .hotaru-card__flag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 70px;
-  height: auto;
-  min-height: 46px;
-  flex-shrink: 0;
+  height: 70px;
+  min-height: 70px;
+  flex: 0 0 70px;
   line-height: 0;
   margin-right: 8px;
   vertical-align: middle;
@@ -1161,9 +1173,10 @@ body.hotaru-theme {
   overflow: hidden;
 }
 .hotaru-card__flag svg {
-  width: 100%;
-  height: auto;
-  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  object-fit: contain;
 }
 .hotaru-card__name {
   font-size: 1.25rem;
@@ -1227,12 +1240,12 @@ body.hotaru-theme {
 .hotaru-card__empty {
   grid-column: 1 / -1;
   text-align: center;
-  color: var(--hotaru-faint);
+  color: var(--hotaru-text);
   padding: 2.5rem 1.25rem;
   font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.4285em;
 }
 
 /* Mobile card sizing — hotaru bumps the card name up to 1.55rem
@@ -1249,10 +1262,10 @@ body.hotaru-theme {
    Footer
    ============================================================ */
 /* Footer is now an empty placeholder (the user removed both
-   attribution lines). We only keep ~24px of bottom padding so the
+   attribution lines). We only keep 15px of bottom padding so the
    card grid above doesn't collide with the viewport edge.        */
 .hotaru-footer {
-  padding: 0 0 24px;
+  padding: 0 0 15px;
 }
 
 /* Hotaru's TheError.vue: `p.error { text-align: center; color: #616366;

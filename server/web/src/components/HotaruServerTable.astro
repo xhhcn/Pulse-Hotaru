@@ -116,8 +116,8 @@
     }
     function levelOf(p) {
       const v = Number(p) || 0;
-      if (v >= 90) return 'bad';
-      if (v >= 70) return 'warn';
+      if (v > 90) return 'bad';
+      if (v > 70) return 'warn';
       return 'ok';
     }
 
@@ -771,12 +771,15 @@
         return;
       }
 
+      const inner = tcping.wrap.closest('.hotaru-expand-inner');
+      const detail = tcping.wrap.closest('tr.hotaru-expand');
       const cfg = await loadTcpingConfig();
       if (!cfg || !Array.isArray(cfg.targets) || cfg.targets.length === 0) {
         /* No targets configured for this deployment — collapse
            the card so the expand row doesn't show a bare empty
            rectangle forever.                                     */
         tcping.wrap.hidden = true;
+        if (detail) syncExpandHeight(detail);
         return;
       }
       /* Card was already visible from row build time; nothing to
@@ -788,17 +791,18 @@
          immediately — surface arrives now, numbers fade in
          once the fetch resolves a few hundred ms later.       */
       setTcpingStatsLoading(tcping);
+      if (detail) syncExpandHeight(detail);
 
-      /* The expand panel uses a grid-template-rows: 0fr → 1fr
+      /* The expand panel follows upstream Hotaru's max-height
          transition (cf. .hotaru-expand-inner in hotaru-theme.css).
-         Until that 400 ms animation ends, the canvas's container
+         Until that 500 ms animation ends, the canvas's container
          has zero height, and Chart.js will sample those zero
          dimensions and auto-skip every x-axis tick — making the
          time labels disappear even though the data is correct.
 
          Two-pronged fix:
          1. Defer the *initial* paint until after the animation
-            completes (`transitionend` on grid-template-rows), so
+            completes (`transitionend` on max-height), so
             Chart.js measures the real container size on its first
             layout pass.
          2. Belt-and-braces: schedule a forced .resize() one frame
@@ -806,8 +810,6 @@
             tick spacing if step 1 happens to fire while the panel
             is still 0px tall (e.g. when the row was reopened
             before the previous collapse animation finished).      */
-      const inner = tcping.wrap.closest('.hotaru-expand-inner');
-      const detail = tcping.wrap.closest('tr.hotaru-expand');
       const drawNow = async () => {
         await refreshTcpingChart(id, tcping);
         if (tcping.chart) {
@@ -817,20 +819,21 @@
            pulse-dots overlay. Subsequent re-renders won't bring
            the spinner back; the chart paints in place.            */
         if (tcping.loading) tcping.loading.hidden = true;
+        if (detail) syncExpandHeight(detail);
       };
       if (inner && detail && !detail.classList.contains('is-open')) {
         /* Row hasn't opened yet (rare: race with a fast double-click).
            Wait for the next is-open tick.                             */
         await drawNow();
       } else if (inner) {
-        /* Wait for the grid-template-rows transition to settle, then
+        /* Wait for the max-height transition to settle, then
            paint. Cap the wait at 600 ms so a slow / cancelled
            transition never strands us without a chart.              */
         await new Promise((resolve) => {
           let done = false;
           const finish = () => { if (done) return; done = true; resolve(); };
           inner.addEventListener('transitionend', (e) => {
-            if (e.propertyName === 'grid-template-rows') finish();
+            if (e.propertyName === 'max-height') finish();
           }, { once: true });
           setTimeout(finish, 600);
         });
@@ -1314,6 +1317,7 @@
       rowMap.forEach((entry) => {
         if (entry && entry.tcping && entry.tcping.wrap) {
           entry.tcping.wrap.hidden = !hasTargets;
+          syncExpandHeight(entry.detail);
         }
       });
 
@@ -1342,6 +1346,7 @@
         const tcping = entry && entry.tcping;
         if (!tcping) return;
         if (tcping.wrap) tcping.wrap.hidden = false;
+        syncExpandHeight(entry.detail);
 
         if (!tcping.initialized || !tcpingState.has(id)) {
           tcping.initialized = false;
@@ -1573,6 +1578,46 @@
       return { td, a, b, setMode };
     }
 
+    function expandInnerFor(detail) {
+      return detail ? detail.querySelector('.hotaru-expand-inner') : null;
+    }
+
+    function syncExpandHeight(detail) {
+      const inner = expandInnerFor(detail);
+      if (!inner) return;
+      if (!detail.classList.contains('is-open')) {
+        inner.style.maxHeight = '0px';
+        return;
+      }
+      inner.style.maxHeight = inner.scrollHeight + 'px';
+    }
+
+    function setExpandOpen(detail, open) {
+      const inner = expandInnerFor(detail);
+      if (!inner) {
+        detail.classList.toggle('is-open', open);
+        return;
+      }
+      if (open) {
+        detail.classList.add('is-open');
+        syncExpandHeight(detail);
+      } else {
+        inner.style.maxHeight = inner.scrollHeight + 'px';
+        // Force the browser to commit the current height before collapse.
+        void inner.offsetHeight;
+        detail.classList.remove('is-open');
+        inner.style.maxHeight = '0px';
+      }
+    }
+
+    function syncOpenExpandHeights() {
+      rowMap.forEach((entry) => {
+        if (entry && entry.detail && entry.detail.classList.contains('is-open')) {
+          syncExpandHeight(entry.detail);
+        }
+      });
+    }
+
     function buildRowEntry(item, idx) {
       const id  = item.id || ('sys-' + idx);
       const row = document.createElement('tr');
@@ -1620,15 +1665,13 @@
 
       // Detail row — always in DOM. We never remove/recreate it,
       // so the user's `is-open` toggle survives every SSE push.
-      // For offline servers we just hide it via the .is-offline
-      // class on the main row (see CSS).
+      // Offline-with-history rows keep Pulse's existing detail
+      // snapshot behavior; only empty pristine rows stay collapsed.
       //
-      // Structure (grid-template-rows: 0fr/1fr trick gives smooth
-      // open/close regardless of how tall the body grows when the
-      // tcping chart loads):
+      // Structure mirrors upstream Hotaru's expand row:
       //
-      //   .hotaru-expand-inner       (grid container, animates rows)
-      //     .hotaru-expand-body      (only grid item, overflow:hidden)
+      //   .hotaru-expand-inner       (max-height animated container)
+      //     .hotaru-expand-body
       //       <div>CPU 型号: ...</div>
       //       <div>内存信息: ...</div>
       //       <div>交换分区: ...</div>
@@ -1646,7 +1689,7 @@
       body.className = 'hotaru-expand-body';
       /* Tags line — admin-defined classification metadata.
          Hidden when item.tags is missing/empty so empty rows
-         keep the same compact 4-line layout as before.
+         keep the same compact detail layout as before.
          Render pills directly (no "标签:" prefix text). */
       const tagsLine     = document.createElement('div');
       tagsLine.className = 'hotaru-tag-line';
@@ -1669,15 +1712,14 @@
       //  * Pristine rows (.is-pristine, agent has never said hello)
       //    refuse the click outright — there's nothing to put in the
       //    expand row anyway and CSS keeps it collapsed.
-      //  * Offline-with-history rows (.is-offline) still expand AND
-      //    still load tcping history; the chart will simply freeze
-      //    at the last sample until the agent reconnects, matching
-      //    Pulse's "freeze on disconnect, resume on reconnect" model.
+      //  * Offline-with-history rows (.is-offline) still expand and
+      //    show their frozen detail snapshot, preserving the existing
+      //    Pulse behavior.
       //  * Online rows expand + run the lazy chart init as before.
       row.addEventListener('click', () => {
         if (row.classList.contains('is-pristine')) return;
         const opening = !detail.classList.contains('is-open');
-        detail.classList.toggle('is-open');
+        setExpandOpen(detail, opening);
         if (opening) ensureTcpingChart(id, tcping);
       });
 
@@ -1791,7 +1833,7 @@
          lose its identity in the broadcast, and the row demoted
          from .is-offline to .is-pristine) get force-collapsed so
          the empty expand row doesn't linger in the DOM. */
-      if (isPristine) entry.detail.classList.remove('is-open');
+      if (isPristine) setExpandOpen(entry.detail, false);
 
       setStatusBar(r.status, isOffline);
 
@@ -1873,6 +1915,9 @@
       setText(r.memInfo,  '内存信息: ' + (item.memory_info || '–'));
       setText(r.swapInfo, '交换分区: ' + (item.swap_info   || '–'));
       setText(r.diskInfo, '硬盘信息: ' + (item.disk_info   || '–'));
+      if (entry.detail.classList.contains('is-open')) {
+        requestAnimationFrame(() => syncExpandHeight(entry.detail));
+      }
     }
 
     /* Wipe the diff state — call before painting a placeholder
@@ -2219,10 +2264,20 @@
       loadChartJs();
     });
 
+    let expandResizeRaf = 0;
+    window.addEventListener('resize', () => {
+      if (expandResizeRaf) cancelAnimationFrame(expandResizeRaf);
+      expandResizeRaf = requestAnimationFrame(() => {
+        expandResizeRaf = 0;
+        syncOpenExpandHeights();
+      });
+    });
+
     // Be a good citizen: stop the stream when the tab is fully closed.
     window.addEventListener('beforeunload', () => {
       try { if (evtSource) evtSource.close(); } catch (_) {}
       clearTimeout(watchdogId);
+      if (expandResizeRaf) cancelAnimationFrame(expandResizeRaf);
     });
   })();
 </script>

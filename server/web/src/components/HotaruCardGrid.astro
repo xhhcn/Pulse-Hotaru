@@ -53,8 +53,8 @@
 
     function levelOf(p) {
       const v = Number(p) || 0;
-      if (v >= 90) return 'bad';
-      if (v >= 70) return 'warn';
+      if (v > 90) return 'bad';
+      if (v > 70) return 'warn';
       return 'ok';
     }
 

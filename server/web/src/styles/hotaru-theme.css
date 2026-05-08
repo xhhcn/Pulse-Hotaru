@@ -37,16 +37,6 @@
      rgba(249, 249, 249, .8) }`. We keep the literal value — the
      row bg is hotaru's exact spec.                                */
   --hotaru-row-bg:      rgba(249, 249, 249, 0.8);
-  --hotaru-row-hover:   rgba(255, 255, 255, 0.95);
-  /* Semantic UI's `.ui.basic.table tbody tr { border-bottom: 1px
-     solid rgba(0, 0, 0, .1) }` is what gives hotaru its visible
-     row separator. Hotaru's `tr td { border: none !important }`
-     only nullifies td borders, so this 1px tr-level hairline
-     survives and renders between rows. We mirror it on td-bottom
-     (works the same in `border-collapse: separate` mode and is
-     more reliable across browsers).                               */
-  --hotaru-row-divider: rgba(0, 0, 0, 0.1);
-
   --hotaru-shadow:      5px 5px 25px 0 rgba(46, 61, 73, 0.2);
   --hotaru-shadow-sm:   0 2px 6px rgba(46, 61, 73, 0.08);
 
@@ -191,9 +181,6 @@ body.hotaru-theme {
      `.ui.table:first-child` zeroes only the top margin. The bottom
      margin remains `1em` before `UpdateTime.vue`. */
   margin: 0 0 1em 0;
-  /* Subtle layer promo — reduces occasional 1px thead/body shimmer when
-     rows first paint (harmless with hotaru's flat aesthetic).        */
-  backface-visibility: hidden;
 }
 
 /* ============================================================
@@ -288,22 +275,11 @@ body.hotaru-theme {
   visibility: visible;
 }
 
-/* First-paint stagger
+/* First-paint card arrival
    ----------------------------------------------------------------
-   Once the initial loader fades out and `.hotaru-app.is-ready`
-   reveals the page, the table rows and summary cards are
-   already in place — the cross-fade carries them in as a single
-   block. That looks fine but feels a touch flat. To give the
-   dashboard a little life on arrival, the first batch of rows
-   that the smart-diff renderer mounts is tagged
-   `.hotaru-row--fresh`; same for cards on `.hotaru-card--fresh`.
-   Each tagged element runs a single 240ms fade-up from
-   `translateY(4px)`, with a small per-index delay (capped at
-   ~6 items so a 30-server fleet never staggers visibly long).
-
-   Subsequent SSE pushes never add the class, so live updates
-   are instantaneous — the animation only celebrates the very
-   first render and then disappears from the runtime.
+   The table itself stays static like upstream Hotaru. Summary
+   cards still get Pulse's one-shot arrival class; they are not
+   part of upstream's table design and keep their existing motion.
 
    Both animations honour `prefers-reduced-motion: reduce`
    (defined in the block below) by skipping the keyframes and
@@ -311,10 +287,6 @@ body.hotaru-theme {
 @keyframes hotaru-row-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
-}
-.hotaru-table tbody tr.hotaru-row--fresh {
-  animation: hotaru-row-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: calc(var(--hotaru-stagger, 0) * 1ms);
 }
 .hotaru-cards-grid .hotaru-card--fresh {
   animation: hotaru-row-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -330,7 +302,6 @@ body.hotaru-theme {
     animation: none;
     opacity: 1;
   }
-  .hotaru-table tbody tr.hotaru-row--fresh,
   .hotaru-cards-grid .hotaru-card--fresh {
     animation: none !important;
   }
@@ -381,34 +352,25 @@ body.hotaru-theme {
 }
 
 .hotaru-table tbody tr.hotaru-row {
-  /* Row background sits on the td (not the tr) so we can clip it
-     with `background-clip: padding-box` and let the td's transparent
-     bottom border show the page colour through. That's how we get
-     a visible row-to-row gap WITHOUT widening thead↔first-row.    */
+  /* Hotaru's TableItem.vue sets the row background on tr.tableRow,
+     not on individual cells. Keep that placement so the row reads
+     as one continuous translucent strip.                         */
+  background-color: var(--hotaru-row-bg);
   vertical-align: middle;
 }
 
 .hotaru-table tbody tr.hotaru-row td {
   color: var(--hotaru-text);
   font-weight: bold !important;
-  background-color: var(--hotaru-row-bg);
+  background: transparent;
   /* Hotaru's `tr td { border: none !important }` — no borders on
-     any td. The visible row-to-row gap is contributed by the
-     EXPAND row's td padding, not by anything on this row.
-     Padding matches Semantic UI's `.78571429em` exact value.     */
-  border: none;
+     any td. Padding matches Semantic UI's `.78571429em` exact value. */
+  border: none !important;
   white-space: nowrap;
   padding: 0.78571429em 0.78571429em;
-  font-variant-numeric: tabular-nums;
   font-size: 1rem;
   font-style: normal;
   text-transform: none;
-  /* Smooth background fade on hover, matching the 0.1s timing
-     Semantic UI uses across .ui.button / .ui.label / .ui.input.
-     Without this, the row hover would snap from the translucent
-     base colour to its saturated hover variant, which looks
-     jumpy next to the soft fades elsewhere on the page.        */
-  transition: background-color 0.1s ease;
 }
 
 /* Network / traffic cells inherit the row's `font-size: 1rem` and
@@ -419,14 +381,13 @@ body.hotaru-theme {
 /* Pipe separator inherits the cell's bold + #616366 so it reads
    as one continuous string, identical to hotaru's plain " | "
    text concatenation. Hotaru renders network/traffic as a single
-   string `${rx} | ${tx}` — pipe surrounded by only a single normal
-   space (~0.25em). We use 0.1em side margin so the rendered total
-   spacing (margin + inherent space-glyph) is ≈ 0.3em, matching
-   hotaru's visual rhythm.                                        */
+   string `${rx} | ${tx}` — pipe surrounded by only normal text
+   spaces. The DOM already inserts those spaces, so the separator
+   itself must not add any extra margin.                           */
 .hotaru-table .hotaru-pipe {
   color: inherit;
   font-weight: inherit;
-  margin: 0 0.1em;
+  margin: 0;
 }
 
 @media (max-width: 1200px) {
@@ -471,7 +432,7 @@ body.hotaru-theme {
 @media (max-width: 910px)  { .hotaru-table th:nth-child(4),  .hotaru-table td:nth-child(4)  { display: none; } } /* location */
 @media (max-width: 720px)  { .hotaru-table th:nth-child(5),  .hotaru-table td:nth-child(5)  { display: none; } } /* uptime   */
 @media (max-width: 600px)  { .hotaru-table th:nth-child(7),  .hotaru-table td:nth-child(7)  { display: none; } } /* traffic  */
-/* ≤533 px tier — verbatim from hotaru's App.vue:
+/* ≤533 px tier — starts from hotaru's App.vue:
 
      #name, tr td:nth-child(2) {
        min-width: 20px;
@@ -484,14 +445,11 @@ body.hotaru-theme {
 
    Pulse's column numbering omits hotaru's `load` column (col 6 in
    upstream / never present in Pulse), so the disk column is at
-   nth-child(10) here vs (11) in hotaru. The cell-clamp values are
-   identical.
+   nth-child(10) here vs (11) in hotaru.
 
-   User preference override: upstream truncates the name with an
-   ellipsis at this tier, but this build keeps node names complete:
-   no ellipsis and no wrapping. Extra narrow tiers below progressively
-   remove lower-priority metric columns so the name can keep its
-   intrinsic width for as long as the viewport allows. */
+   Project-specific protection: keep long node names intact instead
+   of ellipsizing them, then add extra narrow tiers below that remove
+   lower-priority metric columns progressively. */
 @media (max-width: 533px) {
   .hotaru-table thead th,
   .hotaru-table tbody tr.hotaru-row td {
@@ -1046,7 +1004,7 @@ body.hotaru-theme {
 }
 
 /* ============================================================
-   Progress bars — 50×25 px chunky bar, full-bar text inside.
+   Progress bars — 50×25 px chunky bar, text inside the fill.
    Used for CPU / RAM / Disk AND for the Status column (always
    100% filled). Matches hotaru's "ui progress" bar dimensions.
    ============================================================ */
@@ -1068,6 +1026,12 @@ body.hotaru-theme {
   width: 0;
   height: 25px;
   background: var(--hotaru-status-ok);
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-style: normal;
+  line-height: 25px;
+  text-align: center;
+  white-space: nowrap;
   /* Match Semantic UI's `.ui.progress .bar` exactly:
        transition: width .1s ease, background-color .1s ease.
      Pulse used to run a slow 0.5s width / 0.3s background fade,
@@ -1076,17 +1040,6 @@ body.hotaru-theme {
      Hotaru's snappy 0.1s feels alive and matches the upstream. */
   transition: width 0.1s ease, background-color 0.1s ease;
   border-radius: 6px;
-}
-.hotaru-bar > span {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
-  line-height: 25px;
-  color: #ffffff;
-  z-index: 1;
 }
 @media (max-width: 768px) { .hotaru-bar { width: 40px; } }
 

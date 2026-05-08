@@ -174,7 +174,8 @@
       return m[2] === 'd' ? (m[1] + '天') : (m[1] + '小时');
     }
 
-    /* Progress bar widget — chunky 50×25 bar, percent text inside.
+    /* Progress bar widget — chunky 50×25 bar, percent text inside
+       the coloured fill, matching hotaru's .ui.progress > .bar.
        Returns refs so the row entry can mutate just data-level / fill
        width / label text on each update.                            */
     function buildBarEl() {
@@ -183,10 +184,9 @@
       wrap.dataset.level = 'ok';
       const fill = document.createElement('i');
       fill.style.width = '0%';
-      const lbl = document.createElement('span');
-      lbl.textContent = '0%';
-      wrap.append(fill, lbl);
-      return { wrap, fill, lbl };
+      fill.textContent = '0%';
+      wrap.append(fill);
+      return { wrap, fill, lbl: fill };
     }
     /* Three-state bar renderer:
 
@@ -240,10 +240,9 @@
       wrap.dataset.level = 'ok';
       const fill = document.createElement('i');
       fill.style.width = '100%';
-      const lbl = document.createElement('span');
-      lbl.textContent = '运行中';
-      wrap.append(fill, lbl);
-      return { wrap, fill, lbl };
+      fill.textContent = '运行中';
+      wrap.append(fill);
+      return { wrap, fill, lbl: fill };
     }
     function setStatusBar(refs, isOffline) {
       const lvl = isOffline ? 'bad' : 'ok';
@@ -2019,16 +2018,6 @@
       const seenIds = new Set();
       let prevNode = null;
 
-      /* First-paint stagger setup. Only the very first batch of
-         freshly-built rows gets the `.hotaru-row--fresh` class —
-         later SSE pushes that grow the fleet just snap their
-         new rows in place (no animation), which is what users
-         expect for incremental updates. The 50ms / 6-step cap
-         keeps the cascade to ~300ms tops, so even a 100-server
-         fleet finishes settling before the user can blink. */
-      const isFirstPaintStagger = firstRender;
-      let staggerIdx = 0;
-
       sorted.forEach((item, idx) => {
         const id = item.id || ('sys-' + idx);
         seenIds.add(id);
@@ -2038,15 +2027,6 @@
           entry = buildRowEntry(item, idx);
           rowMap.set(id, entry);
           updateRowEntry(entry, item);
-          if (isFirstPaintStagger) {
-            const stepIdx = Math.min(staggerIdx++, 6);
-            entry.row.style.setProperty('--hotaru-stagger', String(stepIdx * 50));
-            entry.row.classList.add('hotaru-row--fresh');
-            entry.row.addEventListener('animationend', () => {
-              entry.row.classList.remove('hotaru-row--fresh');
-              entry.row.style.removeProperty('--hotaru-stagger');
-            }, { once: true });
-          }
           // Insert immediately after prevNode (or at the head of
           // tbody if this is the first sorted item).
           const after = prevNode ? prevNode.nextSibling : tbody.firstChild;

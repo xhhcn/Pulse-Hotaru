@@ -721,7 +721,8 @@
         chart: null, target: null,
         /* Per-target cache of already-fetched samples. Keyed by
            target address, value is { points: [{x:Date, y:ms}],
-           range: {min, max} | null, sig: '<timestamp>' }. Lets
+           range: {min, max} | null, sig: '<timestamp>',
+           fetchedAt: epochMs }. Lets
            setTcpingActiveTarget() repaint instantly on tab
            switch-back without re-fetching, and lets
            refreshTcpingChart() use a per-target signature gate
@@ -1177,17 +1178,34 @@
 
     /* Refresh entry point. Decides whether the active target's
        cache is stale enough to warrant a network fetch, and if
-       so kicks off refreshTcpingChartInner. Three gates:
+       so kicks off refreshTcpingChartInner. Four gates:
 
        1. No config yet → nothing to refresh against.
        2. No active target → nothing to fetch (tabs not built).
        3. Per-target in-flight set already includes this target →
           let the existing fetch finish; don't queue a duplicate.
        4. Cached entry's recorded signature matches the latest
-          broadcast's timestamp for this target → skip the network.
+          broadcast's timestamp for this target AND the cache is still
+          fresh for the configured TCPing interval → skip the network.
+
+          Why the interval fallback exists: the backend's tcping_data
+          snapshot advances only on successful probes, while failed probes
+          are still written to history as null-latency packet-loss points.
+          If a target goes from healthy to failing, the latest-success
+          signature may stay unchanged even though history now contains new
+          loss samples. Refreshing an open chart once per configured interval
+          lets those loss samples appear without bringing back broad polling.
           When `force=true` (manual nudge from ensureTcpingChart's
           first-open path or from setTcpingActiveTarget on cache
           miss) we bypass the signature gate.                     */
+    function tcpingConfiguredRefreshMs() {
+      const raw = cachedTcpingConfig && Number(cachedTcpingConfig.interval_secs);
+      const seconds = Number.isFinite(raw) && raw > 0 ? raw : 60;
+      /* SSE snapshots arrive every ~3 s, so anything below 3 s would only
+         create repeated "stale" decisions between real broadcast ticks. */
+      return Math.max(3000, seconds * 1000);
+    }
+
     async function refreshTcpingChart(id, tcping, force) {
       if (!cachedTcpingConfig) return;
       const target = tcping.target;
@@ -1197,7 +1215,13 @@
       const item      = tcpingLatestItem(id);
       const targetSig = tcpingTargetSignature(item, target);
       const cached    = tcping._cache.get(target);
-      if (!force && cached && cached.sig === targetSig) return;
+      if (!force && cached && cached.sig === targetSig) {
+        const fetchedAt = Number(cached.fetchedAt || 0);
+        const freshEnough = Number.isFinite(fetchedAt)
+                            && fetchedAt > 0
+                            && (Date.now() - fetchedAt) < tcpingConfiguredRefreshMs();
+        if (freshEnough) return;
+      }
 
       tcping._inflight.add(target);
       try {
@@ -1272,12 +1296,73 @@
         points,
         range: (min !== null) ? { min, max } : null,
         sig,
+        fetchedAt: Date.now(),
       });
 
       if (tcping.target === target) {
         applyTcpingDataset(tcping, target);
         tcping.ts = Date.now();
       }
+    }
+
+    async function handleTcpingConfigUpdated() {
+      const cfg = await loadTcpingConfig(/*force=*/true);
+      if (!cfg || !Array.isArray(cfg.targets)) return;
+      const targets = cfg.targets.filter((t) => t && t.address);
+      const hasTargets = targets.length > 0;
+
+      rowMap.forEach((entry) => {
+        if (entry && entry.tcping && entry.tcping.wrap) {
+          entry.tcping.wrap.hidden = !hasTargets;
+        }
+      });
+
+      if (!hasTargets) {
+        rowMap.forEach((entry) => {
+          const tcping = entry && entry.tcping;
+          if (!tcping) return;
+          if (tcping.chart) {
+            try { tcping.chart.destroy(); } catch (_) {}
+            tcping.chart = null;
+          }
+          if (tcping._cache) tcping._cache.clear();
+          if (tcping.tabs) tcping.tabs.innerHTML = '';
+          if (tcping.stats) tcping.stats.hidden = true;
+          if (tcping.loading) tcping.loading.hidden = true;
+          if (tcping.empty) tcping.empty.hidden = true;
+          tcping.target = '';
+          tcping.initialized = false;
+        });
+        tcpingState.clear();
+        return;
+      }
+
+      loadChartJs();
+      rowMap.forEach((entry, id) => {
+        const tcping = entry && entry.tcping;
+        if (!tcping) return;
+        if (tcping.wrap) tcping.wrap.hidden = false;
+
+        if (!tcping.initialized || !tcpingState.has(id)) {
+          tcping.initialized = false;
+          const detailRow = entry && entry.detail;
+          if (detailRow && detailRow.classList.contains('is-open')) {
+            ensureTcpingChart(id, tcping);
+          }
+          return;
+        }
+
+        const previousTarget = tcping.target;
+        if (tcping._cache) tcping._cache.clear();
+        buildTcpingTabs(tcping, cfg);
+
+        const stillExists = targets.some((t) => t.address === previousTarget);
+        if (stillExists) {
+          setTcpingActiveTarget(tcping, previousTarget);
+        } else {
+          refreshTcpingChart(id, tcping, /*force=*/true);
+        }
+      });
     }
 
     /* Latest item for a given system, plucked from the most recent
@@ -2046,6 +2131,11 @@
       let payload = raw;
       if (typeof raw === 'string') {
         try { payload = JSON.parse(raw); } catch (_) { return; }
+      }
+      if (payload && payload.type === 'tcping_config_updated') {
+        lastEventAt = Date.now();
+        handleTcpingConfigUpdated();
+        return;
       }
       const list = Array.isArray(payload)
         ? payload

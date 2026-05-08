@@ -3974,6 +3974,8 @@ const customCodePlaceholder = [
     // Collect all target values (name and address pairs)
     const targetRows = targetsContainer?.querySelectorAll('.target-row') || [];
     const targets = [];
+    const seenTargetAddresses = new Set();
+    const messageEl = document.getElementById('tcping-config-message');
     
     for (const row of targetRows) {
       const nameInput = row.querySelector('.target-name-input');
@@ -3990,6 +3992,19 @@ const customCodePlaceholder = [
           targets.push({ name: address, address });
         }
       }
+    }
+
+    for (const target of targets) {
+      const key = target.address.toLowerCase();
+      if (seenTargetAddresses.has(key)) {
+        if (messageEl) {
+          messageEl.textContent = `Duplicate target address: ${target.address}`;
+          messageEl.className = 'text-sm text-red-500';
+          messageEl.classList.remove('hidden');
+        }
+        return;
+      }
+      seenTargetAddresses.add(key);
     }
     
     // Allow empty targets list (default state - tcping disabled)
@@ -4017,7 +4032,6 @@ const customCodePlaceholder = [
         // Close modal immediately on success
         closeTCPingConfigModal();
       } else {
-        const messageEl = document.getElementById('tcping-config-message');
         const error = await res.text();
         if (messageEl) {
           messageEl.textContent = `Failed to save: ${error}`;

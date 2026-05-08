@@ -1056,7 +1056,7 @@
         if (tcping._revealToken !== token) return;
         chartBox.classList.add('is-ready');
         if (wasFresh && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-          setTimeout(hideLoading, 140);
+          requestAnimationFrame(hideLoading);
         } else {
           hideLoading();
         }

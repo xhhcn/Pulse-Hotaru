@@ -734,6 +734,7 @@
            and refreshTcpingChartInner only paints when its
            captured target still matches the active one.        */
         _inflight: new Set(),
+        _revealToken: 0,
         initialized: false,
       };
     }
@@ -815,10 +816,9 @@
         if (tcping.chart) {
           requestAnimationFrame(() => { try { tcping.chart.resize(); } catch (_) {} });
         }
-        /* Chart canvas now has its first frame — peel off the
-           pulse-dots overlay. Subsequent re-renders won't bring
-           the spinner back; the chart paints in place.            */
-        if (tcping.loading) tcping.loading.hidden = true;
+        /* applyTcpingDataset() owns the final loading→chart handoff.
+           It keeps the dots visible until the canvas is actually
+           being revealed, avoiding a blank frame between the two. */
         if (detail) syncExpandHeight(detail);
       };
       if (inner && detail && !detail.classList.contains('is-open')) {
@@ -917,6 +917,7 @@
            first-paint smoothing.                              */
         const chartBox = tcping.canvas && tcping.canvas.parentElement;
         if (chartBox) chartBox.classList.remove('is-ready');
+        tcping._revealToken = (tcping._revealToken || 0) + 1;
         /* Clear stale numbers from the previous tab without
            collapsing the pill row — the chips stay visible
            in their loading skeleton state (breathing "···")
@@ -1039,6 +1040,37 @@
       });
     }
 
+    function revealTcpingChart(tcping, chartBox, wasFresh) {
+      if (!chartBox) {
+        if (tcping.loading) tcping.loading.hidden = true;
+        return;
+      }
+
+      const token = (tcping._revealToken || 0) + 1;
+      tcping._revealToken = token;
+      const hideLoading = () => {
+        if (tcping._revealToken !== token) return;
+        if (tcping.loading) tcping.loading.hidden = true;
+      };
+      const reveal = () => {
+        if (tcping._revealToken !== token) return;
+        chartBox.classList.add('is-ready');
+        if (wasFresh && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          setTimeout(hideLoading, 140);
+        } else {
+          hideLoading();
+        }
+      };
+
+      if (wasFresh) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(reveal);
+        });
+      } else {
+        reveal();
+      }
+    }
+
     /* Render one cached target's data into the chart as the only
        dataset. Active-target highlight (green stroke + soft fill)
        is baked into the dataset directly — no need for the
@@ -1061,6 +1093,7 @@
       updateTcpingStats(tcping, points);
 
       if (!hasAny) {
+        tcping._revealToken = (tcping._revealToken || 0) + 1;
         if (tcping.chart) { tcping.chart.destroy(); tcping.chart = null; }
         if (tcping.loading) tcping.loading.hidden = true;
         /* Chart was just destroyed — strip is-ready so the next
@@ -1113,8 +1146,7 @@
            timestamps without changing latency.                    */
         const cur = tcping.chart.data.datasets[0];
         if (cur && tcpingDatasetEqual(cur, dataset)) {
-          if (tcping.loading) tcping.loading.hidden = true;
-          if (chartBox) chartBox.classList.add('is-ready');
+          revealTcpingChart(tcping, chartBox, /*wasFresh=*/false);
           return;
         }
         tcping.chart.data.datasets = [dataset];
@@ -1129,7 +1161,6 @@
         delete x.max;
       }
       tcping.chart.update('none');
-      if (tcping.loading) tcping.loading.hidden = true;
 
       /* Smooth fade-in for the first commit. We chain two
          animation frames before adding `is-ready`:
@@ -1141,15 +1172,7 @@
                     GPU op, no layout cost).
          For subsequent updates (same chart, new dataset) we
          skip the rAF dance — the chart was already opacity:1.  */
-      if (chartBox) {
-        if (wasFresh) {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => chartBox.classList.add('is-ready'));
-          });
-        } else {
-          chartBox.classList.add('is-ready');
-        }
-      }
+      revealTcpingChart(tcping, chartBox, wasFresh);
     }
 
     /* Lookup helper: target address → display label from the

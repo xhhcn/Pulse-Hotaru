@@ -165,9 +165,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
        arrives, then fades out and reveals the content beneath.
        HotaruServerTable's render() / showError() both call
        window.__dismissHotaruLoader() to trigger the cross-fade.   -->
-  <div class="hotaru-initial-loader" id="hotaru-initial-loader" role="status" aria-label="Loading">
+  <div class="hotaru-initial-loader" id="hotaru-initial-loader" role="status" aria-label="加载中">
     <span class="hotaru-initial-loader__text"
-      >Loading<span class="hotaru-initial-loader__ellipsis" aria-hidden="true"
+      >加载中<span class="hotaru-initial-loader__ellipsis" aria-hidden="true"
         ><span>.</span><span>.</span><span>.</span></span
       ></span>
   </div>

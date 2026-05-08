@@ -700,10 +700,20 @@
 
       const empty = document.createElement('div');
       empty.className = 'hotaru-tcping__empty';
-      empty.textContent = '暂无 TCPing 数据';
+      empty.setAttribute('aria-label', '暂无 TCPing 数据');
+      empty.title = '暂无 TCPing 数据';
+      empty.innerHTML = `
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M3 3l18 18"></path>
+          <path d="M4 19h16"></path>
+          <path d="M5 16l4-4 3 3 5-6"></path>
+          <path d="M4 5v14"></path>
+        </svg>
+      `;
       empty.hidden = true;
+      chartBox.appendChild(empty);
 
-      wrap.append(head, chartBox, empty);
+      wrap.append(head, chartBox);
 
       return {
         id, wrap, tabs, canvas, empty, loading,
@@ -1237,8 +1247,8 @@
            records y=null; combined with `spanGaps: true` this
            draws a continuous line through single-sample dropouts
            but leaves a visible gap on prolonged outages.
-         * x is a Date object (date-fns adapter prefers Date over
-           numeric ms — fewer surprises in tick auto-skip).      */
+         * x is numeric epoch milliseconds, so Chart.js can skip
+           per-point Date object handling without losing samples. */
       const NOW    = Date.now();
       const CUTOFF = NOW - 24 * 60 * 60 * 1000;
       const points = [];
@@ -1247,14 +1257,13 @@
       for (const r of results) {
         if (!r) continue;
         if (r.target && r.target !== target) continue;
-        const tsDate = new Date(r.timestamp);
-        const tsMs   = tsDate.getTime();
+        const tsMs = Date.parse(r.timestamp);
         if (!Number.isFinite(tsMs) || tsMs < CUTOFF) continue;
         let yVal = null;
         if (r.latency != null && r.latency <= TCPING_LOSS_THRESHOLD_MS) {
           yVal = r.latency;
         }
-        points.push({ x: tsDate, y: yVal });
+        points.push({ x: tsMs, y: yVal });
         if (min === null || tsMs < min) min = tsMs;
         if (max === null || tsMs > max) max = tsMs;
       }
@@ -1334,6 +1343,8 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          parsing: false,
+          normalized: true,
           animation: { duration: 0 },
           interaction: { mode: 'nearest', axis: 'x', intersect: false },
           /* Soft layout padding lets the line breathe and avoids the
@@ -1537,6 +1548,7 @@
       //       <div>内存信息: ...</div>
       //       <div>交换分区: ...</div>
       //       <div>硬盘信息: ...</div>
+      //       .hotaru-tag-line      (optional admin tags)
       //       .hotaru-tcping         (chart, hidden until config probe)
       const detail = document.createElement('tr');
       detail.className = 'hotaru-expand';
@@ -1562,7 +1574,7 @@
       const swapInfo = document.createElement('div');
       const diskInfo = document.createElement('div');
       const tcping   = buildTcpingSection(id);
-      body.append(tagsLine, cpuInfo, memInfo, swapInfo, diskInfo, tcping.wrap);
+      body.append(cpuInfo, memInfo, swapInfo, diskInfo, tagsLine, tcping.wrap);
       inner.appendChild(body);
       dtd.appendChild(inner);
       detail.appendChild(dtd);
@@ -1971,9 +1983,15 @@
     }
 
     async function fetchOnce() {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 12_000);
       try {
         const { qs, headers } = authParts();
-        const res = await fetch(getApiBase() + '/api/metrics' + qs, { headers, cache: 'no-store' });
+        const res = await fetch(getApiBase() + '/api/metrics' + qs, {
+          headers,
+          cache: 'no-store',
+          signal: controller.signal,
+        });
         if (res.status === 401) {
           window.location.href = '/login?redirect=/';
           return false;
@@ -1987,6 +2005,8 @@
       } catch (_) {
         showError();
         return false;
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     }
 

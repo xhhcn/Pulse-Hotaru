@@ -143,8 +143,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
     -->
     <div id="login-redirect" class="hotaru-auth-redirect">
       <div class="hotaru-auth-redirect__inner">
-        <span class="hotaru-auth-redirect__spinner" aria-hidden="true"></span>
-        <p class="hotaru-auth-redirect__text">正在校验登录状态…</p>
+        <p class="hotaru-auth-redirect__text">
+          正在校验登录状态<span class="hotaru-auth-redirect__ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+        </p>
       </div>
     </div>
   </body>
@@ -165,26 +166,28 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   }
   .hotaru-auth-redirect__inner {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 0.8rem;
-  }
-  .hotaru-auth-redirect__spinner {
-    width: 28px;
-    height: 28px;
-    border: 3px solid rgba(0, 0, 0, 0.08);
-    border-top-color: #525252;
-    border-radius: 50%;
-    animation: hotaru-auth-spin 0.8s linear infinite;
+    justify-content: center;
   }
   .hotaru-auth-redirect__text {
     margin: 0;
-    color: var(--hotaru-muted);
-    font-size: 0.9rem;
+    color: #616366;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
   }
-  @keyframes hotaru-auth-spin {
-    to { transform: rotate(360deg); }
+  .hotaru-auth-redirect__ellipsis {
+    display: inline-block;
+    width: 1em;
+    text-align: left;
+    letter-spacing: 0.05em;
   }
+  .hotaru-auth-redirect__ellipsis > span {
+    opacity: 0;
+    animation: 1.4s steps(1, end) infinite;
+  }
+  .hotaru-auth-redirect__ellipsis > span:nth-child(1) { animation-name: hotaru-ellipsis-1; }
+  .hotaru-auth-redirect__ellipsis > span:nth-child(2) { animation-name: hotaru-ellipsis-2; }
+  .hotaru-auth-redirect__ellipsis > span:nth-child(3) { animation-name: hotaru-ellipsis-3; }
 </style>
 
 <script>

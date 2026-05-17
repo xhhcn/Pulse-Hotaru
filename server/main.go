@@ -2720,17 +2720,22 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 			successfulURL = url
 			break // Success, exit loop
 		}
+		// MEMORY-LEAK FIX: the original code only closed resp.Body when
+		// err == nil. The Go http.Client API permits err != nil while still
+		// returning a non-nil resp (e.g. an i/o timeout reached mid-stream,
+		// or a redirect chain that exceeded the limit). Leaking that body
+		// also leaks the underlying TCP connection: the keepalive Transport
+		// cannot return it to the pool until the body is closed, so every
+		// timeout adds one more permanently-held fd + tlsBufferedReader.
+		// Close unconditionally when resp is non-nil, regardless of err.
+		if resp != nil {
+			resp.Body.Close()
+		}
 		if err != nil {
 			// Only log if working URL failed (this is important to track)
 			if client.WorkingURL != "" && url == client.WorkingURL {
 				log.Printf("⚠️  Client %s: cached working URL (%s) failed: %v, trying alternatives...", client.ID, url, err)
 			}
-			// Don't log individual connection attempts - only log final failure
-		} else if resp != nil {
-			if resp.StatusCode != http.StatusOK {
-				// Don't log individual HTTP errors - only log final failure
-			}
-			resp.Body.Close()
 		}
 		resp = nil
 	}
@@ -3154,6 +3159,13 @@ func getCountryFromIP(ip string) string {
 			cancel() // ✅ Always cancel context immediately after request completes
 
 			if err != nil {
+				// MEMORY-LEAK FIX: even on error the http client may return
+				// a non-nil resp (e.g. response headers arrived but the body
+				// read timed out). Close it before deciding to retry so we
+				// never leak the body / underlying TCP connection.
+				if resp != nil {
+					resp.Body.Close()
+				}
 				// Network error - retry if not last attempt
 				if attempt < maxRetries-1 {
 					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Exponential backoff
@@ -3161,6 +3173,16 @@ func getCountryFromIP(ip string) string {
 				}
 				break // Try next service
 			}
+
+			// Defensive size cap on third-party IP-lookup responses.
+			// Healthy bodies are <1 KB; we allow 32 KB. Without this, a
+			// hijacked DNS / compromised upstream / misbehaving service
+			// could stream gigabytes back at us inside service.parser's
+			// json.NewDecoder, allocating proportionally on our heap.
+			resp.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.LimitReader(resp.Body, 32<<10), resp.Body}
 
 			// Handle rate limiting (429 Too Many Requests)
 			if resp.StatusCode == http.StatusTooManyRequests {
@@ -4434,9 +4456,10 @@ func init() {
 		defer ticker.Stop()
 		for {
 			<-ticker.C
+			now := time.Now()
+
 			// Cleanup expired tokens
 			authTokensMu.Lock()
-			now := time.Now()
 			for token, expiry := range authTokens {
 				if now.After(expiry) {
 					delete(authTokens, token)
@@ -4444,19 +4467,48 @@ func init() {
 			}
 			authTokensMu.Unlock()
 
-			// Cleanup old login attempts (older than 1 hour)
+			// Cleanup old login attempts.
+			//
+			// MEMORY-LEAK FIX: the previous condition required count == 0, which
+			// meant any IP that ever failed a single login attempt and then never
+			// came back left a permanent entry in the map. For an internet-facing
+			// Pulse server constantly probed by scanners/botnets, this map grew
+			// monotonically (hundreds of thousands of entries per week) and was
+			// the dominant cause of the gradual RSS growth → OOM crash pattern
+			// reported by operators after every `systemctl restart pulse-server`.
+			//
+			// New policy:
+			//   * Entry has not been touched in ≥ 24 hours → drop unconditionally,
+			//     even if it claims to be locked. A 24-hour-old lock cannot
+			//     legitimately still be active (max lockedUntil = lastAttempt + 15m).
+			//   * Otherwise, entry idle ≥ 1 hour AND any active lockout has expired
+			//     → drop. The 15-min reset window already zeroes count on the next
+			//     attempt; the entry carries no useful state.
+			//
+			// Together these guarantees keep the map bounded by "IPs that
+			// authenticated against this server in the last day" instead of
+			// "every IP that ever touched the login endpoint, for the lifetime
+			// of the process".
 			loginAttemptsMu.Lock()
 			for ip, attempt := range loginAttempts {
-				if time.Since(attempt.lastAttempt) > 1*time.Hour && attempt.count == 0 {
+				idle := now.Sub(attempt.lastAttempt)
+				if idle > 24*time.Hour {
+					delete(loginAttempts, ip)
+					continue
+				}
+				if idle > 1*time.Hour && !now.Before(attempt.lockedUntil) {
 					delete(loginAttempts, ip)
 				}
 			}
 			loginAttemptsMu.Unlock()
 
-			// Cleanup old verify attempts (older than 5 minutes)
+			// Cleanup old verify attempts (older than 5 minutes).
+			// Same defensive bound as loginAttempts: this map was already
+			// well-behaved (cleanup ignored `count`), but we use the same
+			// shared `now` for consistency.
 			verifyAttemptsMu.Lock()
 			for ip, attempt := range verifyAttempts {
-				if time.Since(attempt.lastAttempt) > 5*time.Minute {
+				if now.Sub(attempt.lastAttempt) > 5*time.Minute {
 					delete(verifyAttempts, ip)
 				}
 			}

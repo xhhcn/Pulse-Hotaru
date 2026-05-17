@@ -41,10 +41,20 @@
       el.textContent = '最后更新: ' + fmt(lastAt);
     }
     paint();
-    setInterval(paint, 1000);
-    window.addEventListener('pulse:metrics-tick', (e) => {
+    /* Track the interval id so we can clear it on `beforeunload`.
+       The interval is harmless during a normal tab lifetime (it just
+       repaints the same element once per second), but holding on to
+       the closure across `bfcache` restores or SPA-style navigations
+       keeps the element + fmt closure alive longer than necessary.   */
+    const tickId = setInterval(paint, 1000);
+    const onTick = (e) => {
       lastAt = (e && e.detail && e.detail.at) || Date.now();
       paint();
+    };
+    window.addEventListener('pulse:metrics-tick', onTick);
+    window.addEventListener('beforeunload', () => {
+      clearInterval(tickId);
+      window.removeEventListener('pulse:metrics-tick', onTick);
     });
   })();
 </script>

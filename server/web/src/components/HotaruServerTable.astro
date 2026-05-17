@@ -2045,10 +2045,34 @@
       });
 
       // Drop rows that disappeared from the payload.
+      //
+      // Memory cleanup is critical here. Each row entry carries a
+      // companion `tcping` object that is also tracked from a
+      // module-level Map (`tcpingState`) plus a Chart.js instance,
+      // a per-target sample cache (up to 24h of points per target),
+      // an in-flight target Set and a reveal token. If we only drop
+      // the DOM + rowMap reference, every Admin-side delete of a
+      // server (or any churn that pulls an id out of the broadcast
+      // and back in later under a fresh id) leaks the Chart, its
+      // canvas, internal animation handles, and the entire cache.
+      // On long-running public dashboards that's the dominant
+      // accumulation source — `broadcast()` also keeps iterating
+      // those orphaned entries on every SSE tick (~3 s), running
+      // querySelector lookups against ids whose DOM no longer
+      // exists.
       for (const [id, entry] of Array.from(rowMap)) {
         if (!seenIds.has(id)) {
           entry.row.remove();
           entry.detail.remove();
+          if (entry.tcping) {
+            if (entry.tcping.chart) {
+              try { entry.tcping.chart.destroy(); } catch (_) {}
+              entry.tcping.chart = null;
+            }
+            if (entry.tcping._cache) entry.tcping._cache.clear();
+            if (entry.tcping._inflight) entry.tcping._inflight.clear();
+          }
+          tcpingState.delete(id);
           rowMap.delete(id);
         }
       }
@@ -2277,10 +2301,24 @@
     });
 
     // Be a good citizen: stop the stream when the tab is fully closed.
+    // Also tear down every live Chart.js instance — `bfcache`-restored
+    // tabs and SPAs that swap this page out without a full reload won't
+    // call back into our row-removal cleanup path, so doing it here
+    // guarantees no 2D canvas context survives the unload.
     window.addEventListener('beforeunload', () => {
       try { if (evtSource) evtSource.close(); } catch (_) {}
       clearTimeout(watchdogId);
       if (expandResizeRaf) cancelAnimationFrame(expandResizeRaf);
+      tcpingState.forEach((tcping) => {
+        if (tcping && tcping.chart) {
+          try { tcping.chart.destroy(); } catch (_) {}
+          tcping.chart = null;
+        }
+        if (tcping && tcping._cache) tcping._cache.clear();
+        if (tcping && tcping._inflight) tcping._inflight.clear();
+      });
+      tcpingState.clear();
+      rowMap.clear();
     });
   })();
 </script>

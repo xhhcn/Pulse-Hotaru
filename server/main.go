@@ -391,13 +391,13 @@ func (b *SSEBroker) BroadcastByView(byView map[SSEView]string) {
 // sendWithDropOldest delivers event into ch without ever blocking the caller.
 //
 // Semantics:
-//   * If the buffer has room, the event is enqueued and we return.
-//   * If the buffer is full, the oldest queued event is discarded to make
+//   - If the buffer has room, the event is enqueued and we return.
+//   - If the buffer is full, the oldest queued event is discarded to make
 //     room for the new one. Because every state-carrying event carries the
 //     full latest state, losing an older queued event is semantically
 //     equivalent to never having sent it — the newer event fully supersedes
 //     it.
-//   * In the worst-case (full buffer + a concurrent sender raced us to both
+//   - In the worst-case (full buffer + a concurrent sender raced us to both
 //     slots) we fall through and drop the new event rather than spin.  The
 //     next broadcast (within 3 s) re-syncs the subscriber from fresh state.
 //
@@ -472,8 +472,8 @@ type ClientTCPingResult struct {
 
 // ClientPushResponse is returned to push-mode clients with updated TCPing config
 type ClientPushResponse struct {
-	TCPingTargets     []string `json:"tcping_targets"`
-	TCPingIntervalSecs int     `json:"tcping_interval_secs"`
+	TCPingTargets      []string `json:"tcping_targets"`
+	TCPingIntervalSecs int      `json:"tcping_interval_secs"`
 }
 
 type ClientRegistry struct {
@@ -631,7 +631,7 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		// NAT client, tries to poll, fails twice, and calls markSystemAsOffline.
 		// Resetting them on re-registration is always wrong: the client is still
 		// actively pushing; only UpdatePushState or explicit removal should change them.
-		pushMode   = existingClient.PushMode
+		pushMode = existingClient.PushMode
 		lastPushAt = existingClient.LastPushAt
 
 		// --- Secret: preserve to avoid a race window ---
@@ -659,23 +659,6 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	if url == "" && url6 == "" {
 		log.Printf("⚠️  Client %s registered but no valid URL (IPv4=%s, IPv6=%s) - client may be behind NAT", id, ip, ipv6)
 	}
-}
-
-// getServerIP gets the server's own IP address (non-loopback)
-func getServerIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:53")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-
-	// Safe type assertion to prevent panic
-	localAddr := conn.LocalAddr()
-	udpAddr, ok := localAddr.(*net.UDPAddr)
-	if !ok {
-		return ""
-	}
-	return udpAddr.IP.String()
 }
 
 // Get returns a DEFENSIVE VALUE COPY of the ClientInfo registered under id
@@ -778,13 +761,13 @@ func getSharedHTTPClient() *http.Client {
 			Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia ~300ms RTT)
 			Transport: &http.Transport{
 				DialContext:           dialer.DialContext, // Go's net.Dialer natively supports both IPv4 and IPv6
-				MaxIdleConns:          200,               // More connections for stability
-				MaxIdleConnsPerHost:   20,                // More per-host connections
-				IdleConnTimeout:       180 * time.Second, // Longer idle timeout for stable connection
-				TLSHandshakeTimeout:   10 * time.Second,  // Increased from 5s to 10s for slow TLS
-				ResponseHeaderTimeout: 10 * time.Second,  // Wait up to 10s for response headers
-				ExpectContinueTimeout: 5 * time.Second,   // Increased from 2s to 5s
-				DisableCompression:    false,             // Enable compression for efficiency
+				MaxIdleConns:          200,                // More connections for stability
+				MaxIdleConnsPerHost:   20,                 // More per-host connections
+				IdleConnTimeout:       180 * time.Second,  // Longer idle timeout for stable connection
+				TLSHandshakeTimeout:   10 * time.Second,   // Increased from 5s to 10s for slow TLS
+				ResponseHeaderTimeout: 10 * time.Second,   // Wait up to 10s for response headers
+				ExpectContinueTimeout: 5 * time.Second,    // Increased from 2s to 5s
+				DisableCompression:    false,              // Enable compression for efficiency
 			},
 		}
 	})
@@ -921,7 +904,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Write([]byte(config.CustomCSS))
 	})
-	
+
 	// Custom JS endpoint - returns user's custom JS
 	mux.HandleFunc("/api/custom/script.js", func(w http.ResponseWriter, r *http.Request) {
 		config, err := store.GetNavbarConfig()
@@ -934,7 +917,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Write([]byte(config.CustomJS))
 	})
-	
+
 	mux.HandleFunc("/api/navbar/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			handleGetNavbarConfig(store, w, r)
@@ -1044,19 +1027,19 @@ func main() {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"goroutines":         runtime.NumGoroutine(),
-			"cgo_calls":          runtime.NumCgoCall(),
-			"heap_alloc_bytes":   m.HeapAlloc,
-			"heap_inuse_bytes":   m.HeapInuse,
-			"heap_idle_bytes":    m.HeapIdle,
+			"goroutines":          runtime.NumGoroutine(),
+			"cgo_calls":           runtime.NumCgoCall(),
+			"heap_alloc_bytes":    m.HeapAlloc,
+			"heap_inuse_bytes":    m.HeapInuse,
+			"heap_idle_bytes":     m.HeapIdle,
 			"heap_released_bytes": m.HeapReleased,
-			"heap_objects":       m.HeapObjects,
-			"stack_inuse_bytes":  m.StackInuse,
-			"sys_bytes":          m.Sys,
-			"gc_num":             m.NumGC,
-			"gc_pause_total_ns":  m.PauseTotalNs,
-			"gc_last_pause_ns":   m.PauseNs[(m.NumGC+255)%256],
-			"next_gc_bytes":      m.NextGC,
+			"heap_objects":        m.HeapObjects,
+			"stack_inuse_bytes":   m.StackInuse,
+			"sys_bytes":           m.Sys,
+			"gc_num":              m.NumGC,
+			"gc_pause_total_ns":   m.PauseTotalNs,
+			"gc_last_pause_ns":    m.PauseNs[(m.NumGC+255)%256],
+			"next_gc_bytes":       m.NextGC,
 			"clients_in_registry": func() int {
 				if clientRegistry == nil {
 					return 0
@@ -1742,7 +1725,11 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		if existing != nil {
 			cpuModel = existing.CPUModel
 			memoryInfo = existing.MemoryInfo
-			swapInfo = existing.SwapInfo
+			// NOTE: existing.SwapInfo is intentionally NOT copied here
+			// because line 1783 below unconditionally overwrites it with
+			// `payload.SwapInfo` (the empty/"0 B / 0 B" sentinel that
+			// distinguishes "no swap" from "no data yet" is part of the
+			// payload contract). Reading it first would be dead work.
 			diskInfo = existing.DiskInfo
 			secret = existing.Secret
 			tags = existing.Tags
@@ -2024,9 +2011,9 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 	}
 	// CDN-friendly: ensure registration response is not cached
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":             "registered",
-		"id":                  payload.ID,
-		"tcping_targets":      tcpingTargets,
+		"message":              "registered",
+		"id":                   payload.ID,
+		"tcping_targets":       tcpingTargets,
 		"tcping_interval_secs": tcpingInterval,
 	})
 }
@@ -2145,21 +2132,23 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 
 	timeDisplay := formatUptime(payload.Uptime)
 
-	// Preserve server-side fields (order, name, tags, secret, tcping data)
-	order := 0
-	name := payload.Name
-	var tcpingData map[string]TCPingTargetData
-	var tags []string
+	// Preserve server-side fields (order, name, tags, secret, tcping data).
+	//
+	// `existing` is guaranteed non-nil at this point: handleClientPush
+	// returns 404 above (around the `store.Get(clientID)` call) when no
+	// system with this ID is registered. The previous version of this
+	// block had a defensive `if existing != nil` wrapper which staticcheck
+	// (correctly) flagged as dead code that confusingly implied the
+	// pointer might be nil after we'd already dereferenced it.
+	order := existing.Order
+	name := existing.Name // Always use admin-set name
+	tags := existing.Tags
 	dbSecret := existing.Secret
-	if existing != nil {
-		order = existing.Order
-		name = existing.Name // Always use admin-set name
-		tags = existing.Tags
-		if existing.TCPingData != nil {
-			tcpingData = make(map[string]TCPingTargetData, len(existing.TCPingData))
-			for k, v := range existing.TCPingData {
-				tcpingData[k] = v
-			}
+	var tcpingData map[string]TCPingTargetData
+	if existing.TCPingData != nil {
+		tcpingData = make(map[string]TCPingTargetData, len(existing.TCPingData))
+		for k, v := range existing.TCPingData {
+			tcpingData[k] = v
 		}
 	}
 
@@ -3657,7 +3646,7 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("failed to get navbar config: %v", err), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// SECURITY: Only return SharedSecret to authenticated admin users
 	// Unauthenticated users should never see the secret
 	if !isAuthenticated(r) {
@@ -3676,7 +3665,7 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, publicConfig)
 		return
 	}
-	
+
 	// Authenticated admin users can see the full config including SharedSecret
 	writeJSON(w, http.StatusOK, config)
 }
@@ -4259,26 +4248,26 @@ func startTCPingPolling(ctx context.Context, registry *ClientRegistry, store *St
 					continue
 				}
 
-			// Acquire the semaphore slot BEFORE spawning the goroutine so we
-			// never launch more than maxConcurrentTCPing workers at a time.
-			// Doing it inside the goroutine (the old pattern) would let a busy
-			// tick spawn N_clients × N_targets goroutines up front, all of
-			// them blocked on the channel send — the stack and scheduler
-			// overhead of hundreds of parked goroutines is exactly what the
-			// semaphore is supposed to prevent.
-			select {
-			case <-ctx.Done():
-				return
-			case tcpingSem <- struct{}{}:
-			}
+				// Acquire the semaphore slot BEFORE spawning the goroutine so we
+				// never launch more than maxConcurrentTCPing workers at a time.
+				// Doing it inside the goroutine (the old pattern) would let a busy
+				// tick spawn N_clients × N_targets goroutines up front, all of
+				// them blocked on the channel send — the stack and scheduler
+				// overhead of hundreds of parked goroutines is exactly what the
+				// semaphore is supposed to prevent.
+				select {
+				case <-ctx.Done():
+					return
+				case tcpingSem <- struct{}{}:
+				}
 
-			go func(clientID string, tgt TCPingTargetEntry) {
-				defer func() { <-tcpingSem }()
+				go func(clientID string, tgt TCPingTargetEntry) {
+					defer func() { <-tcpingSem }()
 
-				// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
-				// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
-				// which may have been updated by pollClient or isClientConnected
-				c := registry.Get(clientID)
+					// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
+					// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
+					// which may have been updated by pollClient or isClientConnected
+					c := registry.Get(clientID)
 					if c == nil || c.ID == "" || tgt.Address == "" {
 						return
 					}

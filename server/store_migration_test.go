@@ -17,7 +17,8 @@ import (
 // data when invoked locally.
 //
 // Run:
-//   PULSE_REAL_DB_FIXTURE=/path/to/metrics.db go test -run TestPruneAndCompactRealDB -v ./...
+//
+//	PULSE_REAL_DB_FIXTURE=/path/to/metrics.db go test -run TestPruneAndCompactRealDB -v ./...
 func TestPruneAndCompactRealDB(t *testing.T) {
 	src := os.Getenv("PULSE_REAL_DB_FIXTURE")
 	if src == "" {

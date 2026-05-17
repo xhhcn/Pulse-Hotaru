@@ -44,10 +44,10 @@ const (
 // unreferenced secondary indexes — and every fresh query had to mmap the
 // whole file regardless.
 var knownBuckets = map[string]struct{}{
-	bucketName:    {},
-	tcpingBucket:  {},
-	configBucket:  {},
-	authBucket:    {},
+	bucketName:   {},
+	tcpingBucket: {},
+	configBucket: {},
+	authBucket:   {},
 }
 
 // Store represents the persistent storage
@@ -573,9 +573,10 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 // results for a single client push in ONE bbolt write transaction.
 //
 // MEMORY/CPU FIX: previously, handleClientPush ran:
-//   1 × store.Upsert(metric)                  ← 1 fsync
-//   N × store.SaveTCPingResult(...)           ← N fsyncs (one per target)
-//   1 × store.Get(clientID) + store.Upsert(*m)← 1 more fsync (snapshot)
+//
+//	1 × store.Upsert(metric)                  ← 1 fsync
+//	N × store.SaveTCPingResult(...)           ← N fsyncs (one per target)
+//	1 × store.Get(clientID) + store.Upsert(*m)← 1 more fsync (snapshot)
 //
 // For a typical push of 5 tcping targets that was 7 separate fsync()
 // calls, each one taking 1–10 ms even on SSD. With 90 clients pushing

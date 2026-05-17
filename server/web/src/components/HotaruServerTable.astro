@@ -2179,10 +2179,11 @@
     const BACKOFF_MIN_MS  = 1_500;
     const BACKOFF_MAX_MS  = 30_000;
 
-    let evtSource   = null;
-    let backoffMs   = BACKOFF_MIN_MS;
-    let watchdogId  = null;
-    let lastEventAt = Date.now();
+    let evtSource     = null;
+    let backoffMs     = BACKOFF_MIN_MS;
+    let watchdogId    = null;
+    let reconnectId   = null;
+    let lastEventAt   = Date.now();
 
     function armWatchdog() {
       clearTimeout(watchdogId);
@@ -2250,9 +2251,17 @@
     }
 
     function scheduleReconnect() {
+      // Coalesce: if a reconnect is already queued, do not stack another
+      // (otherwise rapid onerror bursts during a flaky network would
+      // queue multiple connectSSE timers that all fire and create
+      // overlapping EventSource handles).
+      if (reconnectId) return;
       const wait = backoffMs;
       backoffMs  = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
-      setTimeout(connectSSE, wait);
+      reconnectId = setTimeout(() => {
+        reconnectId = null;
+        connectSSE();
+      }, wait);
     }
 
     // Initial paint via REST so the user sees data immediately, then
@@ -2308,6 +2317,10 @@
     window.addEventListener('beforeunload', () => {
       try { if (evtSource) evtSource.close(); } catch (_) {}
       clearTimeout(watchdogId);
+      // Also drop any queued reconnect timer so a bfcache-restored tab
+      // doesn't fire a stray `connectSSE()` against a torn-down page
+      // and silently claim a subscriber slot on the server.
+      if (reconnectId) { clearTimeout(reconnectId); reconnectId = null; }
       if (expandResizeRaf) cancelAnimationFrame(expandResizeRaf);
       tcpingState.forEach((tcping) => {
         if (tcping && tcping.chart) {

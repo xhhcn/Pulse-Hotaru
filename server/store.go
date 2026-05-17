@@ -760,7 +760,15 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 	var keysToDelete [][]byte
 
-	// First pass: collect keys to delete
+	// First pass: collect keys to delete.
+	//
+	// CORRECTNESS: bbolt key/value slices returned from ForEach are ONLY
+	// valid for the lifetime of the enclosing transaction. The underlying
+	// bytes point directly into the mmap'd file region and may be remapped
+	// or reused once the transaction closes. We must copy every key we
+	// want to act on later — otherwise the second-pass db.Update below
+	// reads bytes that bbolt is free to mutate, causing wrong-key deletes,
+	// silent data corruption, or SIGSEGV depending on timing.
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -774,7 +782,7 @@ func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 			}
 
 			if result.Target == target {
-				keysToDelete = append(keysToDelete, k)
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
 			}
 			return nil
 		})
@@ -808,7 +816,11 @@ func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 	var keysToDelete [][]byte
 
-	// First pass: collect keys to delete
+	// First pass: collect keys to delete.
+	//
+	// CORRECTNESS: see the same note in DeleteTCPingResultsByTarget — bbolt
+	// keys returned from ForEach are only valid for the View tx, so we
+	// must copy them before the second-pass Update reads them.
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -822,7 +834,7 @@ func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 			}
 
 			if result.ClientID == clientID {
-				keysToDelete = append(keysToDelete, k)
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
 			}
 			return nil
 		})
@@ -1064,10 +1076,21 @@ func (s *Store) VerifyPassword(password string) (bool, error) {
 		if bucket == nil {
 			return fmt.Errorf("auth bucket not found")
 		}
-		hashedPassword = bucket.Get([]byte(passwordKey))
-		if hashedPassword == nil {
+		raw := bucket.Get([]byte(passwordKey))
+		if raw == nil {
 			return fmt.Errorf("password not set")
 		}
+		// CORRECTNESS / SECURITY: bbolt's Get returns a slice that points
+		// directly into the mmap'd page; it is only valid for the lifetime
+		// of this View transaction. Once we return, bbolt is free to
+		// remap or overwrite that memory on the next write transaction.
+		// Reading the bytes after the txn closed (which is what the old
+		// code did when it called bcrypt.CompareHashAndPassword below)
+		// can silently load whatever the new page now contains —
+		// potentially making login succeed for the wrong password,
+		// fail for the right one, or panic on a freshly-unmapped page.
+		// Copy out the bytes while the txn is still open.
+		hashedPassword = append([]byte(nil), raw...)
 		return nil
 	})
 	if err != nil {

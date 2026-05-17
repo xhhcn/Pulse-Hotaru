@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1013,6 +1014,56 @@ func main() {
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Admin-only runtime introspection endpoint.
+	//
+	// Operators previously had no way to distinguish "RSS keeps growing
+	// because of a real Go heap leak" from "RSS keeps growing because the
+	// OS is filling page cache with bbolt mmap data" (the latter is normal
+	// and will plateau / be evicted under pressure). This endpoint exposes
+	// the actual Go runtime numbers — HeapAlloc, HeapInuse, NumGoroutine,
+	// GC pause history — so operators can answer that question in one
+	// curl call:
+	//
+	//   curl -H "Authorization: Bearer $TOKEN" http://host:8008/api/admin/runtime
+	//
+	// HeapAlloc / HeapInuse should plateau within a few minutes of warmup
+	// and oscillate ±10–20 MB around a baseline. NumGoroutine should be
+	// roughly proportional to active SSE subscribers + pull-mode clients
+	// and NOT trend upward over hours.
+	mux.HandleFunc("/api/admin/runtime", func(w http.ResponseWriter, r *http.Request) {
+		if !isAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"goroutines":         runtime.NumGoroutine(),
+			"cgo_calls":          runtime.NumCgoCall(),
+			"heap_alloc_bytes":   m.HeapAlloc,
+			"heap_inuse_bytes":   m.HeapInuse,
+			"heap_idle_bytes":    m.HeapIdle,
+			"heap_released_bytes": m.HeapReleased,
+			"heap_objects":       m.HeapObjects,
+			"stack_inuse_bytes":  m.StackInuse,
+			"sys_bytes":          m.Sys,
+			"gc_num":             m.NumGC,
+			"gc_pause_total_ns":  m.PauseTotalNs,
+			"gc_last_pause_ns":   m.PauseNs[(m.NumGC+255)%256],
+			"next_gc_bytes":      m.NextGC,
+			"clients_in_registry": func() int {
+				if clientRegistry == nil {
+					return 0
+				}
+				return len(clientRegistry.GetAll())
+			}(),
+		})
 	})
 
 	addr := ":" + portFromEnv()
@@ -2112,6 +2163,95 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		}
 	}
 
+	// PERFORMANCE / MEMORY FIX (formerly: N+1 fsyncs per push).
+	//
+	// We used to:
+	//   * Upsert the metric (1 fsync)
+	//   * SaveTCPingResult per target (N fsyncs)
+	//   * if any succeeded: Get + Upsert the metric again to merge
+	//     TCPingData (2 more disk ops, 1 more fsync)
+	//
+	// On a real deployment with 90 push-mode clients × ~5 tcping targets
+	// each every 3 s, that worked out to ~240 fsyncs / second — pinning
+	// one whole vCPU on kernel I/O wait. The dominant cause of "CPU keeps
+	// spiking and Memory keeps creeping up" symptoms in our v1.0.1 / v1.0.2
+	// field reports.
+	//
+	// Now: compose the final metric (including merged TCPingData) entirely
+	// in memory, sanitise the tcping results, and persist EVERYTHING in
+	// ONE bbolt write transaction (one fsync). Same latency budget for
+	// the client; roughly 8× less I/O for the server.
+
+	// Read tcping config once (used for filter + response echo).
+	tcpingConfig, configErr := store.GetTCPingConfig()
+	if configErr != nil || tcpingConfig == nil {
+		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
+	}
+
+	allowedTargets := make(map[string]struct{}, len(tcpingConfig.Targets))
+	for _, t := range tcpingConfig.Targets {
+		if t.Address != "" {
+			allowedTargets[t.Address] = struct{}{}
+		}
+	}
+	targetAllowed := func(name string) bool {
+		_, ok := allowedTargets[name]
+		return ok
+	}
+
+	// Sanity bound on MeasuredAt: accept anything within [now-10min, now+30s].
+	// Further in the past probably means the result was queued during a long
+	// offline period and would distort charts; further in the future means
+	// client clock skew. In either case we fall back to `now`.
+	nowUTC := time.Now().UTC()
+	const maxPast = 10 * time.Minute
+	const maxFuture = 30 * time.Second
+	sanitize := func(t time.Time) time.Time {
+		if t.IsZero() {
+			return nowUTC
+		}
+		if t.After(nowUTC.Add(maxFuture)) || nowUTC.Sub(t) > maxPast {
+			return nowUTC
+		}
+		return t.UTC()
+	}
+
+	// Filter / build the tcping result rows we're going to persist.
+	// Also merge any successful results into the metric's TCPingData
+	// snapshot so the single Upsert below carries the freshest data.
+	var batchedResults []TCPingResult
+	if len(payload.TCPingResults) > 0 {
+		batchedResults = make([]TCPingResult, 0, len(payload.TCPingResults))
+		for _, tr := range payload.TCPingResults {
+			if tr.Target == "" {
+				continue
+			}
+			// Deletion-race guard: silently drop measurements for targets
+			// the admin removed between client measurement and arrival.
+			if !targetAllowed(tr.Target) {
+				continue
+			}
+			var latencyPtr *float64
+			if tr.Success {
+				l := tr.Latency
+				latencyPtr = &l
+				if tcpingData == nil {
+					tcpingData = make(map[string]TCPingTargetData)
+				}
+				tcpingData[tr.Target] = TCPingTargetData{
+					Latency:   tr.Latency,
+					Timestamp: sanitize(tr.MeasuredAt),
+				}
+			}
+			batchedResults = append(batchedResults, TCPingResult{
+				ClientID:  clientID,
+				Target:    tr.Target,
+				Latency:   latencyPtr,
+				Timestamp: sanitize(tr.MeasuredAt),
+			})
+		}
+	}
+
 	metric := SystemMetric{
 		ID:                 clientID,
 		Name:               name,
@@ -2136,128 +2276,26 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		AgentVersion:       payload.AgentVersion,
 		Order:              order,
 		Alert:              false, // actively pushing = online
-		UpdatedAt:          time.Now().UTC(),
+		UpdatedAt:          nowUTC,
 		TCPingData:         tcpingData,
 		Tags:               tags,
 		Secret:             dbSecret,
 	}
 
-	if err := store.Upsert(metric); err != nil {
+	if err := store.SaveClientPushBatch(metric, batchedResults); err != nil {
 		http.Error(w, "failed to save metrics", http.StatusInternalServerError)
 		return
 	}
 
-	// NOTE: Do NOT broadcast immediately here.
+	// Invalidate the per-client tcping-history cache exactly once after the
+	// batch lands. Previously the cache lock was acquired once per result.
+	if len(batchedResults) > 0 {
+		invalidateTCPingCache(clientID)
+	}
+
+	// NOTE: We do NOT broadcast immediately here.
 	// The polling loop broadcasts every 3 s for all clients (including push-mode ones).
-	// Adding a second broadcast here causes the frontend to receive two rapid-fire
-	// metric_updated events per push cycle, resulting in double refreshes.
-	// The data is already saved to the DB above; the polling loop will pick it up
-	// within ≤3 s — identical latency to pull-mode clients.
-
-	// Process any TCPing results included in the push payload.
-	// Save all results to history first, then batch-update the TCPingData
-	// snapshot with a single Get+Upsert instead of one per successful result.
-	//
-	// Deletion-race guard: the admin may have just removed a target via
-	// POST /api/tcping/config. Because clients learn about the new config
-	// only on their NEXT push response (≤ 3 s later), a push that was
-	// already queued can still carry results for a target that no longer
-	// exists in the config. Before the guard was added those stray
-	// measurements would be written to history AFTER
-	// DeleteTCPingResultsByTarget ran, leaving a single "first point" on
-	// the chart that never went away. We fix this by filtering the
-	// incoming list against the current config — any target that is not
-	// configured right now is silently dropped.
-	// Read the current tcping config once: we use it both to filter
-	// incoming results (deletion-race guard, see below) and to echo it
-	// back to the client at the end of this handler. Reading it twice
-	// used to risk observing two slightly different snapshots if admin
-	// saved between the reads; one read closes that gap.
-	tcpingConfig, configErr := store.GetTCPingConfig()
-	if configErr != nil || tcpingConfig == nil {
-		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
-	}
-
-	if len(payload.TCPingResults) > 0 {
-		// Build an allowed-target set from the live config. If the config
-		// read failed outright above we still have an empty TCPingConfig,
-		// which here means "admin has configured no targets" — in that
-		// case nothing is allowed, and any queued pushes are dropped.
-		allowedTargets := make(map[string]struct{}, len(tcpingConfig.Targets))
-		for _, t := range tcpingConfig.Targets {
-			if t.Address != "" {
-				allowedTargets[t.Address] = struct{}{}
-			}
-		}
-		targetAllowed := func(name string) bool {
-			_, ok := allowedTargets[name]
-			return ok
-		}
-
-		now := time.Now().UTC()
-		hasSuccess := false
-		// Sanity bound on MeasuredAt: accept anything within [now-10min, now+30s].
-		// Further in the past probably means the result was queued during a long
-		// offline period and would distort charts; further in the future means
-		// client clock skew. In either case we fall back to `now`.
-		const maxPast = 10 * time.Minute
-		const maxFuture = 30 * time.Second
-		sanitize := func(t time.Time) time.Time {
-			if t.IsZero() {
-				return now
-			}
-			if t.After(now.Add(maxFuture)) || now.Sub(t) > maxPast {
-				return now
-			}
-			return t.UTC()
-		}
-		for _, tr := range payload.TCPingResults {
-			if tr.Target == "" {
-				continue
-			}
-			if !targetAllowed(tr.Target) {
-				// Target was removed from config between this client's
-				// measurement and the push arriving. Silently drop it so
-				// no stray history points can linger on admin-deleted
-				// targets.
-				continue
-			}
-			var latencyPtr *float64
-			if tr.Success {
-				l := tr.Latency
-				latencyPtr = &l
-				hasSuccess = true
-			}
-			result := TCPingResult{
-				ClientID:  clientID,
-				Target:    tr.Target,
-				Latency:   latencyPtr,
-				Timestamp: sanitize(tr.MeasuredAt),
-			}
-			if saveErr := store.SaveTCPingResult(result); saveErr == nil {
-				invalidateTCPingCache(clientID)
-			}
-		}
-		// Single Get+Upsert for all successful TCPing snapshots (reduces N DB reads
-		// and N DB writes to exactly 1+1, greatly reducing I/O for multi-target setups).
-		if hasSuccess {
-			if m, getErr := store.Get(clientID); getErr == nil && m != nil {
-				if m.TCPingData == nil {
-					m.TCPingData = make(map[string]TCPingTargetData)
-				}
-				for _, tr := range payload.TCPingResults {
-					if tr.Target == "" || !tr.Success || !targetAllowed(tr.Target) {
-						continue
-					}
-					m.TCPingData[tr.Target] = TCPingTargetData{
-						Latency:   tr.Latency,
-						Timestamp: sanitize(tr.MeasuredAt),
-					}
-				}
-				store.Upsert(*m) //nolint:errcheck
-			}
-		}
-	}
+	// Adding a second broadcast here would cause double refreshes on the frontend.
 
 	// Echo the tcping config we already loaded (see top of handler) so the
 	// client can schedule its next measurements. We deliberately reuse

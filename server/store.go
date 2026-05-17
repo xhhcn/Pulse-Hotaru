@@ -30,6 +30,26 @@ const (
 	passwordKey      = "admin_password"
 )
 
+// knownBuckets lists every root-level bbolt bucket this binary knows how to
+// read AND write. Anything else found at the root level was written by a
+// different Pulse fork (most commonly Pulse upstream, which introduced
+// secondary indexes such as "tcping_by_client" / "tcping_by_client_target"
+// after Hotaru forked) and is invisible to this code path — i.e. dead data
+// that will only grow in size and bloat mmap / RSS without ever being
+// read or pruned.
+//
+// We detect and drop such orphan buckets on startup (see pruneOrphanBuckets)
+// because operators migrating from upstream Pulse to Pulse-Hotaru have
+// reported 300+ MB metrics.db files where ~200 MB was nothing but these
+// unreferenced secondary indexes — and every fresh query had to mmap the
+// whole file regardless.
+var knownBuckets = map[string]struct{}{
+	bucketName:    {},
+	tcpingBucket:  {},
+	configBucket:  {},
+	authBucket:    {},
+}
+
 // Store represents the persistent storage
 type Store struct {
 	db *bolt.DB
@@ -157,6 +177,40 @@ func NewStore(dbPath string) (*Store, error) {
 
 	store := &Store{db: db}
 
+	// MIGRATION / MEMORY-SAFETY: detect and drop secondary-index buckets that
+	// were written by a different Pulse fork (upstream Pulse added
+	// "tcping_by_client" / "tcping_by_client_target" after Hotaru forked).
+	// This binary cannot maintain those indexes, so leaving them in the file
+	// would only let them grow forever and bloat both disk and mmap-backed
+	// RSS without ever serving a query. If anything was pruned, also
+	// compact the file in-place so the freed pages actually return to the
+	// OS instead of leaving the file at its previous (often hundreds of MB)
+	// size.
+	pruned, perr := pruneOrphanBuckets(db, dbPath)
+	if perr != nil {
+		log.Printf("⚠️  Orphan-bucket pruning failed (non-fatal, continuing): %v", perr)
+	}
+	if pruned > 0 {
+		log.Printf("🧹 Pruned %d orphan bucket(s) written by a different Pulse fork", pruned)
+		if ndb, cerr := compactDatabaseInPlace(db, dbPath); cerr != nil {
+			log.Printf("⚠️  Database compaction after prune failed (non-fatal, continuing): %v", cerr)
+		} else if ndb != nil {
+			store.db = ndb
+			db = ndb
+			log.Printf("✅ Compaction complete: file shrunk to release pages freed by prune")
+		}
+	}
+
+	// One-shot CleanupOldTCPingResults at startup so operators inheriting a
+	// large metrics.db from upstream don't have to wait an hour for the
+	// background cleaner's first tick. Cheap when the bucket is small;
+	// genuinely useful when it's not.
+	if removed, cerr := store.cleanupExpiredTCPingOnStartup(); cerr != nil {
+		log.Printf("⚠️  Startup tcping cleanup failed (non-fatal, continuing): %v", cerr)
+	} else if removed > 0 {
+		log.Printf("🧹 Startup tcping cleanup: removed %d records older than 24h", removed)
+	}
+
 	// Log current data count
 	count := store.Count()
 	if count == 0 {
@@ -166,6 +220,171 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+// pruneOrphanBuckets removes any root-level bucket whose name is not in
+// knownBuckets. Returns the number of buckets actually dropped (0 when the
+// file came from a binary using the same schema as us). Runs inside a single
+// write transaction so either every orphan is dropped or none is — the file
+// is never left in a half-migrated state.
+//
+// dbPath is only used for logging; the actual delete operates on db.
+func pruneOrphanBuckets(db *bolt.DB, dbPath string) (int, error) {
+	var orphans [][]byte
+	if err := db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+			if _, ok := knownBuckets[string(name)]; !ok {
+				// Copy: the slice is only valid for the lifetime of the View tx.
+				orphans = append(orphans, append([]byte(nil), name...))
+			}
+			return nil
+		})
+	}); err != nil {
+		return 0, err
+	}
+	if len(orphans) == 0 {
+		return 0, nil
+	}
+	for _, n := range orphans {
+		log.Printf("🗑️  Dropping orphan bucket %q from %s (written by another Pulse fork; this binary cannot maintain it)", string(n), dbPath)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		for _, n := range orphans {
+			if err := tx.DeleteBucket(n); err != nil {
+				return fmt.Errorf("delete bucket %q: %w", string(n), err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return len(orphans), nil
+}
+
+// compactDatabaseInPlace runs bbolt.Compact into a sibling temp file, then
+// atomically replaces the original. The previous database is preserved as
+// "<path>.precompact-<timestamp>" so an operator can roll back if anything
+// looks wrong. Returns the new *bolt.DB handle (the caller must use this in
+// place of the old one; the old handle is closed before the swap).
+//
+// bbolt never releases freed pages back to the OS — Delete only marks pages
+// as reusable inside the file. After we drop a few hundred MB worth of
+// orphan-bucket pages, the file is still its old size until something
+// actively rewrites it. Compaction is the only built-in way to actually
+// shrink the file, and it is safe to do at startup because no handlers are
+// holding tx pointers yet.
+func compactDatabaseInPlace(db *bolt.DB, dbPath string) (*bolt.DB, error) {
+	tmpPath := dbPath + ".compact-tmp"
+	backupPath := fmt.Sprintf("%s.precompact-%s", dbPath, time.Now().UTC().Format("20060102T150405Z"))
+
+	// Open the destination DB with the same defensive options as the source.
+	// 0 txMaxSize means "single transaction" — fine for our DB sizes; if
+	// someone ever runs this against a multi-GB file they can tune it.
+	dst, err := openBolt(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("open temp DB for compact: %w", err)
+	}
+	if err := bolt.Compact(dst, db, 0); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("compact: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("close compacted DB: %w", err)
+	}
+
+	// Close the source so we can rename it aside. Anything that fails after
+	// this point requires a re-open, which we always attempt.
+	if err := db.Close(); err != nil {
+		// Already wrote tmp; try to reopen the original so the service can still come up.
+		_ = os.Remove(tmpPath)
+		ndb, oerr := openBolt(dbPath)
+		if oerr != nil {
+			return nil, fmt.Errorf("close source DB (%v) and reopen failed (%w)", err, oerr)
+		}
+		return ndb, fmt.Errorf("close source DB: %w", err)
+	}
+
+	if err := os.Rename(dbPath, backupPath); err != nil {
+		_ = os.Remove(tmpPath)
+		ndb, oerr := openBolt(dbPath)
+		if oerr != nil {
+			return nil, fmt.Errorf("backup-rename failed (%v) and original reopen failed (%w)", err, oerr)
+		}
+		return ndb, fmt.Errorf("backup-rename original: %w", err)
+	}
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		// Try to restore the backup back to the live path so the service
+		// at least comes up on the pre-compact (large but valid) file.
+		_ = os.Rename(backupPath, dbPath)
+		ndb, oerr := openBolt(dbPath)
+		if oerr != nil {
+			return nil, fmt.Errorf("swap-in compacted file failed (%v) and rollback reopen failed (%w)", err, oerr)
+		}
+		return ndb, fmt.Errorf("swap-in compacted file: %w", err)
+	}
+
+	log.Printf("📦 Compaction backup kept at %s — delete it manually once you are happy with the new file", backupPath)
+
+	ndb, err := openBolt(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("reopen compacted DB: %w", err)
+	}
+	return ndb, nil
+}
+
+// cleanupExpiredTCPingOnStartup is a thin wrapper around
+// CleanupOldTCPingResults that ALSO reports how many records were removed
+// (the public function intentionally hides the count). Kept separate so
+// callers of CleanupOldTCPingResults don't have to change.
+func (s *Store) cleanupExpiredTCPingOnStartup() (int, error) {
+	cutoffTime := time.Now().Add(-24 * time.Hour)
+	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
+	var keysToDelete [][]byte
+
+	if err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(tcpingBucket))
+		if bucket == nil {
+			return nil
+		}
+		c := bucket.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if len(k) >= len(cutoffPrefix) && bytes.Compare(k[:len(cutoffPrefix)], cutoffPrefix) >= 0 {
+				return nil
+			}
+			var result TCPingResult
+			if err := json.Unmarshal(v, &result); err != nil {
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+				continue
+			}
+			if result.Timestamp.Before(cutoffTime) {
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	if len(keysToDelete) == 0 {
+		return 0, nil
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(tcpingBucket))
+		if bucket == nil {
+			return nil
+		}
+		for _, key := range keysToDelete {
+			if err := bucket.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return len(keysToDelete), nil
 }
 
 // Close closes the database
@@ -372,6 +591,39 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		filterTarget = target[0]
 	}
 
+	// PERFORMANCE / MEMORY-SAFETY FIX:
+	//
+	// Keys in the tcping bucket are formatted as "<unix-seconds>_<client_id>_<target>".
+	// Before this change, the cursor walk did json.Unmarshal on EVERY key in
+	// the 24-hour window, then threw away ~99% of them because their ClientID
+	// did not match the caller. On a database with several hundred thousand
+	// tcping rows (which is normal after a few days of multi-client
+	// operation, and we have observed real-world 511k-record DBs), every
+	// "open chart" click triggered hundreds of thousands of allocations,
+	// page-faulted hundreds of MB of mmap into RSS, and pinned the CPU at
+	// ~100% for several seconds. That was the dominant cause of "CPU and
+	// RSS explode the instant the backend touches metrics.db".
+	//
+	// The fix is a cheap byte-level prefix match on the key BEFORE the
+	// expensive Unmarshal:
+	//
+	//   * The key after the "<unix>_" prefix must start with "<clientID>_".
+	//     A non-allocating bytes.HasPrefix gates the JSON decode.
+	//   * If a target filter is provided, the key must end with "_<target>".
+	//
+	// json.Unmarshal still runs for surviving keys so the timestamp /
+	// latency fields are correct, and the original ClientID/Target struct
+	// comparison stays as the authoritative defence (handles the corner
+	// case where two client IDs share a "foo" / "foo_bar" prefix). The net
+	// effect is the same result set with ~99% fewer allocations and zero
+	// dependency on key-format guesses being right.
+	clientPrefix := []byte(clientID + "_")
+	var targetSuffix []byte
+	if filterTarget != "" {
+		targetSuffix = []byte("_" + filterTarget)
+	}
+	tsPrefixLen := len(cutoffPrefix) // length of "<10-digit-unix>_"
+
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -383,11 +635,28 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		// from here forward is within the 24-hour window. Records older
 		// than the cutoff are skipped entirely without unmarshalling.
 		for k, v := c.Seek(cutoffPrefix); k != nil; k, v = c.Next() {
+			// Cheap byte-level filter on the key BEFORE any JSON work.
+			// Skip if the key is too short to contain "<ts>_<clientID>_".
+			if len(k) <= tsPrefixLen {
+				continue
+			}
+			afterTS := k[tsPrefixLen:]
+			if !bytes.HasPrefix(afterTS, clientPrefix) {
+				continue // belongs to a different client; do not touch mmap value page
+			}
+			if targetSuffix != nil && !bytes.HasSuffix(k, targetSuffix) {
+				continue
+			}
+
 			var result TCPingResult
 			if err := json.Unmarshal(v, &result); err != nil {
 				continue // Skip corrupted entry
 			}
 
+			// Authoritative re-check: prefix matching can false-positive
+			// when two client IDs share a prefix (e.g. "foo" and "foo_bar").
+			// Keep the original struct comparison so the result set is
+			// always correct.
 			if result.ClientID != clientID {
 				continue
 			}

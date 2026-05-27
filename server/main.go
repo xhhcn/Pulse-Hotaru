@@ -122,8 +122,12 @@ type TCPingHistoryResponse struct {
 //
 // We cache the *already-encoded* JSON body, not the struct, so a cache hit
 // can short-circuit straight to a single ResponseWriter.Write of an
-// immutable byte slice. Re-encoding the same TCPingHistoryResponse on every
-// hit was measurable on busy deployments (every result row contains a
+// immutable byte slice. Entries are keyed by client+target, and we only cache
+// target-specific responses: the frontend's active-tab chart uses those, while
+// all-target legacy history responses can be much larger and should stream
+// without creating a second full JSON copy in memory. Re-encoding the same
+// TCPingHistoryResponse on every hit was measurable on busy deployments (every
+// result row contains a
 // pointer-to-float and a time.Time that goes through RFC3339 formatting),
 // and json.Encoder.Encode does not memoise. Trading a fixed-size []byte for
 // the struct also lets the entry be served read-locked without the encoder
@@ -131,22 +135,31 @@ type TCPingHistoryResponse struct {
 type tcpingCacheEntry struct {
 	JSON     []byte // marshaled body of TCPingHistoryResponse, ready to ship
 	CachedAt time.Time
+	Size     int
+}
+
+type tcpingCacheKey struct {
+	ClientID string
+	Target   string
 }
 
 var (
-	tcpingCache    = make(map[string]*tcpingCacheEntry)
-	tcpingCacheMu  sync.RWMutex
-	tcpingCacheTTL = 2 * time.Minute // Cache results for 2 minutes
+	tcpingCache           = make(map[tcpingCacheKey]*tcpingCacheEntry)
+	tcpingCacheMu         sync.RWMutex
+	tcpingCacheTTL        = 2 * time.Minute // Cache results for 2 minutes
+	tcpingCacheMaxEntries = 512
+	tcpingCacheMaxBytes   = 32 << 20 // 32 MiB hard cap for cached response bodies
+	tcpingCacheBytes      int
 )
 
 // Get the cached pre-encoded JSON body if present and not expired.
 // The returned slice is owned by the cache and MUST NOT be mutated by the
 // caller; the writer only reads from it.
-func getCachedTCPingResultsJSON(clientID string) ([]byte, bool) {
+func getCachedTCPingResultsJSON(clientID, target string) ([]byte, bool) {
 	tcpingCacheMu.RLock()
 	defer tcpingCacheMu.RUnlock()
 
-	entry, exists := tcpingCache[clientID]
+	entry, exists := tcpingCache[tcpingCacheKey{ClientID: clientID, Target: target}]
 	if !exists {
 		return nil, false
 	}
@@ -165,18 +178,70 @@ func getCachedTCPingResultsJSON(clientID string) ([]byte, bool) {
 // JSON value followed by a single trailing '\n'. That way cache-hit and
 // cache-miss responses are byte-identical on the wire, which simplifies
 // downstream tooling (e.g. ETag generation, log diffs, conformance tests).
-func cacheTCPingResults(clientID string, response TCPingHistoryResponse) {
+func cacheTCPingResults(clientID, target string, response TCPingHistoryResponse) {
+	if target == "" {
+		return
+	}
+
 	body, err := json.Marshal(response)
 	if err != nil {
 		return
 	}
 	body = append(body, '\n')
+	if len(body) > tcpingCacheMaxBytes {
+		// Preserve data completeness: over-budget responses are still sent to
+		// the caller by handleGetTCPingHistory; we only skip keeping a copy.
+		return
+	}
+
+	key := tcpingCacheKey{ClientID: clientID, Target: target}
 	tcpingCacheMu.Lock()
 	defer tcpingCacheMu.Unlock()
 
-	tcpingCache[clientID] = &tcpingCacheEntry{
+	tcpingCacheDeleteLocked(key)
+	tcpingCache[key] = &tcpingCacheEntry{
 		JSON:     body,
 		CachedAt: time.Now(),
+		Size:     len(body),
+	}
+	tcpingCacheBytes += len(body)
+	tcpingCacheEnforceBudgetLocked(time.Now())
+}
+
+func tcpingCacheDeleteLocked(key tcpingCacheKey) {
+	entry, ok := tcpingCache[key]
+	if !ok {
+		return
+	}
+	tcpingCacheBytes -= entry.Size
+	if tcpingCacheBytes < 0 {
+		tcpingCacheBytes = 0
+	}
+	delete(tcpingCache, key)
+}
+
+func tcpingCachePruneExpiredLocked(now time.Time) {
+	for key, entry := range tcpingCache {
+		if now.Sub(entry.CachedAt) > tcpingCacheTTL {
+			tcpingCacheDeleteLocked(key)
+		}
+	}
+}
+
+func tcpingCacheEnforceBudgetLocked(now time.Time) {
+	tcpingCachePruneExpiredLocked(now)
+	for (len(tcpingCache) > tcpingCacheMaxEntries || tcpingCacheBytes > tcpingCacheMaxBytes) && len(tcpingCache) > 0 {
+		var oldestKey tcpingCacheKey
+		var oldestAt time.Time
+		first := true
+		for key, entry := range tcpingCache {
+			if first || entry.CachedAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = entry.CachedAt
+				first = false
+			}
+		}
+		tcpingCacheDeleteLocked(oldestKey)
 	}
 }
 
@@ -220,7 +285,11 @@ func invalidateTCPingCache(clientID string) {
 	tcpingCacheMu.Lock()
 	defer tcpingCacheMu.Unlock()
 
-	delete(tcpingCache, clientID)
+	for key := range tcpingCache {
+		if key.ClientID == clientID {
+			tcpingCacheDeleteLocked(key)
+		}
+	}
 }
 
 // Clear all TCPing cache
@@ -230,7 +299,8 @@ func clearAllTCPingCache() {
 	defer tcpingCacheMu.Unlock()
 
 	// Clear the entire cache by creating a new map
-	tcpingCache = make(map[string]*tcpingCacheEntry)
+	tcpingCache = make(map[tcpingCacheKey]*tcpingCacheEntry)
+	tcpingCacheBytes = 0
 }
 
 // Cleanup expired cache entries periodically
@@ -245,12 +315,7 @@ func startTCPingCacheCleanup(ctx context.Context) {
 		case <-ticker.C:
 		}
 		tcpingCacheMu.Lock()
-		now := time.Now()
-		for clientID, entry := range tcpingCache {
-			if now.Sub(entry.CachedAt) > tcpingCacheTTL {
-				delete(tcpingCache, clientID)
-			}
-		}
+		tcpingCachePruneExpiredLocked(time.Now())
 		tcpingCacheMu.Unlock()
 	}
 }
@@ -3598,17 +3663,15 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 
 	var results []TCPingResult
 
-	// If no specific target is requested, try to get from cache first.
+	// Try to get the exact client+target history response from cache first.
 	// Cache stores the already-encoded JSON body, so a hit can be served
 	// without re-running json.Marshal — measurably reduces CPU under load.
-	if target == "" {
-		if body, found := getCachedTCPingResultsJSON(clientID); found {
-			writeCachedJSON(w, http.StatusOK, body)
-			return
-		}
+	if body, found := getCachedTCPingResultsJSON(clientID, target); found {
+		writeCachedJSON(w, http.StatusOK, body)
+		return
 	}
 
-	// Cache miss or specific target requested - query database
+	// Cache miss - query database
 	if target != "" {
 		results, err = store.GetTCPingResults(clientID, target)
 	} else {
@@ -3629,10 +3692,7 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 		Stats:   stats,
 	}
 
-	// Cache the response if we fetched all targets (no specific target filter)
-	if target == "" {
-		cacheTCPingResults(clientID, response)
-	}
+	cacheTCPingResults(clientID, target, response)
 
 	writeJSON(w, http.StatusOK, response)
 }

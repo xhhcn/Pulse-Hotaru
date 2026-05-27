@@ -498,22 +498,37 @@
         return Promise.resolve(true);
       }
       if (chartJsPromise) return chartJsPromise;
-      chartJsPromise = new Promise((resolve) => {
+      const promise = new Promise((resolve) => {
         function loadAdapter() {
           if (window._chartjsAdapterLoaded) {
             applyChartFontDefaults();
             resolve(true);
             return;
           }
-          const existing = document.querySelector('script[data-chartjs-adapter]');
+          let existing = document.querySelector('script[data-chartjs-adapter]');
           if (existing) {
-            existing.addEventListener('load',  () => {
+            if (existing.dataset.loaded === 'true') {
               window._chartjsAdapterLoaded = true;
               applyChartFontDefaults();
               resolve(true);
-            });
-            existing.addEventListener('error', () => resolve(false));
-            return;
+              return;
+            }
+            if (existing.dataset.failed === 'true') {
+              existing.remove();
+              existing = null;
+            } else {
+              existing.addEventListener('load',  () => {
+                existing.dataset.loaded = 'true';
+                window._chartjsAdapterLoaded = true;
+                applyChartFontDefaults();
+                resolve(true);
+              }, { once: true });
+              existing.addEventListener('error', () => {
+                existing.dataset.failed = 'true';
+                resolve(false);
+              }, { once: true });
+              return;
+            }
           }
           const a = document.createElement('script');
           a.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
@@ -521,27 +536,55 @@
           a.crossOrigin = 'anonymous';
           a.setAttribute('data-chartjs-adapter', 'true');
           a.onload  = () => {
+            a.dataset.loaded = 'true';
             window._chartjsAdapterLoaded = true;
             applyChartFontDefaults();
             resolve(true);
           };
-          a.onerror = () => resolve(false);
+          a.onerror = () => {
+            a.dataset.failed = 'true';
+            resolve(false);
+          };
           document.head.appendChild(a);
         }
         if (window.Chart) { loadAdapter(); return; }
-        const existing = document.querySelector('script[data-chartjs]');
+        let existing = document.querySelector('script[data-chartjs]');
         if (existing) {
-          existing.addEventListener('load',  loadAdapter);
-          existing.addEventListener('error', () => resolve(false));
-          return;
+          if (existing.dataset.loaded === 'true') {
+            if (window.Chart) {
+              loadAdapter();
+              return;
+            }
+            existing.remove();
+            existing = null;
+          }
+          if (existing && existing.dataset.failed === 'true') {
+            existing.remove();
+            existing = null;
+          }
+          if (existing) {
+            existing.addEventListener('load',  () => {
+              existing.dataset.loaded = 'true';
+              loadAdapter();
+            }, { once: true });
+            existing.addEventListener('error', () => {
+              existing.dataset.failed = 'true';
+              resolve(false);
+            }, { once: true });
+            return;
+          }
         }
         const s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
         s.async = true;
         s.crossOrigin = 'anonymous';
         s.setAttribute('data-chartjs', 'true');
-        s.onload = loadAdapter;
+        s.onload = () => {
+          s.dataset.loaded = 'true';
+          loadAdapter();
+        };
         s.onerror = () => {
+          s.dataset.failed = 'true';
           /* unpkg ships the file as `chart.umd.js` (no .min) — using
              the jsdelivr filename here returns 404 silently. */
           const fb = document.createElement('script');
@@ -549,11 +592,21 @@
           fb.async = true;
           fb.crossOrigin = 'anonymous';
           fb.setAttribute('data-chartjs', 'true');
-          fb.onload  = loadAdapter;
-          fb.onerror = () => resolve(false);
+          fb.onload  = () => {
+            fb.dataset.loaded = 'true';
+            loadAdapter();
+          };
+          fb.onerror = () => {
+            fb.dataset.failed = 'true';
+            resolve(false);
+          };
           document.head.appendChild(fb);
         };
         document.head.appendChild(s);
+      });
+      chartJsPromise = promise.then((ok) => {
+        if (!ok) chartJsPromise = null;
+        return ok;
       });
       return chartJsPromise;
     }
@@ -584,14 +637,9 @@
        &target=Y` and the server returns ONLY that target's samples —
        a fraction of the previous "all targets" payload. The active-tab
        single-line chart is the only thing on screen at any moment,
-       so this is the only data we ever need; the per-target client
-       cache (see `_cache` on the tcping entry) takes care of instant
-       repaints on tab switch-back without a fresh round trip.
-
-       Note: the server only caches the target="" (full snapshot)
-       response, so per-target requests always hit the DB. That's
-       OK because each request is small — typically <50 KB instead
-       of the N×50 KB an "all targets" snapshot was.                */
+       so this is the only data we ever need. The backend briefly
+       caches this exact client+target response, and `_cache` on the
+       tcping entry keeps tab switch-back instant in the browser.   */
     async function loadTcpingHistory(clientID, target) {
       try {
         const { url, headers } = tcpingApiUrl('/api/tcping/history', {
@@ -738,10 +786,11 @@
       };
     }
 
-    /* First-open path. Loads Chart.js if needed, probes the global
-       tcping config once, then fetches this row's history. After
-       the chart is live it installs into `tcpingState` for the
-       periodic refresher to pick up.                              */
+    /* First-open path. Starts Chart.js and the global config probe
+       together, then fetches the first target's history while the
+       expand animation is still running. The chart paint itself
+       still waits for the panel to settle so Chart.js measures the
+       real canvas size on its first layout pass.                  */
     async function ensureTcpingChart(id, tcping) {
       if (tcping.initialized) {
         /* Already running; just nudge a refresh in case a long time
@@ -758,7 +807,26 @@
       }
       tcping.initialized = true;
 
-      const ok = await loadChartJs();
+      const chartReady = loadChartJs();
+      const configReady = loadTcpingConfig();
+
+      const cfg = await configReady;
+      if (cfg == null) {
+        tcping.initialized = false;
+        if (tcping.loading) tcping.loading.hidden = true;
+        return;
+      }
+      if (!Array.isArray(cfg.targets) || cfg.targets.length === 0) {
+        const detail = tcping.wrap.closest('tr.hotaru-expand');
+        /* No targets configured for this deployment — collapse
+           the card so the expand row doesn't show a bare empty
+           rectangle forever.                                     */
+        tcping.wrap.hidden = true;
+        if (detail) syncExpandHeight(detail);
+        return;
+      }
+
+      const ok = await chartReady;
       if (!ok || !window.Chart) {
         /* Chart.js failed to load. Leave the empty card in place
            rather than yanking it out from under the user mid-
@@ -767,21 +835,13 @@
            they'd spin forever signaling work that will never
            finish; the bare card communicates "no chart" clearly
            enough on its own.                                      */
+        tcping.initialized = false;
         if (tcping.loading) tcping.loading.hidden = true;
         return;
       }
 
       const inner = tcping.wrap.closest('.hotaru-expand-inner');
       const detail = tcping.wrap.closest('tr.hotaru-expand');
-      const cfg = await loadTcpingConfig();
-      if (!cfg || !Array.isArray(cfg.targets) || cfg.targets.length === 0) {
-        /* No targets configured for this deployment — collapse
-           the card so the expand row doesn't show a bare empty
-           rectangle forever.                                     */
-        tcping.wrap.hidden = true;
-        if (detail) syncExpandHeight(detail);
-        return;
-      }
       /* Card was already visible from row build time; nothing to
          flip. Just populate it with tabs + chart.               */
       tcpingState.set(id, tcping);
@@ -792,6 +852,18 @@
          once the fetch resolves a few hundred ms later.       */
       setTcpingStatsLoading(tcping);
       if (detail) syncExpandHeight(detail);
+
+      const initialTarget = tcping.target;
+      let initialFetch = null;
+      if (initialTarget) {
+        const initialSig = tcpingTargetSignature(tcpingLatestItem(id), initialTarget);
+        tcping._inflight.add(initialTarget);
+        initialFetch = refreshTcpingChartInner(id, tcping, initialTarget, initialSig, {
+          paint: false,
+        }).finally(() => {
+          tcping._inflight.delete(initialTarget);
+        });
+      }
 
       /* The expand panel follows upstream Hotaru's max-height
          transition (cf. .hotaru-expand-inner in hotaru-theme.css).
@@ -811,7 +883,17 @@
             is still 0px tall (e.g. when the row was reopened
             before the previous collapse animation finished).      */
       const drawNow = async () => {
-        await refreshTcpingChart(id, tcping);
+        if (initialFetch && tcping.target === initialTarget) {
+          await initialFetch;
+          if (tcping.target === initialTarget && tcping._cache.has(initialTarget)) {
+            applyTcpingDataset(tcping, initialTarget);
+            tcping.ts = Date.now();
+          } else {
+            await refreshTcpingChart(id, tcping);
+          }
+        } else {
+          await refreshTcpingChart(id, tcping);
+        }
         if (tcping.chart) {
           requestAnimationFrame(() => { try { tcping.chart.resize(); } catch (_) {} });
         }
@@ -1272,7 +1354,8 @@
        instant repaint) but we don't shove its data onto the
        canvas, which would visibly clobber whatever target is
        currently selected.                                        */
-    async function refreshTcpingChartInner(id, tcping, target, sig) {
+    async function refreshTcpingChartInner(id, tcping, target, sig, options) {
+      const shouldPaint = !(options && options.paint === false);
       const resp = await loadTcpingHistory(id, target);
       if (!resp) {
         /* Network or 4xx/5xx. If this fetch was the one keeping the
@@ -1282,7 +1365,7 @@
            Same logic for the stat pills: collapse them so the user
            doesn't see chips breathing forever next to a dead
            chart card.                                              */
-        if (tcping.target === target && !tcping.chart) {
+        if (shouldPaint && tcping.target === target && !tcping.chart) {
           if (tcping.loading) tcping.loading.hidden = true;
           if (tcping.stats)   tcping.stats.hidden   = true;
         }
@@ -1290,16 +1373,17 @@
       }
       const results = Array.isArray(resp) ? resp : (resp.results || []);
 
-      /* 24-hour rolling window + loss handling:
-         * Drop samples older than now-24h.
+      /* Server-authoritative 24-hour window + loss handling:
+         * The `/api/tcping/history` handler already returns the full
+           server-side 24h window. Do not clip again with the browser
+           clock here: a viewer whose local clock is fast would otherwise
+           lose valid points near the left edge of the 24h range.
          * latency null/undefined or > TCPING_LOSS_THRESHOLD_MS
            records y=null; combined with `spanGaps: true` this
            draws a continuous line through single-sample dropouts
            but leaves a visible gap on prolonged outages.
          * x is numeric epoch milliseconds, so Chart.js can skip
            per-point Date object handling without losing samples. */
-      const NOW    = Date.now();
-      const CUTOFF = NOW - 24 * 60 * 60 * 1000;
       const points = [];
       let min = null;
       let max = null;
@@ -1307,7 +1391,7 @@
         if (!r) continue;
         if (r.target && r.target !== target) continue;
         const tsMs = Date.parse(r.timestamp);
-        if (!Number.isFinite(tsMs) || tsMs < CUTOFF) continue;
+        if (!Number.isFinite(tsMs)) continue;
         let yVal = null;
         if (r.latency != null && r.latency <= TCPING_LOSS_THRESHOLD_MS) {
           yVal = r.latency;
@@ -1324,7 +1408,7 @@
         fetchedAt: Date.now(),
       });
 
-      if (tcping.target === target) {
+      if (shouldPaint && tcping.target === target) {
         applyTcpingDataset(tcping, target);
         tcping.ts = Date.now();
       }

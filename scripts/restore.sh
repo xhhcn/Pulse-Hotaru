@@ -47,6 +47,19 @@ usage() {
   exit 1
 }
 
+detect_docker_data_dir() {
+  local cid source
+  while IFS= read -r cid; do
+    [[ -z "$cid" ]] && continue
+    source="$(docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+    if [[ -n "$source" ]]; then
+      printf '%s\n' "$source"
+      return 0
+    fi
+  done < <(docker compose ps -q 2>/dev/null || true)
+  return 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)         MODE="$2"; shift 2 ;;
@@ -122,36 +135,43 @@ case "$MODE" in
       exit 5
     fi
     if [[ -z "$DATA_DIR" ]]; then
-      # Resolve the host-side data dir from the first bind mount that
-      # targets /app/data. Supports both standard docker-compose forms:
+      # Prefer Docker's resolved mount source. This works for both bind
+      # mounts and named volumes, because `docker inspect` exposes the
+      # concrete host path backing /app/data.
+      if ! DATA_DIR="$(detect_docker_data_dir)"; then
+        # Fall back to parsing the compose file before the container has
+        # been created. This path supports bind mounts only; named volumes
+        # need an existing container so Docker can tell us the real path.
+        # Supports both standard docker-compose forms:
       #   volumes:                        (block form)
       #     - ./datatz:/app/data
       #   volumes: ["./datatz:/app/data"] (flow form)
       #   volumes: [./datatz:/app/data]   (unquoted flow form)
       # As well as absolute host paths.
-      DATA_DIR="$(awk '
-        function extract(line,    h) {
-          if (match(line, /[^[:space:]"'"'"',[]+:\/app\/data([:"'"'"',\]]|$)/)) {
-            h=substr(line, RSTART, RLENGTH)
-            sub(/:\/app\/data.*$/, "", h)
-            print h; return 1
+        DATA_DIR="$(awk '
+          function extract(line,    h) {
+            if (match(line, /[^[:space:]"'"'"',[]+:\/app\/data([:"'"'"',\]]|$)/)) {
+              h=substr(line, RSTART, RLENGTH)
+              sub(/:\/app\/data.*$/, "", h)
+              print h; return 1
+            }
+            return 0
           }
-          return 0
-        }
-        /volumes:/ {
-          rest=$0
-          sub(/^.*volumes:/, "", rest)
-          if (rest ~ /\[/) {
-            if (extract(rest)) exit
-            next
+          /volumes:/ {
+            rest=$0
+            sub(/^.*volumes:/, "", rest)
+            if (rest ~ /\[/) {
+              if (extract(rest)) exit
+              next
+            }
+            in_v=1; next
           }
-          in_v=1; next
-        }
-        in_v && /^[[:space:]]*-[[:space:]]/ {
-          if (extract($0)) exit
-        }
-        in_v && /^[^[:space:]]/ {in_v=0}
-      ' "$compose_file")"
+          in_v && /^[[:space:]]*-[[:space:]]/ {
+            if (extract($0)) exit
+          }
+          in_v && /^[^[:space:]]/ {in_v=0}
+        ' "$compose_file")"
+      fi
       if [[ -z "$DATA_DIR" ]]; then
         echo "error: could not auto-detect host data directory; pass --data-dir" >&2
         exit 5

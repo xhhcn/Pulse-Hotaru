@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -29,26 +30,6 @@ const (
 	authBucket       = "auth"
 	passwordKey      = "admin_password"
 )
-
-// knownBuckets lists every root-level bbolt bucket this binary knows how to
-// read AND write. Anything else found at the root level was written by a
-// different Pulse fork (most commonly Pulse upstream, which introduced
-// secondary indexes such as "tcping_by_client" / "tcping_by_client_target"
-// after Hotaru forked) and is invisible to this code path — i.e. dead data
-// that will only grow in size and bloat mmap / RSS without ever being
-// read or pruned.
-//
-// We detect and drop such orphan buckets on startup (see pruneOrphanBuckets)
-// because operators migrating from upstream Pulse to Pulse-Hotaru have
-// reported 300+ MB metrics.db files where ~200 MB was nothing but these
-// unreferenced secondary indexes — and every fresh query had to mmap the
-// whole file regardless.
-var knownBuckets = map[string]struct{}{
-	bucketName:   {},
-	tcpingBucket: {},
-	configBucket: {},
-	authBucket:   {},
-}
 
 // Store represents the persistent storage
 type Store struct {
@@ -177,38 +158,49 @@ func NewStore(dbPath string) (*Store, error) {
 
 	store := &Store{db: db}
 
-	// MIGRATION / MEMORY-SAFETY: detect and drop secondary-index buckets that
-	// were written by a different Pulse fork (upstream Pulse added
-	// "tcping_by_client" / "tcping_by_client_target" after Hotaru forked).
-	// This binary cannot maintain those indexes, so leaving them in the file
-	// would only let them grow forever and bloat both disk and mmap-backed
-	// RSS without ever serving a query. If anything was pruned, also
-	// compact the file in-place so the freed pages actually return to the
-	// OS instead of leaving the file at its previous (often hundreds of MB)
-	// size.
-	pruned, perr := pruneOrphanBuckets(db, dbPath)
-	if perr != nil {
-		log.Printf("⚠️  Orphan-bucket pruning failed (non-fatal, continuing): %v", perr)
-	}
-	if pruned > 0 {
-		log.Printf("🧹 Pruned %d orphan bucket(s) written by a different Pulse fork", pruned)
-		if ndb, cerr := compactDatabaseInPlace(db, dbPath); cerr != nil {
-			log.Printf("⚠️  Database compaction after prune failed (non-fatal, continuing): %v", cerr)
-		} else if ndb != nil {
-			store.db = ndb
-			db = ndb
-			log.Printf("✅ Compaction complete: file shrunk to release pages freed by prune")
-		}
+	// One-shot cleanup of orphan buckets left over from older code paths
+	// (a v1 secondary-index experiment that was rolled back to the cursor-seek
+	// design). The current binary never reads or writes these buckets, but
+	// existing on-disk files can carry tens of megabytes of frozen index
+	// pages from the previous code version. Dropping them frees the pages
+	// to the freelist so the subsequent vacuum can reclaim them.
+	if dropped, err := store.dropOrphanBuckets(); err != nil {
+		log.Printf("⚠️  orphan-bucket cleanup failed (non-fatal): %v", err)
+	} else if len(dropped) > 0 {
+		log.Printf("🧹 Dropped orphan buckets/keys from previous versions: %s", strings.Join(dropped, ", "))
 	}
 
-	// One-shot CleanupOldTCPingResults at startup so operators inheriting a
-	// large metrics.db from upstream don't have to wait an hour for the
-	// background cleaner's first tick. Cheap when the bucket is small;
-	// genuinely useful when it's not.
-	if removed, cerr := store.cleanupExpiredTCPingOnStartup(); cerr != nil {
-		log.Printf("⚠️  Startup tcping cleanup failed (non-fatal, continuing): %v", cerr)
+	if removed, err := store.cleanupOldTCPingResults(); err != nil {
+		log.Printf("⚠️  startup tcping cleanup failed (non-fatal): %v", err)
 	} else if removed > 0 {
 		log.Printf("🧹 Startup tcping cleanup: removed %d records older than 24h", removed)
+	}
+
+	// Online compaction. bbolt is append-only: when records are deleted the
+	// pages go on the freelist but the file never shrinks on its own. On
+	// long-running deployments with churny workloads (24h tcping window),
+	// the file slowly accumulates fragmented free space and can grow to many
+	// times the live-data size. Because bbolt mmaps the whole file into the
+	// process address space, every bloat byte eventually becomes RSS as
+	// cleanup scans and history queries touch the mapped pages — which is
+	// what historically presented as "memory keeps growing after
+	// systemctl restart until the box OOMs". Reclaiming the freelist on
+	// startup keeps RSS bounded to the live data size + a small overhead.
+	if newPath, before, after, err := store.maybeCompact(dbPath); err != nil {
+		// Fatal sentinel: vacuum had to close the handle and couldn't reopen.
+		// Continuing would crash on the next db.View, so abort startup cleanly
+		// and let systemd restart us — the on-disk file is intact, just the
+		// in-process handle is gone.
+		if errors.Is(err, errCompactLeftStoreClosed) {
+			return nil, fmt.Errorf("bbolt vacuum left store unusable, aborting startup: %w", err)
+		}
+		log.Printf("⚠️  bbolt vacuum failed (non-fatal, original DB preserved): %v", err)
+	} else if after > 0 {
+		log.Printf("🧯 bbolt vacuum: %.1f MB → %.1f MB (saved %.1f MB)",
+			float64(before)/1024/1024,
+			float64(after)/1024/1024,
+			float64(before-after)/1024/1024)
+		_ = newPath // already swapped in
 	}
 
 	// Log current data count
@@ -222,169 +214,274 @@ func NewStore(dbPath string) (*Store, error) {
 	return store, nil
 }
 
-// pruneOrphanBuckets removes any root-level bucket whose name is not in
-// knownBuckets. Returns the number of buckets actually dropped (0 when the
-// file came from a binary using the same schema as us). Runs inside a single
-// write transaction so either every orphan is dropped or none is — the file
-// is never left in a half-migrated state.
+// dropOrphanBuckets removes top-level buckets and config keys that the
+// current code never touches. They were created by an earlier secondary-index
+// experiment (see git history of the cursor-seek refactor) that was reverted
+// in favour of timestamp-prefixed primary keys. The dropped pages return to
+// the freelist and are reclaimed by maybeCompact below.
 //
-// dbPath is only used for logging; the actual delete operates on db.
-func pruneOrphanBuckets(db *bolt.DB, dbPath string) (int, error) {
-	var orphans [][]byte
-	if err := db.View(func(tx *bolt.Tx) error {
-		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
-			if _, ok := knownBuckets[string(name)]; !ok {
-				// Copy: the slice is only valid for the lifetime of the View tx.
-				orphans = append(orphans, append([]byte(nil), name...))
+// The list is intentionally explicit (rather than "delete anything not in a
+// known set") so that a future migration adding a new bucket cannot
+// accidentally wipe data on rollback.
+func (s *Store) dropOrphanBuckets() ([]string, error) {
+	knownOrphanBuckets := []string{
+		"tcping_by_client",
+		"tcping_by_client_target",
+	}
+	knownOrphanConfigKeys := []string{
+		"tcping_index_v1_ready",
+	}
+
+	var dropped []string
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		for _, name := range knownOrphanBuckets {
+			if tx.Bucket([]byte(name)) != nil {
+				if err := tx.DeleteBucket([]byte(name)); err != nil {
+					return fmt.Errorf("drop bucket %s: %w", name, err)
+				}
+				dropped = append(dropped, "bucket:"+name)
 			}
-			return nil
-		})
-	}); err != nil {
-		return 0, err
-	}
-	if len(orphans) == 0 {
-		return 0, nil
-	}
-	for _, n := range orphans {
-		log.Printf("🗑️  Dropping orphan bucket %q from %s (written by another Pulse fork; this binary cannot maintain it)", string(n), dbPath)
-	}
-	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, n := range orphans {
-			if err := tx.DeleteBucket(n); err != nil {
-				return fmt.Errorf("delete bucket %q: %w", string(n), err)
+		}
+		if cb := tx.Bucket([]byte(configBucket)); cb != nil {
+			for _, k := range knownOrphanConfigKeys {
+				if cb.Get([]byte(k)) != nil {
+					if err := cb.Delete([]byte(k)); err != nil {
+						return fmt.Errorf("delete config key %s: %w", k, err)
+					}
+					dropped = append(dropped, "config:"+k)
+				}
 			}
 		}
 		return nil
-	}); err != nil {
-		return 0, err
-	}
-	return len(orphans), nil
+	})
+	return dropped, err
 }
 
-// compactDatabaseInPlace runs bbolt.Compact into a sibling temp file, then
-// atomically replaces the original. The previous database is preserved as
-// "<path>.precompact-<timestamp>" so an operator can roll back if anything
-// looks wrong. Returns the new *bolt.DB handle (the caller must use this in
-// place of the old one; the old handle is closed before the swap).
-//
-// bbolt never releases freed pages back to the OS — Delete only marks pages
-// as reusable inside the file. After we drop a few hundred MB worth of
-// orphan-bucket pages, the file is still its old size until something
-// actively rewrites it. Compaction is the only built-in way to actually
-// shrink the file, and it is safe to do at startup because no handlers are
-// holding tx pointers yet.
-func compactDatabaseInPlace(db *bolt.DB, dbPath string) (*bolt.DB, error) {
-	tmpPath := dbPath + ".compact-tmp"
-	backupPath := fmt.Sprintf("%s.precompact-%s", dbPath, time.Now().UTC().Format("20060102T150405Z"))
+// liveDataBytes estimates how many bytes the bbolt file would occupy if it
+// were perfectly compacted. We sum every bucket's leaf+branch in-use sizes;
+// freelist pages and unused tail-end of the file are excluded by design.
+func (s *Store) liveDataBytes() (int64, error) {
+	var total int64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(_ []byte, b *bolt.Bucket) error {
+			st := b.Stats()
+			total += int64(st.LeafInuse + st.BranchInuse)
+			return nil
+		})
+	})
+	return total, err
+}
 
-	// Open the destination DB with the same defensive options as the source.
-	// 0 txMaxSize means "single transaction" — fine for our DB sizes; if
-	// someone ever runs this against a multi-GB file they can tune it.
-	dst, err := openBolt(tmpPath)
+// maybeCompact runs bolt.Compact() into a sibling temp file and atomically
+// renames it over the live DB iff the live file is significantly larger
+// than the in-use data. Atomic rename + retained-on-failure semantics make
+// this safe to run unconditionally at every startup: on failure the original
+// file is untouched and the service still comes up.
+//
+// Return values: (newPath, sizeBefore, sizeAfter, err). When no compaction is
+// performed, sizeAfter == 0 and err == nil. Caller logs accordingly.
+const (
+	// Don't bother compacting databases under 16 MB — the savings aren't
+	// worth the startup cost and the RSS impact is negligible.
+	compactMinBytes int64 = 16 << 20
+	// Compact whenever the file is more than this multiple of the live data.
+	// 2× is generous: bbolt naturally keeps some slack for write throughput,
+	// and we don't want to spin into a compact-loop on a healthy DB.
+	compactRatio = 2.0
+	// Cap the per-tx size to keep compaction's transient RAM footprint
+	// bounded even on multi-GB databases.
+	compactTxMaxBytes int64 = 64 << 20
+)
+
+func (s *Store) maybeCompact(dbPath string) (string, int64, int64, error) {
+	st, err := os.Stat(dbPath)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	sizeBefore := st.Size()
+	if sizeBefore < compactMinBytes {
+		return "", sizeBefore, 0, nil
+	}
+
+	live, err := s.liveDataBytes()
+	if err != nil {
+		return "", sizeBefore, 0, fmt.Errorf("live-data probe: %w", err)
+	}
+	if live <= 0 || float64(sizeBefore) < compactRatio*float64(live) {
+		return "", sizeBefore, 0, nil
+	}
+
+	log.Printf("🧯 bbolt vacuum: file=%d live=%d (ratio %.1fx) — compacting...",
+		sizeBefore, live, float64(sizeBefore)/float64(live))
+
+	tmpPath := dbPath + ".compacting"
+	// Clean up any leftover from a previous interrupted compaction.
+	_ = os.Remove(tmpPath)
+
+	dst, err := bolt.Open(tmpPath, 0600, &bolt.Options{
+		Timeout:      5 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
 	if err != nil {
 		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("open temp DB for compact: %w", err)
+		return "", sizeBefore, 0, fmt.Errorf("open temp db: %w", err)
 	}
-	if err := bolt.Compact(dst, db, 0); err != nil {
+
+	if err := bolt.Compact(dst, s.db, compactTxMaxBytes); err != nil {
 		_ = dst.Close()
 		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("compact: %w", err)
+		return "", sizeBefore, 0, fmt.Errorf("compact: %w", err)
 	}
 	if err := dst.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("close compacted DB: %w", err)
+		return "", sizeBefore, 0, fmt.Errorf("close temp db: %w", err)
 	}
 
-	// Close the source so we can rename it aside. Anything that fails after
-	// this point requires a re-open, which we always attempt.
-	if err := db.Close(); err != nil {
-		// Already wrote tmp; try to reopen the original so the service can still come up.
+	// Close the original handle so we can atomically rename over it.
+	// We must reopen afterwards to give the caller a usable Store.
+	// Past this point, s.db has been closed: every failure branch MUST
+	// either restore s.db to a working handle or return a sentinel error
+	// (ErrCompactLeftStoreClosed) so the caller can fail fast instead of
+	// crashing later on a dereferenced-nil bolt.DB. See NewStore for how
+	// that contract is enforced.
+	if err := s.db.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		ndb, oerr := openBolt(dbPath)
-		if oerr != nil {
-			return nil, fmt.Errorf("close source DB (%v) and reopen failed (%w)", err, oerr)
+		// db.Close() failed — s.db may or may not be usable. Try to reopen
+		// the original file so the caller still has a working store; if
+		// that fails too, surface ErrCompactLeftStoreClosed.
+		if reopened, rerr := openBolt(dbPath); rerr == nil {
+			s.db = reopened
+			return "", sizeBefore, 0, fmt.Errorf("close original db: %w", err)
 		}
-		return ndb, fmt.Errorf("close source DB: %w", err)
+		return "", sizeBefore, 0, fmt.Errorf("%w (close original db: %v)", errCompactLeftStoreClosed, err)
 	}
 
-	if err := os.Rename(dbPath, backupPath); err != nil {
-		_ = os.Remove(tmpPath)
-		ndb, oerr := openBolt(dbPath)
-		if oerr != nil {
-			return nil, fmt.Errorf("backup-rename failed (%v) and original reopen failed (%w)", err, oerr)
-		}
-		return ndb, fmt.Errorf("backup-rename original: %w", err)
-	}
 	if err := os.Rename(tmpPath, dbPath); err != nil {
-		// Try to restore the backup back to the live path so the service
-		// at least comes up on the pre-compact (large but valid) file.
-		_ = os.Rename(backupPath, dbPath)
-		ndb, oerr := openBolt(dbPath)
-		if oerr != nil {
-			return nil, fmt.Errorf("swap-in compacted file failed (%v) and rollback reopen failed (%w)", err, oerr)
+		// Try to reopen the original so the service can still start
+		// (worst case it stays bloated until next restart).
+		if reopened, rerr := openBolt(dbPath); rerr == nil {
+			s.db = reopened
+			_ = os.Remove(tmpPath)
+			return "", sizeBefore, 0, fmt.Errorf("atomic rename: %w", err)
 		}
-		return ndb, fmt.Errorf("swap-in compacted file: %w", err)
+		_ = os.Remove(tmpPath)
+		return "", sizeBefore, 0, fmt.Errorf("%w (rename failed and original could not be reopened: %v)", errCompactLeftStoreClosed, err)
 	}
 
-	log.Printf("📦 Compaction backup kept at %s — delete it manually once you are happy with the new file", backupPath)
-
-	ndb, err := openBolt(dbPath)
+	reopened, err := openBolt(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("reopen compacted DB: %w", err)
+		// Rename succeeded but we can't open the new file. The compacted
+		// content is on disk and valid, but s.db is closed — there is no
+		// safe way to keep going in-process.
+		return "", sizeBefore, 0, fmt.Errorf("%w (reopen compacted db: %v)", errCompactLeftStoreClosed, err)
 	}
-	return ndb, nil
+	s.db = reopened
+
+	if newSt, err := os.Stat(dbPath); err == nil {
+		return dbPath, sizeBefore, newSt.Size(), nil
+	}
+	return dbPath, sizeBefore, 0, nil
 }
 
-// cleanupExpiredTCPingOnStartup is a thin wrapper around
-// CleanupOldTCPingResults that ALSO reports how many records were removed
-// (the public function intentionally hides the count). Kept separate so
-// callers of CleanupOldTCPingResults don't have to change.
-func (s *Store) cleanupExpiredTCPingOnStartup() (int, error) {
-	cutoffTime := time.Now().Add(-24 * time.Hour)
-	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
-	var keysToDelete [][]byte
+// errCompactLeftStoreClosed is returned by maybeCompact when it had to close
+// the original bbolt handle but could not reopen any valid replacement. The
+// Store is no longer usable; the caller (NewStore) MUST treat this as fatal
+// and abort startup. Wrapping it via fmt.Errorf("%w ...", err) preserves
+// errors.Is() matching for downstream checks.
+var errCompactLeftStoreClosed = fmt.Errorf("bbolt vacuum left store handle closed; restart required")
 
-	if err := s.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(tcpingBucket))
-		if bucket == nil {
+// CompactBoltFileAfterClose runs the same heuristic as maybeCompact against a
+// database file whose primary handle has already been bolt.DB.Close()'d —
+// typical site is the graceful shutdown path in main() after HTTP has drained.
+// Holding no open handles avoids lock conflicts and yields a shrunk on-disk
+// file before the next process start so RSS from mmap stays bounded even when
+// the previous run never reached NewStore()'s vacuum (crash/kill vs clean
+// restart).
+//
+// It is intentionally best-effort: on any error the original metrics.db is
+// left untouched. beforeOut/afterOut are file sizes on disk when compaction
+// actually ran (afterOut==0 means skipped or unchanged).
+func CompactBoltFileAfterClose(dbPath string) (beforeOut, afterOut int64, err error) {
+	if dbPath == "" {
+		return 0, 0, nil
+	}
+
+	st, err := os.Stat(dbPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	beforeOut = st.Size()
+	if beforeOut < compactMinBytes {
+		return beforeOut, 0, nil
+	}
+
+	src, err := bolt.Open(dbPath, 0600, &bolt.Options{
+		ReadOnly:     true,
+		Timeout:      10 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+	if err != nil {
+		return beforeOut, 0, fmt.Errorf("open readonly for vacuum: %w", err)
+	}
+
+	var live int64
+	viewErr := src.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(_ []byte, b *bolt.Bucket) error {
+			s := b.Stats()
+			live += int64(s.LeafInuse + s.BranchInuse)
 			return nil
-		}
-		c := bucket.Cursor()
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			if len(k) >= len(cutoffPrefix) && bytes.Compare(k[:len(cutoffPrefix)], cutoffPrefix) >= 0 {
-				return nil
-			}
-			var result TCPingResult
-			if err := json.Unmarshal(v, &result); err != nil {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-				continue
-			}
-			if result.Timestamp.Before(cutoffTime) {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, err
+		})
+	})
+	if viewErr != nil {
+		_ = src.Close()
+		return beforeOut, 0, viewErr
 	}
-	if len(keysToDelete) == 0 {
-		return 0, nil
+	if live <= 0 || float64(beforeOut) < compactRatio*float64(live) {
+		_ = src.Close()
+		return beforeOut, 0, nil
 	}
-	if err := s.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(tcpingBucket))
-		if bucket == nil {
-			return nil
-		}
-		for _, key := range keysToDelete {
-			if err := bucket.Delete(key); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, err
+
+	log.Printf("🧯 offline bbolt vacuum: file=%d live=%d (ratio %.1fx) — compacting...",
+		beforeOut, live, float64(beforeOut)/float64(live))
+
+	tmpPath := dbPath + ".compacting_shutdown"
+	_ = os.Remove(tmpPath)
+
+	dst, err := bolt.Open(tmpPath, 0600, &bolt.Options{
+		Timeout:      5 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+	if err != nil {
+		_ = src.Close()
+		return beforeOut, 0, fmt.Errorf("open temp db for offline vacuum: %w", err)
 	}
-	return len(keysToDelete), nil
+
+	if err := bolt.Compact(dst, src, compactTxMaxBytes); err != nil {
+		_ = dst.Close()
+		_ = src.Close()
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, fmt.Errorf("offline compact: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = src.Close()
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, err
+	}
+	if err := src.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, err
+	}
+
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, fmt.Errorf("offline vacuum rename: %w", err)
+	}
+
+	st2, err := os.Stat(dbPath)
+	if err != nil {
+		return beforeOut, 0, err
+	}
+	return beforeOut, st2.Size(), nil
 }
 
 // Close closes the database
@@ -545,12 +642,27 @@ type TCPingResult struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// SaveTCPingResult saves a single tcping result.
-//
-// PERFORMANCE NOTE: each call is its own db.Update, i.e. its own fsync.
-// On hot push-mode paths where a single client delivers 3–5 results every
-// 3 seconds, prefer SaveClientPushBatch to amortise the fsync over all
-// results from one push.
+func tcpingResultKeyPrefix(result TCPingResult) string {
+	return fmt.Sprintf("%d_%s_%09d_", result.Timestamp.Unix(), result.ClientID, result.Timestamp.Nanosecond())
+}
+
+func putTCPingResult(bucket *bolt.Bucket, result TCPingResult) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tcping result: %w", err)
+	}
+
+	prefix := tcpingResultKeyPrefix(result)
+	for seq := 0; seq < 1_000_000; seq++ {
+		key := fmt.Sprintf("%s%06d_%s", prefix, seq, result.Target)
+		if bucket.Get([]byte(key)) == nil {
+			return bucket.Put([]byte(key), data)
+		}
+	}
+	return fmt.Errorf("too many tcping results for %s/%s at %s", result.ClientID, result.Target, result.Timestamp.Format(time.RFC3339Nano))
+}
+
+// SaveTCPingResult saves a tcping result
 func (s *Store) SaveTCPingResult(result TCPingResult) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
@@ -558,37 +670,12 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 			return fmt.Errorf("tcping bucket not found")
 		}
 
-		// Use timestamp + client_id + target as key for uniqueness
-		key := fmt.Sprintf("%d_%s_%s", result.Timestamp.Unix(), result.ClientID, result.Target)
-		data, err := json.Marshal(result)
-		if err != nil {
-			return fmt.Errorf("failed to marshal tcping result: %w", err)
-		}
-
-		return bucket.Put([]byte(key), data)
+		return putTCPingResult(bucket, result)
 	})
 }
 
-// SaveClientPushBatch atomically writes the system metric AND all tcping
-// results for a single client push in ONE bbolt write transaction.
-//
-// MEMORY/CPU FIX: previously, handleClientPush ran:
-//
-//	1 × store.Upsert(metric)                  ← 1 fsync
-//	N × store.SaveTCPingResult(...)           ← N fsyncs (one per target)
-//	1 × store.Get(clientID) + store.Upsert(*m)← 1 more fsync (snapshot)
-//
-// For a typical push of 5 tcping targets that was 7 separate fsync()
-// calls, each one taking 1–10 ms even on SSD. With 90 clients pushing
-// every 3 s that became roughly 240 fsyncs per second — observed CPU
-// time burned approximately 1 vCPU on kernel I/O wait, which is exactly
-// the "CPU keeps spiking" symptom operators reported on real
-// deployments. Collapsing all of these into ONE transaction (and ONE
-// fsync) brings the rate down to ≤ 30 fsyncs/s for the same load.
-//
-// All inputs are caller-prepared; this function is pure persistence.
-// `tcpingResults` may be empty (pull-only push) in which case only the
-// metric is written.
+// SaveClientPushBatch atomically writes the system metric and all tcping
+// results from a single push in one bbolt transaction.
 func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingResult) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		systems := tx.Bucket([]byte(bucketName))
@@ -614,12 +701,7 @@ func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingR
 			if r.Target == "" {
 				continue
 			}
-			key := fmt.Sprintf("%d_%s_%s", r.Timestamp.Unix(), r.ClientID, r.Target)
-			body, mErr := json.Marshal(r)
-			if mErr != nil {
-				continue // skip the bad record; do not fail the whole batch
-			}
-			if err := tcping.Put([]byte(key), body); err != nil {
+			if err := putTCPingResult(tcping, r); err != nil {
 				return fmt.Errorf("put tcping result: %w", err)
 			}
 		}
@@ -631,14 +713,12 @@ func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingR
 // If target is provided, only returns results for that target.
 //
 // Uses the same cursor-seek strategy as CleanupOldTCPingResults: keys are
-// formatted as "<unix-seconds>_<client>_<target>" with a 10-digit timestamp
-// (Unix seconds fit in 10 chars until year 2286), so bbolt's lexicographic
-// iteration order matches numeric timestamp order. Seeking directly to the
-// cutoff prefix and walking forward avoids unmarshalling potentially hundreds
-// of thousands of older records on busy deployments — which is what made
-// "open chart" perceptibly slow as the database aged. The `_` separator
-// prevents the prefix from accidentally matching a longer timestamp (e.g.
-// "1714531200" vs "1714531200_xxx").
+// formatted as "<unix-seconds>_<client>_<nanosecond>_<sequence>_<target>"
+// (older records used "<unix-seconds>_<client>_<target>"). Unix seconds
+// fit in 10 characters until year 2286, so bbolt's lexicographic iteration
+// order matches numeric timestamp order. Seeking directly to the cutoff
+// prefix and walking forward avoids unmarshalling potentially hundreds of
+// thousands of older records on busy deployments.
 //
 // Within a single second the suffix order is `<client>_<target>`, so records
 // for one client/target chunk together. We still emit a final sort below to
@@ -654,38 +734,12 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		filterTarget = target[0]
 	}
 
-	// PERFORMANCE / MEMORY-SAFETY FIX:
-	//
-	// Keys in the tcping bucket are formatted as "<unix-seconds>_<client_id>_<target>".
-	// Before this change, the cursor walk did json.Unmarshal on EVERY key in
-	// the 24-hour window, then threw away ~99% of them because their ClientID
-	// did not match the caller. On a database with several hundred thousand
-	// tcping rows (which is normal after a few days of multi-client
-	// operation, and we have observed real-world 511k-record DBs), every
-	// "open chart" click triggered hundreds of thousands of allocations,
-	// page-faulted hundreds of MB of mmap into RSS, and pinned the CPU at
-	// ~100% for several seconds. That was the dominant cause of "CPU and
-	// RSS explode the instant the backend touches metrics.db".
-	//
-	// The fix is a cheap byte-level prefix match on the key BEFORE the
-	// expensive Unmarshal:
-	//
-	//   * The key after the "<unix>_" prefix must start with "<clientID>_".
-	//     A non-allocating bytes.HasPrefix gates the JSON decode.
-	//   * If a target filter is provided, the key must end with "_<target>".
-	//
-	// json.Unmarshal still runs for surviving keys so the timestamp /
-	// latency fields are correct, and the original ClientID/Target struct
-	// comparison stays as the authoritative defence (handles the corner
-	// case where two client IDs share a "foo" / "foo_bar" prefix). The net
-	// effect is the same result set with ~99% fewer allocations and zero
-	// dependency on key-format guesses being right.
 	clientPrefix := []byte(clientID + "_")
 	var targetSuffix []byte
 	if filterTarget != "" {
 		targetSuffix = []byte("_" + filterTarget)
 	}
-	tsPrefixLen := len(cutoffPrefix) // length of "<10-digit-unix>_"
+	tsPrefixLen := len(cutoffPrefix)
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
@@ -698,14 +752,12 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		// from here forward is within the 24-hour window. Records older
 		// than the cutoff are skipped entirely without unmarshalling.
 		for k, v := c.Seek(cutoffPrefix); k != nil; k, v = c.Next() {
-			// Cheap byte-level filter on the key BEFORE any JSON work.
-			// Skip if the key is too short to contain "<ts>_<clientID>_".
 			if len(k) <= tsPrefixLen {
 				continue
 			}
 			afterTS := k[tsPrefixLen:]
 			if !bytes.HasPrefix(afterTS, clientPrefix) {
-				continue // belongs to a different client; do not touch mmap value page
+				continue
 			}
 			if targetSuffix != nil && !bytes.HasSuffix(k, targetSuffix) {
 				continue
@@ -716,10 +768,6 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 				continue // Skip corrupted entry
 			}
 
-			// Authoritative re-check: prefix matching can false-positive
-			// when two client IDs share a prefix (e.g. "foo" and "foo_bar").
-			// Keep the original struct comparison so the result set is
-			// always correct.
 			if result.ClientID != clientID {
 				continue
 			}
@@ -760,15 +808,7 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 	var keysToDelete [][]byte
 
-	// First pass: collect keys to delete.
-	//
-	// CORRECTNESS: bbolt key/value slices returned from ForEach are ONLY
-	// valid for the lifetime of the enclosing transaction. The underlying
-	// bytes point directly into the mmap'd file region and may be remapped
-	// or reused once the transaction closes. We must copy every key we
-	// want to act on later — otherwise the second-pass db.Update below
-	// reads bytes that bbolt is free to mutate, causing wrong-key deletes,
-	// silent data corruption, or SIGSEGV depending on timing.
+	// First pass: collect keys to delete
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -816,11 +856,7 @@ func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 	var keysToDelete [][]byte
 
-	// First pass: collect keys to delete.
-	//
-	// CORRECTNESS: see the same note in DeleteTCPingResultsByTarget — bbolt
-	// keys returned from ForEach are only valid for the View tx, so we
-	// must copy them before the second-pass Update reads them.
+	// First pass: collect keys to delete
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -866,14 +902,12 @@ func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 
 // CleanupOldTCPingResults removes tcping results older than 24 hours.
 //
-// Keys are formatted as "<unix-seconds>_<client>_<target>" where the
-// timestamp is always 10 digits (Unix seconds fit in 10 characters until
-// year 2286), so bbolt's lexicographic iteration order matches numeric
-// timestamp order. We therefore seek to the cutoff prefix and stop
-// iterating as soon as we encounter a record newer than the cutoff —
-// avoiding a full-bucket scan of potentially hundreds of thousands of
-// entries every hour on busy deployments.
-func (s *Store) CleanupOldTCPingResults() error {
+// Keys start with "<unix-seconds>_" where the timestamp is always 10 digits
+// until year 2286, so bbolt's lexicographic iteration order matches numeric
+// timestamp order. We therefore stop iterating as soon as we encounter a
+// record newer than the cutoff, avoiding a full-bucket scan of potentially
+// hundreds of thousands of entries every hour on busy deployments.
+func (s *Store) cleanupOldTCPingResults() (int, error) {
 	cutoffTime := time.Now().Add(-24 * time.Hour)
 	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
 	var keysToDelete [][]byte
@@ -911,12 +945,12 @@ func (s *Store) CleanupOldTCPingResults() error {
 	})
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Second pass: delete old entries
 	if len(keysToDelete) > 0 {
-		return s.db.Update(func(tx *bolt.Tx) error {
+		if err := s.db.Update(func(tx *bolt.Tx) error {
 			bucket := tx.Bucket([]byte(tcpingBucket))
 			if bucket == nil {
 				return fmt.Errorf("tcping bucket not found")
@@ -928,10 +962,17 @@ func (s *Store) CleanupOldTCPingResults() error {
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			return 0, err
+		}
 	}
 
-	return nil
+	return len(keysToDelete), nil
+}
+
+func (s *Store) CleanupOldTCPingResults() error {
+	_, err := s.cleanupOldTCPingResults()
+	return err
 }
 
 // TCPingTargetEntry represents a single tcping target with name and address
@@ -1080,16 +1121,6 @@ func (s *Store) VerifyPassword(password string) (bool, error) {
 		if raw == nil {
 			return fmt.Errorf("password not set")
 		}
-		// CORRECTNESS / SECURITY: bbolt's Get returns a slice that points
-		// directly into the mmap'd page; it is only valid for the lifetime
-		// of this View transaction. Once we return, bbolt is free to
-		// remap or overwrite that memory on the next write transaction.
-		// Reading the bytes after the txn closed (which is what the old
-		// code did when it called bcrypt.CompareHashAndPassword below)
-		// can silently load whatever the new page now contains —
-		// potentially making login succeed for the wrong password,
-		// fail for the right one, or panic on a freshly-unmapped page.
-		// Copy out the bytes while the txn is still open.
 		hashedPassword = append([]byte(nil), raw...)
 		return nil
 	})
@@ -1111,14 +1142,6 @@ func GenerateAuthToken() (string, error) {
 }
 
 // NavbarConfig represents the navbar configuration
-//
-// HideTags / HideCards intentionally use *negative* (hide_*) names
-// so the bool zero-value (`false`) corresponds to the legacy /
-// expected behaviour: tags row is shown, card grid is shown.
-// This keeps every record already in BoltDB working unchanged
-// after upgrade — `json.Unmarshal` leaves the missing fields at
-// `false`, so no migration is needed and admins who never open
-// the customization modal continue to see the same homepage.
 type NavbarConfig struct {
 	Text         string `json:"text"`          // Custom text for navbar (default: "Pulse")
 	Logo         string `json:"logo"`          // Custom logo URL or SVG (default: built-in SVG)
@@ -1127,8 +1150,8 @@ type NavbarConfig struct {
 	CustomJS     string `json:"custom_js"`     // Custom JavaScript for all pages
 	ShowTraffic  bool   `json:"show_traffic"`  // Show real-time and total traffic in detail dropdown
 	ShowGlass    bool   `json:"show_glass"`    // Enable glassmorphism (frosted glass) visual effect
-	HideTags     bool   `json:"hide_tags"`     // Suppress the tag row in the homepage expand panel
-	HideCards    bool   `json:"hide_cards"`    // Suppress the homepage card grid section
+	HideTags     bool   `json:"hide_tags"`     // Hotaru-compatible: hide tag row on homepage
+	HideCards    bool   `json:"hide_cards"`    // Hotaru-compatible: hide homepage card grid
 }
 
 // GetNavbarConfig retrieves the navbar configuration

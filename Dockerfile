@@ -56,8 +56,7 @@ EXPOSE 8008
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost:8008/healthz || exit 1
+    CMD wget -q --spider http://127.0.0.1:8008/healthz || exit 1
 
 # Start supervisor (manages both nginx and backend)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
-

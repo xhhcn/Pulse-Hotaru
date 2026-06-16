@@ -584,8 +584,11 @@ func registerWithServer() {
 		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
 
 		resp, err := httpClient.Do(req)
-		cancel() // ✅ Always cancel context after request completes
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			cancel()
 			log.Printf("⚠️  Registration attempt %d/%d failed: %v", i+1, maxRetries, err)
 			continue
 		}
@@ -599,12 +602,14 @@ func registerWithServer() {
 				}
 			}
 			resp.Body.Close()
+			cancel()
 			log.Printf("✅ Successfully registered with server (ID: %s, IPv4: %s, IPv6: %s)", agentID, ipv4, ipv6)
 			return
 		} else {
 			// Read error response body for debugging
 			body, _ := ioutil.ReadAll(resp.Body)
 			resp.Body.Close()
+			cancel()
 			log.Printf("❌ Registration failed (attempt %d/%d): HTTP %d - %s", i+1, maxRetries, resp.StatusCode, string(body))
 		}
 	}
@@ -671,8 +676,11 @@ func startPeriodicRegistration() {
 		req.Header.Set("User-Agent", "PulseClient/1.0")
 
 		resp, err := httpClient.Do(req)
-		cancel()
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			cancel()
 			continue
 		}
 
@@ -689,6 +697,7 @@ func startPeriodicRegistration() {
 			ioutil.ReadAll(resp.Body) //nolint:errcheck
 		}
 		resp.Body.Close()
+		cancel()
 	}
 }
 
@@ -755,6 +764,8 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 
 	// SECURITY: Verify secret authentication if configured
 	// If secret is configured, it must be provided and match
@@ -985,8 +996,11 @@ func startPushLoop() {
 		}
 
 		resp, doErr := httpClient.Do(req)
-		cancel()
 		if doErr != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			cancel()
 			// Push failed — put TCPing results back so they are included in the next push
 			if len(tcpingResults) > 0 {
 				pendingTCPingResultsMu.Lock()
@@ -1030,6 +1044,7 @@ func startPushLoop() {
 			}
 		}
 		resp.Body.Close()
+		cancel()
 	}
 }
 

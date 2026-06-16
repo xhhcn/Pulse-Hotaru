@@ -50,6 +50,41 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn()    { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+reject_multiline_value() {
+    local label="$1"
+    local value="$2"
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+        error "${label} must not contain newlines"
+    fi
+}
+
+validate_config_values() {
+    reject_multiline_value "Agent ID" "$AGENT_ID"
+    reject_multiline_value "Agent name" "$AGENT_NAME"
+    reject_multiline_value "Server URL" "$SERVER_BASE"
+    reject_multiline_value "Client port" "$CLIENT_PORT"
+    reject_multiline_value "Secret" "$SECRET"
+    reject_multiline_value "Update interval" "$UPDATE_INTERVAL"
+}
+
+systemd_escape_env() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//%/%%}"
+    printf '%s' "$value"
+}
+
+xml_escape() {
+    local value="$1"
+    value="${value//&/&amp;}"
+    value="${value//</&lt;}"
+    value="${value//>/&gt;}"
+    value="${value//\"/&quot;}"
+    value="${value//\'/&apos;}"
+    printf '%s' "$value"
+}
+
 # Check if running as root
 check_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -231,11 +266,12 @@ download_binary() {
 create_service_linux() {
     info "Creating systemd service..."
 
-    local env_lines="Environment=\"AGENT_ID=${AGENT_ID}\"\n"
-    [ -n "$AGENT_NAME" ] && env_lines+="Environment=\"AGENT_NAME=${AGENT_NAME}\"\n"
-    env_lines+="Environment=\"SERVER_BASE=${SERVER_BASE}\"\n"
-    env_lines+="Environment=\"CLIENT_PORT=${CLIENT_PORT}\"\n"
-    [ -n "$SECRET" ]     && env_lines+="Environment=\"SECRET=${SECRET}\"\n"
+    local env_lines=""
+    env_lines+="Environment=\"AGENT_ID=$(systemd_escape_env "$AGENT_ID")\""$'\n'
+    [ -n "$AGENT_NAME" ] && env_lines+="Environment=\"AGENT_NAME=$(systemd_escape_env "$AGENT_NAME")\""$'\n'
+    env_lines+="Environment=\"SERVER_BASE=$(systemd_escape_env "$SERVER_BASE")\""$'\n'
+    env_lines+="Environment=\"CLIENT_PORT=$(systemd_escape_env "$CLIENT_PORT")\""$'\n'
+    [ -n "$SECRET" ]     && env_lines+="Environment=\"SECRET=$(systemd_escape_env "$SECRET")\""$'\n'
 
     cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
 [Unit]
@@ -244,7 +280,7 @@ After=network.target
 
 [Service]
 Type=simple
-$(echo -e "$env_lines")
+$(printf '%s' "$env_lines")
 ExecStart=${INSTALL_DIR}/probe-client
 Restart=always
 RestartSec=10
@@ -311,11 +347,12 @@ create_service_macos() {
     mkdir -p "$MACOS_PLIST_DIR"
 
     # Build EnvironmentVariables dict entries
-    local env_xml="        <key>AGENT_ID</key>\n        <string>${AGENT_ID}</string>\n"
-    env_xml+="        <key>AGENT_NAME</key>\n        <string>${AGENT_NAME}</string>\n"
-    env_xml+="        <key>SERVER_BASE</key>\n        <string>${SERVER_BASE}</string>\n"
-    env_xml+="        <key>CLIENT_PORT</key>\n        <string>${CLIENT_PORT}</string>\n"
-    [ -n "$SECRET" ] && env_xml+="        <key>SECRET</key>\n        <string>${SECRET}</string>\n"
+    local env_xml=""
+    env_xml+="        <key>AGENT_ID</key>"$'\n'"        <string>$(xml_escape "$AGENT_ID")</string>"$'\n'
+    env_xml+="        <key>AGENT_NAME</key>"$'\n'"        <string>$(xml_escape "$AGENT_NAME")</string>"$'\n'
+    env_xml+="        <key>SERVER_BASE</key>"$'\n'"        <string>$(xml_escape "$SERVER_BASE")</string>"$'\n'
+    env_xml+="        <key>CLIENT_PORT</key>"$'\n'"        <string>$(xml_escape "$CLIENT_PORT")</string>"$'\n'
+    [ -n "$SECRET" ] && env_xml+="        <key>SECRET</key>"$'\n'"        <string>$(xml_escape "$SECRET")</string>"$'\n'
 
     cat > "$MACOS_PLIST_PATH" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -330,7 +367,7 @@ create_service_macos() {
     </array>
     <key>EnvironmentVariables</key>
     <dict>
-$(echo -e "$env_xml")    </dict>
+$(printf '%s' "$env_xml")    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -659,6 +696,7 @@ main() {
     esac
 
     detect_arch
+    validate_config_values
     download_binary
     create_service
 

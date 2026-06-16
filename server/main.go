@@ -122,12 +122,8 @@ type TCPingHistoryResponse struct {
 //
 // We cache the *already-encoded* JSON body, not the struct, so a cache hit
 // can short-circuit straight to a single ResponseWriter.Write of an
-// immutable byte slice. Entries are keyed by client+target, and we only cache
-// target-specific responses: the frontend's active-tab chart uses those, while
-// all-target legacy history responses can be much larger and should stream
-// without creating a second full JSON copy in memory. Re-encoding the same
-// TCPingHistoryResponse on every hit was measurable on busy deployments (every
-// result row contains a
+// immutable byte slice. Re-encoding the same TCPingHistoryResponse on every
+// hit was measurable on busy deployments (every result row contains a
 // pointer-to-float and a time.Time that goes through RFC3339 formatting),
 // and json.Encoder.Encode does not memoise. Trading a fixed-size []byte for
 // the struct also lets the entry be served read-locked without the encoder
@@ -726,6 +722,23 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	}
 }
 
+// getServerIP gets the server's own IP address (non-loopback)
+func getServerIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:53")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	// Safe type assertion to prevent panic
+	localAddr := conn.LocalAddr()
+	udpAddr, ok := localAddr.(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
+	return udpAddr.IP.String()
+}
+
 // Get returns a DEFENSIVE VALUE COPY of the ClientInfo registered under id
 // (wrapped in a pointer for API compatibility with nil-checking callers),
 // or nil when the id is unknown.
@@ -1065,21 +1078,6 @@ func main() {
 	})
 
 	// Admin-only runtime introspection endpoint.
-	//
-	// Operators previously had no way to distinguish "RSS keeps growing
-	// because of a real Go heap leak" from "RSS keeps growing because the
-	// OS is filling page cache with bbolt mmap data" (the latter is normal
-	// and will plateau / be evicted under pressure). This endpoint exposes
-	// the actual Go runtime numbers — HeapAlloc, HeapInuse, NumGoroutine,
-	// GC pause history — so operators can answer that question in one
-	// curl call:
-	//
-	//   curl -H "Authorization: Bearer $TOKEN" http://host:8008/api/admin/runtime
-	//
-	// HeapAlloc / HeapInuse should plateau within a few minutes of warmup
-	// and oscillate ±10–20 MB around a baseline. NumGoroutine should be
-	// roughly proportional to active SSE subscribers + pull-mode clients
-	// and NOT trend upward over hours.
 	mux.HandleFunc("/api/admin/runtime", func(w http.ResponseWriter, r *http.Request) {
 		if !isAuthenticated(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -1162,19 +1160,32 @@ func main() {
 		//   2. Content-addressed bundle assets under /_astro/ (Astro
 		//      fingerprints every filename with an 8-char content hash, so
 		//      a changed asset is always served under a new URL) →
-		//      Cache-Control: public, max-age=31536000, immutable.
-		//      "immutable" tells the browser not even to revalidate.
+		//      Cache-Control: public, max-age=31536000, s-maxage=31536000,
+		//      immutable. "immutable" tells the browser not even to revalidate;
+		//      s-maxage makes the CDN policy explicit.
 		//
-		// Every other static asset (favicon.svg, arbitrary files the user
-		// dropped into dist/) gets the http.FileServer default, which is
-		// the safe middle ground of a heuristic cache + Last-Modified
-		// revalidation.
+		//   3. Non-fingerprinted static files such as favicon.svg / robots.txt
+		//      get a short browser TTL and a modest CDN TTL. They are cacheable,
+		//      but not immutable because their URL does not change on deploy.
+		isStaticAssetPath := func(urlPath string) bool {
+			switch strings.ToLower(filepath.Ext(urlPath)) {
+			case ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2":
+				return true
+			default:
+				return false
+			}
+		}
+
 		setStaticCacheHeaders := func(w http.ResponseWriter, urlPath string) {
 			switch {
 			case strings.HasSuffix(urlPath, ".html") || urlPath == "/" || filepath.Ext(urlPath) == "":
 				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			case strings.HasPrefix(urlPath, "/_astro/"):
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				w.Header().Set("Cache-Control", "public, max-age=31536000, s-maxage=31536000, immutable")
+			case urlPath == "/favicon.svg" || urlPath == "/robots.txt":
+				w.Header().Set("Cache-Control", "public, max-age=3600, s-maxage=86400")
+			case isStaticAssetPath(urlPath):
+				w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=604800")
 			}
 		}
 
@@ -1305,10 +1316,28 @@ func main() {
 	// Now that no handler can be issuing new db.Update calls, it is safe to
 	// close the bbolt DB. Closing bbolt flushes in-flight writes and releases
 	// the file lock.
+	storeClosedOK := false
 	if err := store.Close(); err != nil {
 		log.Printf("⚠️  store close returned: %v", err)
 	} else {
 		log.Println("✅ Database closed cleanly")
+		storeClosedOK = true
+	}
+
+	// Second chance to shrink metrics.db after the daemon handle is gone —
+	// complements NewStore.maybeCompact when the OS sends SIGKILL (no graceful
+	// shutdown) vs SIGTERM/SIGINT (always hits this branch). Shrinking the file
+	// directly bounds bbolt mmap + RSS across restarts without requiring a human
+	// to run tooling by hand.
+	if storeClosedOK {
+		if before, after, vacErr := CompactBoltFileAfterClose(dbPath); vacErr != nil {
+			log.Printf("⚠️  offline bbolt vacuum failed (non-fatal): %v", vacErr)
+		} else if after > 0 && after < before {
+			log.Printf("🧯 offline bbolt vacuum: %.1f MB → %.1f MB (saved %.1f MB)",
+				float64(before)/1024/1024,
+				float64(after)/1024/1024,
+				float64(before-after)/1024/1024)
+		}
 	}
 	log.Println("👋 Shutdown complete")
 }
@@ -1790,11 +1819,7 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		if existing != nil {
 			cpuModel = existing.CPUModel
 			memoryInfo = existing.MemoryInfo
-			// NOTE: existing.SwapInfo is intentionally NOT copied here
-			// because line 1783 below unconditionally overwrites it with
-			// `payload.SwapInfo` (the empty/"0 B / 0 B" sentinel that
-			// distinguishes "no swap" from "no data yet" is part of the
-			// payload contract). Reading it first would be dead work.
+			swapInfo = existing.SwapInfo
 			diskInfo = existing.DiskInfo
 			secret = existing.Secret
 			tags = existing.Tags
@@ -2018,7 +2043,7 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 
 	// Apply NAT IP fixup: if the reported IPv4 is absent or private, derive it
 	// from the connection source IP (same logic as handleClientPush).
-	// getClientIP handles X-Forwarded-For, X-Real-IP and raw RemoteAddr in one call.
+	// getClientIP uses forwarded headers only when the immediate peer is trusted.
 	if isPrivateIPStr(ip) {
 		if srcIP := getClientIP(r); srcIP != "" {
 			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
@@ -2144,7 +2169,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// the real public IP (the NAT gateway's egress IP), so we can use r.RemoteAddr
 	// (via getClientIP) as a reliable fallback when the client-reported IPv4 is empty
 	// or still private.  This also works correctly when the server is behind a reverse
-	// proxy because getClientIP reads X-Forwarded-For / X-Real-IP headers.
+	// proxy when that proxy is trusted by getClientIP.
 	if payload.IPv4 == "" || isPrivateIPStr(payload.IPv4) {
 		if srcIP := getClientIP(r); srcIP != "" {
 			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
@@ -2200,11 +2225,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// Preserve server-side fields (order, name, tags, secret, tcping data).
 	//
 	// `existing` is guaranteed non-nil at this point: handleClientPush
-	// returns 404 above (around the `store.Get(clientID)` call) when no
-	// system with this ID is registered. The previous version of this
-	// block had a defensive `if existing != nil` wrapper which staticcheck
-	// (correctly) flagged as dead code that confusingly implied the
-	// pointer might be nil after we'd already dereferenced it.
+	// returns 404 above when no system with this ID is registered.
 	order := existing.Order
 	name := existing.Name // Always use admin-set name
 	tags := existing.Tags
@@ -2219,24 +2240,9 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 
 	// PERFORMANCE / MEMORY FIX (formerly: N+1 fsyncs per push).
 	//
-	// We used to:
-	//   * Upsert the metric (1 fsync)
-	//   * SaveTCPingResult per target (N fsyncs)
-	//   * if any succeeded: Get + Upsert the metric again to merge
-	//     TCPingData (2 more disk ops, 1 more fsync)
-	//
-	// On a real deployment with 90 push-mode clients × ~5 tcping targets
-	// each every 3 s, that worked out to ~240 fsyncs / second — pinning
-	// one whole vCPU on kernel I/O wait. The dominant cause of "CPU keeps
-	// spiking and Memory keeps creeping up" symptoms in our v1.0.1 / v1.0.2
-	// field reports.
-	//
-	// Now: compose the final metric (including merged TCPingData) entirely
-	// in memory, sanitise the tcping results, and persist EVERYTHING in
-	// ONE bbolt write transaction (one fsync). Same latency budget for
-	// the client; roughly 8× less I/O for the server.
-
-	// Read tcping config once (used for filter + response echo).
+	// Compose the final metric (including merged TCPingData) entirely in
+	// memory, sanitise tcping results, and persist everything in one bbolt
+	// write transaction. The response contract stays unchanged.
 	tcpingConfig, configErr := store.GetTCPingConfig()
 	if configErr != nil || tcpingConfig == nil {
 		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
@@ -2253,10 +2259,6 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		return ok
 	}
 
-	// Sanity bound on MeasuredAt: accept anything within [now-10min, now+30s].
-	// Further in the past probably means the result was queued during a long
-	// offline period and would distort charts; further in the future means
-	// client clock skew. In either case we fall back to `now`.
 	nowUTC := time.Now().UTC()
 	const maxPast = 10 * time.Minute
 	const maxFuture = 30 * time.Second
@@ -2270,19 +2272,11 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		return t.UTC()
 	}
 
-	// Filter / build the tcping result rows we're going to persist.
-	// Also merge any successful results into the metric's TCPingData
-	// snapshot so the single Upsert below carries the freshest data.
 	var batchedResults []TCPingResult
 	if len(payload.TCPingResults) > 0 {
 		batchedResults = make([]TCPingResult, 0, len(payload.TCPingResults))
 		for _, tr := range payload.TCPingResults {
-			if tr.Target == "" {
-				continue
-			}
-			// Deletion-race guard: silently drop measurements for targets
-			// the admin removed between client measurement and arrival.
-			if !targetAllowed(tr.Target) {
+			if tr.Target == "" || !targetAllowed(tr.Target) {
 				continue
 			}
 			var latencyPtr *float64
@@ -2341,15 +2335,16 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		return
 	}
 
-	// Invalidate the per-client tcping-history cache exactly once after the
-	// batch lands. Previously the cache lock was acquired once per result.
 	if len(batchedResults) > 0 {
 		invalidateTCPingCache(clientID)
 	}
 
-	// NOTE: We do NOT broadcast immediately here.
+	// NOTE: Do NOT broadcast immediately here.
 	// The polling loop broadcasts every 3 s for all clients (including push-mode ones).
-	// Adding a second broadcast here would cause double refreshes on the frontend.
+	// Adding a second broadcast here causes the frontend to receive two rapid-fire
+	// metric_updated events per push cycle, resulting in double refreshes.
+	// The data is already saved to the DB above; the polling loop will pick it up
+	// within ≤3 s — identical latency to pull-mode clients.
 
 	// Echo the tcping config we already loaded (see top of handler) so the
 	// client can schedule its next measurements. We deliberately reuse
@@ -2808,18 +2803,10 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		}
 
 		resp, err = httpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
+		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
 			successfulURL = url
 			break // Success, exit loop
 		}
-		// MEMORY-LEAK FIX: the original code only closed resp.Body when
-		// err == nil. The Go http.Client API permits err != nil while still
-		// returning a non-nil resp (e.g. an i/o timeout reached mid-stream,
-		// or a redirect chain that exceeded the limit). Leaking that body
-		// also leaks the underlying TCP connection: the keepalive Transport
-		// cannot return it to the pool until the body is closed, so every
-		// timeout adds one more permanently-held fd + tlsBufferedReader.
-		// Close unconditionally when resp is non-nil, regardless of err.
 		if resp != nil {
 			resp.Body.Close()
 		}
@@ -2828,6 +2815,9 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 			if client.WorkingURL != "" && url == client.WorkingURL {
 				log.Printf("⚠️  Client %s: cached working URL (%s) failed: %v, trying alternatives...", client.ID, url, err)
 			}
+			// Don't log individual connection attempts - only log final failure
+		} else if resp != nil && resp.StatusCode != http.StatusOK {
+			// Don't log individual HTTP errors - only log final failure
 		}
 		resp = nil
 	}
@@ -3248,13 +3238,9 @@ func getCountryFromIP(ip string) string {
 			req.Header.Set("Accept", "application/json")
 
 			resp, err := httpClient.Do(req)
-			cancel() // ✅ Always cancel context immediately after request completes
 
 			if err != nil {
-				// MEMORY-LEAK FIX: even on error the http client may return
-				// a non-nil resp (e.g. response headers arrived but the body
-				// read timed out). Close it before deciding to retry so we
-				// never leak the body / underlying TCP connection.
+				cancel()
 				if resp != nil {
 					resp.Body.Close()
 				}
@@ -3266,11 +3252,6 @@ func getCountryFromIP(ip string) string {
 				break // Try next service
 			}
 
-			// Defensive size cap on third-party IP-lookup responses.
-			// Healthy bodies are <1 KB; we allow 32 KB. Without this, a
-			// hijacked DNS / compromised upstream / misbehaving service
-			// could stream gigabytes back at us inside service.parser's
-			// json.NewDecoder, allocating proportionally on our heap.
 			resp.Body = struct {
 				io.Reader
 				io.Closer
@@ -3279,6 +3260,7 @@ func getCountryFromIP(ip string) string {
 			// Handle rate limiting (429 Too Many Requests)
 			if resp.StatusCode == http.StatusTooManyRequests {
 				resp.Body.Close()
+				cancel()
 				// Wait a bit before trying next service
 				time.Sleep(1 * time.Second)
 				break // Try next service
@@ -3287,6 +3269,7 @@ func getCountryFromIP(ip string) string {
 			if resp.StatusCode == http.StatusOK {
 				country := service.parser(resp)
 				resp.Body.Close()
+				cancel()
 				if country != "" {
 					return country
 				}
@@ -3294,6 +3277,7 @@ func getCountryFromIP(ip string) string {
 				break
 			} else {
 				resp.Body.Close()
+				cancel()
 				// For non-200 status codes, try next service immediately
 				break
 			}
@@ -3489,13 +3473,6 @@ func portFromEnv() string {
 // formatUptime formats uptime in seconds to human-readable string
 // < 1 day: shows hours (e.g., "5h", "23h")
 // >= 1 day: shows days (e.g., "2d", "15d")
-//
-// The backend deliberately emits the canonical English short form
-// here; the hotaru-themed frontend translates "Xd"/"Yh" into
-// "X天"/"Y小时" at render time. Keeping the wire format stable
-// preserves backwards compatibility with existing on-disk metric
-// snapshots and any external consumer of /api/metrics that may
-// have been written against the original Pulse contract.
 func formatUptime(seconds int64) string {
 	if seconds < 0 {
 		return "0h"
@@ -3504,10 +3481,12 @@ func formatUptime(seconds int64) string {
 	hours := seconds / 3600
 	days := hours / 24
 
+	// If less than 1 day, show hours
 	if days < 1 {
 		return fmt.Sprintf("%dh", hours)
 	}
 
+	// Otherwise show days
 	return fmt.Sprintf("%dd", days)
 }
 
@@ -3718,8 +3697,8 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			CustomJS:    config.CustomJS,    // Public: used for page functionality
 			ShowTraffic: config.ShowTraffic, // Public: controls traffic display in detail section
 			ShowGlass:   config.ShowGlass,   // Public: controls glassmorphism effect
-			HideTags:    config.HideTags,    // Public: hides tag row on the homepage
-			HideCards:   config.HideCards,   // Public: hides the homepage card grid section
+			HideTags:    config.HideTags,    // Public: Hotaru-compatible display flag
+			HideCards:   config.HideCards,   // Public: Hotaru-compatible display flag
 			// SharedSecret is intentionally omitted for security
 		}
 		writeJSON(w, http.StatusOK, publicConfig)
@@ -4108,11 +4087,10 @@ func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegi
 		}
 	}
 
-	// Notify every connected browser that the tcping config changed
-	// so they can invalidate their cached copy (cachedTcpingConfig in
-	// HotaruServerTable.astro) and redraw expanded charts without a
-	// manual page reload. The payload is deliberately minimal — just
-	// a signal.
+	// Notify every connected browser that the tcping config changed so
+	// they can invalidate their cached copy (cachedTCPingConfig in
+	// SystemTable.astro) and redraw expanded charts without a manual
+	// page reload. The payload is deliberately minimal — just a signal.
 	// Right after this we also broadcast a fresh metrics snapshot so the
 	// pruned tcping_data reaches the frontend in the same SSE flush.
 	if broker != nil {
@@ -4543,10 +4521,9 @@ func init() {
 		defer ticker.Stop()
 		for {
 			<-ticker.C
-			now := time.Now()
-
 			// Cleanup expired tokens
 			authTokensMu.Lock()
+			now := time.Now()
 			for token, expiry := range authTokens {
 				if now.After(expiry) {
 					delete(authTokens, token)
@@ -4554,28 +4531,16 @@ func init() {
 			}
 			authTokensMu.Unlock()
 
-			// Cleanup old login attempts.
-			//
-			// MEMORY-LEAK FIX: the previous condition required count == 0, which
-			// meant any IP that ever failed a single login attempt and then never
-			// came back left a permanent entry in the map. For an internet-facing
-			// Pulse server constantly probed by scanners/botnets, this map grew
-			// monotonically (hundreds of thousands of entries per week) and was
-			// the dominant cause of the gradual RSS growth → OOM crash pattern
-			// reported by operators after every `systemctl restart pulse-server`.
-			//
-			// New policy:
-			//   * Entry has not been touched in ≥ 24 hours → drop unconditionally,
-			//     even if it claims to be locked. A 24-hour-old lock cannot
-			//     legitimately still be active (max lockedUntil = lastAttempt + 15m).
-			//   * Otherwise, entry idle ≥ 1 hour AND any active lockout has expired
-			//     → drop. The 15-min reset window already zeroes count on the next
-			//     attempt; the entry carries no useful state.
-			//
-			// Together these guarantees keep the map bounded by "IPs that
-			// authenticated against this server in the last day" instead of
-			// "every IP that ever touched the login endpoint, for the lifetime
-			// of the process".
+			// Cleanup old login attempts. The previous condition required
+			// attempt.count == 0, but count only resets to 0 on a successful
+			// login from the same IP — for the vast majority of failed-once-
+			// and-never-came-back probes (which is what fills the map in
+			// production) the count stays at ≥ 1 forever and the entry
+			// leaked. We now drop entries idle for more than 24h
+			// unconditionally, or idle for more than 1h once any active
+			// lockout has expired. A fresh attempt simply re-creates the
+			// entry from scratch, preserving the intended rate-limit while
+			// preventing unbounded growth from IP-scanning traffic.
 			loginAttemptsMu.Lock()
 			for ip, attempt := range loginAttempts {
 				idle := now.Sub(attempt.lastAttempt)
@@ -4589,10 +4554,7 @@ func init() {
 			}
 			loginAttemptsMu.Unlock()
 
-			// Cleanup old verify attempts (older than 5 minutes).
-			// Same defensive bound as loginAttempts: this map was already
-			// well-behaved (cleanup ignored `count`), but we use the same
-			// shared `now` for consistency.
+			// Cleanup old verify attempts (older than 5 minutes)
 			verifyAttemptsMu.Lock()
 			for ip, attempt := range verifyAttempts {
 				if now.Sub(attempt.lastAttempt) > 5*time.Minute {
@@ -4658,28 +4620,93 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
-	// 1. Check X-Forwarded-For header (for proxies/load balancers)
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		ips := strings.Split(ip, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+var (
+	trustedProxyOnce sync.Once
+	trustedProxyNets []*net.IPNet
+)
+
+func loadTrustedProxyNets() {
+	raw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if raw == "" {
+		return
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, cidr, err := net.ParseCIDR(part); err == nil {
+			trustedProxyNets = append(trustedProxyNets, cidr)
+			continue
+		}
+		if ip := net.ParseIP(part); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			trustedProxyNets = append(trustedProxyNets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		log.Printf("⚠️  Ignoring invalid TRUSTED_PROXIES entry %q", part)
+	}
+}
+
+func isTrustedProxyIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	trustedProxyOnce.Do(loadTrustedProxyNets)
+	for _, network := range trustedProxyNets {
+		if network.Contains(ip) {
+			return true
 		}
 	}
+	return false
+}
 
-	// 2. Check X-Real-IP header (for nginx proxy)
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
+func remoteAddrIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return host
 	}
+	if ip := net.ParseIP(strings.TrimSpace(remoteAddr)); ip != nil {
+		return ip.String()
+	}
+	return strings.TrimSpace(remoteAddr)
+}
 
-	// 3. Fall back to RemoteAddr
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+func firstForwardedIP(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || strings.EqualFold(part, "unknown") {
+			continue
+		}
+		if ip := net.ParseIP(part); ip != nil {
+			return ip.String()
+		}
 	}
-	return host
+	return ""
+}
+
+// getClientIP extracts the client IP address from the request. Forwarded
+// headers are trusted only when the immediate peer is a trusted proxy
+// (loopback by default, plus TRUSTED_PROXIES as comma-separated IP/CIDR
+// entries). This preserves the bundled nginx setup while preventing direct
+// clients from spoofing X-Forwarded-For to bypass login rate limits.
+func getClientIP(r *http.Request) string {
+	remoteIP := remoteAddrIP(r.RemoteAddr)
+	if isTrustedProxyIP(net.ParseIP(remoteIP)) {
+		if ip := firstForwardedIP(r.Header.Get("X-Forwarded-For")); ip != "" {
+			return ip
+		}
+		if ip := firstForwardedIP(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
+		}
+	}
+	return remoteIP
 }
 
 // handleAuthLogin authenticates and returns a token

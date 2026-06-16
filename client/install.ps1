@@ -60,6 +60,28 @@ function Write-Success($msg) { Write-Host "[SUCCESS] " -ForegroundColor Green -N
 function Write-Warn($msg) { Write-Host "[WARNING] " -ForegroundColor Yellow -NoNewline; Write-Host $msg }
 function Write-Err($msg) { Write-Host "[ERROR] " -ForegroundColor Red -NoNewline; Write-Host $msg }
 
+function Assert-NoNewline($Name, $Value) {
+    if ($null -ne $Value -and $Value -match "[`r`n]") {
+        Write-Err "$Name must not contain newlines"
+        exit 1
+    }
+}
+
+function Test-ConfigValues {
+    Assert-NoNewline "Agent ID" $script:AgentId
+    Assert-NoNewline "Agent name" $script:AgentName
+    Assert-NoNewline "Server URL" $script:ServerBase
+    Assert-NoNewline "Client port" $script:ClientPort
+    Assert-NoNewline "Secret" $script:Secret
+}
+
+function Escape-BatchValue($Value) {
+    if ($null -eq $Value) {
+        return ""
+    }
+    return [string]$Value -replace "%", "%%"
+}
+
 # Print banner
 function Show-Banner {
     Write-Host ""
@@ -189,14 +211,14 @@ function New-StartupScript {
     $scriptContent = @"
 @echo off
 cd /d "$InstallDir"
-set AGENT_ID=$($script:AgentId)
-set AGENT_NAME=$($script:AgentName)
-set SERVER_BASE=$($script:ServerBase)
-set CLIENT_PORT=$($script:ClientPort)
+set "AGENT_ID=$(Escape-BatchValue $script:AgentId)"
+set "AGENT_NAME=$(Escape-BatchValue $script:AgentName)"
+set "SERVER_BASE=$(Escape-BatchValue $script:ServerBase)"
+set "CLIENT_PORT=$(Escape-BatchValue $script:ClientPort)"
 "@
     
     if (-not [string]::IsNullOrEmpty($script:Secret)) {
-        $scriptContent += "`nset SECRET=$($script:Secret)"
+        $scriptContent += "`nset `"SECRET=$(Escape-BatchValue $script:Secret)`""
     }
     
     # Add infinite restart loop to match Linux behavior (Restart=always)
@@ -315,6 +337,7 @@ function Main {
     }
     
     Get-RequiredValues
+    Test-ConfigValues
     Get-Binary
     Add-FirewallRule
     New-StartupScript
@@ -324,4 +347,3 @@ function Main {
 
 # Run main function
 Main
-

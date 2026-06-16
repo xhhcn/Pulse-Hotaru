@@ -124,6 +124,19 @@ warn_if_plaintext() {
   fi
 }
 
+detect_docker_data_dir() {
+  local cid source
+  while IFS= read -r cid; do
+    [[ -z "$cid" ]] && continue
+    source="$(docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+    if [[ -n "$source" ]]; then
+      printf '%s\n' "$source"
+      return 0
+    fi
+  done < <(docker compose ps -q 2>/dev/null || true)
+  return 1
+}
+
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 if [[ -z "$OUTPUT" ]]; then
   OUTPUT="pulse-backup-${TS}.db"
@@ -193,20 +206,22 @@ case "$MODE" in
         echo "error: no docker-compose.y(a)ml in $(pwd); use --data-dir or --compose-dir" >&2
         exit 5
       fi
-      compose_file="docker-compose.yaml"
-      [[ -f docker-compose.yml && ! -f docker-compose.yaml ]] && compose_file="docker-compose.yml"
-      DATA_DIR="$(awk '
-        /volumes:/ {in_v=1; next}
-        in_v && /^[[:space:]]*-[[:space:]]/ {
-          line=$0
-          sub(/^[[:space:]]*-[[:space:]]+/, "", line)
-          if (match(line, /:\/app\/data(:|$)/)) {
-            host=substr(line, 1, RSTART-1)
-            print host; exit
+      if ! DATA_DIR="$(detect_docker_data_dir)"; then
+        compose_file="docker-compose.yaml"
+        [[ -f docker-compose.yml && ! -f docker-compose.yaml ]] && compose_file="docker-compose.yml"
+        DATA_DIR="$(awk '
+          /volumes:/ {in_v=1; next}
+          in_v && /^[[:space:]]*-[[:space:]]/ {
+            line=$0
+            sub(/^[[:space:]]*-[[:space:]]+/, "", line)
+            if (match(line, /:\/app\/data(:|$)/)) {
+              host=substr(line, 1, RSTART-1)
+              print host; exit
+            }
           }
-        }
-        in_v && /^[^[:space:]]/ {in_v=0}
-      ' "$compose_file")"
+          in_v && /^[^[:space:]]/ {in_v=0}
+        ' "$compose_file")"
+      fi
       if [[ -z "$DATA_DIR" ]]; then
         echo "error: could not auto-detect host data directory; pass --data-dir" >&2
         exit 5

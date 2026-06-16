@@ -14,6 +14,35 @@ func resetTrustedProxiesForTest(t *testing.T, env string) {
 	trustedProxyNets = nil
 }
 
+func TestStaticFilePathFromURL(t *testing.T) {
+	valid := map[string]string{
+		"/":                           "index.html",
+		"/admin":                      "admin",
+		"/admin/":                     "admin",
+		"/_astro/hoisted.ABC123.js":   "_astro/hoisted.ABC123.js",
+		"/dashboard../data/config.js": "dashboard../data/config.js",
+	}
+	for input, want := range valid {
+		got, ok := staticFilePathFromURL(input)
+		if !ok || got != want {
+			t.Fatalf("staticFilePathFromURL(%q) = %q, %v; want %q, true", input, got, ok, want)
+		}
+	}
+
+	invalid := []string{
+		"/../server/main.go",
+		"/_astro/../index.html",
+		"/./admin",
+		"/admin//index.html",
+		`/admin\index.html`,
+	}
+	for _, input := range invalid {
+		if got, ok := staticFilePathFromURL(input); ok {
+			t.Fatalf("staticFilePathFromURL(%q) = %q, true; want invalid", input, got)
+		}
+	}
+}
+
 func TestGetClientIPIgnoresForwardedHeadersFromUntrustedPeer(t *testing.T) {
 	resetTrustedProxiesForTest(t, "")
 	req := httptest.NewRequest("GET", "/", nil)

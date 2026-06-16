@@ -70,6 +70,18 @@ func hasEmbeddedFiles() bool {
 	return true
 }
 
+func staticFilePathFromURL(urlPath string) (string, bool) {
+	path := strings.TrimPrefix(urlPath, "/")
+	path = strings.TrimSuffix(path, "/")
+	if path == "" {
+		return "index.html", true
+	}
+	if path == "." || strings.Contains(path, "\\") || !fs.ValidPath(path) {
+		return "", false
+	}
+	return path, true
+}
+
 type SystemMetric struct {
 	ID                 string                      `json:"id"`
 	Name               string                      `json:"name"`
@@ -1197,10 +1209,13 @@ func main() {
 				return
 			}
 
-			// Handle static files
-			path := strings.TrimPrefix(r.URL.Path, "/")
-			if path == "" {
-				path = "index.html"
+			// Handle static files. Reject invalid filesystem paths before
+			// any embedded-FS lookup or SPA fallback so traversal probes such
+			// as /../admin never turn into a successful index.html response.
+			path, ok := staticFilePathFromURL(r.URL.Path)
+			if !ok {
+				http.NotFound(w, r)
+				return
 			}
 
 			// Try to open the file from embedded FS
@@ -3419,14 +3434,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 // This is critical when the server is behind a CDN (e.g., Cloudflare, CloudFront)
 func cdnFriendlyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only apply to API endpoints (not static files)
+		// Only apply to API endpoints (not static files). Set this before
+		// dispatch so direct http.Error responses (401/404/405, etc.) cannot
+		// be cached by browsers or intermediary CDNs either.
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			// For POST/PUT/DELETE requests, ensure they are never cached
-			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
-				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, private")
-				w.Header().Set("Pragma", "no-cache")
-				w.Header().Set("Expires", "0")
-			}
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, private")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
 		}
 		next.ServeHTTP(w, r)
 	})

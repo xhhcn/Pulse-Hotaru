@@ -1602,8 +1602,13 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 		// no tick yet): build one. Reconnect storms after a restart or a CDN
 		// blip otherwise turn into one full DB scan + marshal per viewer.
 		if snapshot, err := buildMetricsSnapshot(store, globalClientRegistry, isAdmin); err == nil {
+			viewName := "public"
+			if isAdmin {
+				viewName = "admin"
+			}
 			if b, merr := json.Marshal(map[string]interface{}{
 				"type":    "metric_updated",
+				"view":    viewName,
 				"systems": snapshot,
 				"count":   len(snapshot),
 			}); merr == nil {
@@ -1778,8 +1783,13 @@ func broadcastMetricsSnapshot(store *Store, registry *ClientRegistry, broker *SS
 		publicMetrics[i].Secret = ""
 	}
 
+	// "view" tells the subscriber which masking it received. The admin
+	// dashboard uses it to notice that its session expired (the server
+	// silently downgrades an SSE stream with a stale admin_token to the
+	// public view) and re-authenticates instead of rendering blank IPs.
 	publicJSON, err := json.Marshal(map[string]interface{}{
 		"type":    "metric_updated",
+		"view":    "public",
 		"systems": publicMetrics,
 		"count":   len(publicMetrics),
 	})
@@ -1789,6 +1799,7 @@ func broadcastMetricsSnapshot(store *Store, registry *ClientRegistry, broker *SS
 	}
 	adminJSON, err := json.Marshal(map[string]interface{}{
 		"type":    "metric_updated",
+		"view":    "admin",
 		"systems": adminMetrics,
 		"count":   len(adminMetrics),
 	})

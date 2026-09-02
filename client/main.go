@@ -582,7 +582,6 @@ func registerWithServer() {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "PulseClient/1.0")
 		req.Header.Set("Connection", "keep-alive")
-		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
 
 		resp, err := httpClient.Do(req)
 		if err != nil {

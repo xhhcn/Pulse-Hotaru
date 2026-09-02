@@ -4917,15 +4917,31 @@ func remoteAddrIP(remoteAddr string) string {
 	return strings.TrimSpace(remoteAddr)
 }
 
-func firstForwardedIP(header string) string {
-	for _, part := range strings.Split(header, ",") {
-		part = strings.TrimSpace(part)
+// forwardedClientIP returns the client address from an X-Forwarded-For
+// chain as seen by the trusted proxy that delivered the request.
+//
+// The chain is read from the right: each trusted proxy appends the address
+// it accepted the connection from, so the right-most entry that is not
+// itself a trusted proxy is the real client. Reading from the left (the
+// previous behaviour) trusted whatever the client put in the header before
+// the CDN appended the real address, which let anyone spoof their IP and
+// walk around the login rate limit and the per-IP SSE cap once a CDN such
+// as Cloudflare was listed in TRUSTED_PROXIES.
+func forwardedClientIP(header string) string {
+	parts := strings.Split(header, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
 		if part == "" || strings.EqualFold(part, "unknown") {
 			continue
 		}
-		if ip := net.ParseIP(part); ip != nil {
-			return ip.String()
+		ip := net.ParseIP(part)
+		if ip == nil {
+			continue
 		}
+		if isTrustedProxyIP(ip) {
+			continue // hop added by another trusted proxy in the chain
+		}
+		return ip.String()
 	}
 	return ""
 }
@@ -4938,10 +4954,10 @@ func firstForwardedIP(header string) string {
 func getClientIP(r *http.Request) string {
 	remoteIP := remoteAddrIP(r.RemoteAddr)
 	if isTrustedProxyIP(net.ParseIP(remoteIP)) {
-		if ip := firstForwardedIP(r.Header.Get("X-Forwarded-For")); ip != "" {
+		if ip := forwardedClientIP(r.Header.Get("X-Forwarded-For")); ip != "" {
 			return ip
 		}
-		if ip := firstForwardedIP(r.Header.Get("X-Real-IP")); ip != "" {
+		if ip := forwardedClientIP(r.Header.Get("X-Real-IP")); ip != "" {
 			return ip
 		}
 	}

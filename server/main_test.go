@@ -61,6 +61,34 @@ func TestGetClientIPTrustsLoopbackProxy(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:4321"
 	req.Header.Set("X-Forwarded-For", "203.0.113.99, 10.0.0.20")
 
+	// The right-most hop is what the trusted proxy actually saw; the
+	// left-most entry could have been supplied by the client itself.
+	if got, want := getClientIP(req), "10.0.0.20"; got != want {
+		t.Fatalf("getClientIP() = %q, want %q", got, want)
+	}
+}
+
+func TestGetClientIPIgnoresClientSuppliedForwardedPrefixBehindCDN(t *testing.T) {
+	// Cloudflare (trusted) appends the connecting IP to whatever
+	// X-Forwarded-For the client sent. The spoofed prefix must not win.
+	resetTrustedProxiesForTest(t, "173.245.48.0/20")
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "173.245.48.7:443"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 198.51.100.9")
+
+	if got, want := getClientIP(req), "198.51.100.9"; got != want {
+		t.Fatalf("getClientIP() = %q, want %q", got, want)
+	}
+}
+
+func TestGetClientIPSkipsTrustedHopsInsideTheChain(t *testing.T) {
+	// nginx (loopback) behind Cloudflare: chain is "client, cf-edge" and
+	// the peer is nginx; the trusted edge entry is skipped.
+	resetTrustedProxiesForTest(t, "173.245.48.0/20")
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99, 173.245.48.7")
+
 	if got, want := getClientIP(req), "203.0.113.99"; got != want {
 		t.Fatalf("getClientIP() = %q, want %q", got, want)
 	}

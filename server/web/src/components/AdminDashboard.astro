@@ -170,6 +170,30 @@ const customCodePlaceholder = [
           <p class="mt-1 text-xs text-[#737373]" data-translate="tagsHint">输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。</p>
         </div>
 
+        <!-- Per-system visibility toggles (admin-only; agents never touch them) -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2">
+            <div class="flex-1 pr-3">
+              <label for="edit-show-on-home" class="block text-sm font-medium text-[#262626]" data-translate="showOnHomeLabel">首页展示该服务</label>
+              <p class="text-xs text-[#525252]" data-translate="showOnHomeDesc">关闭后首页不再展示该服务，API 与管理页仍然可见。</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="edit-show-on-home" name="show_on_home" class="sr-only peer" checked>
+              <div class="w-11 h-6 bg-[#d4d4d4] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+            </label>
+          </div>
+          <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2">
+            <div class="flex-1 pr-3">
+              <label for="edit-show-tcping" class="block text-sm font-medium text-[#262626]" data-translate="showTcpingLabel">展示 TCPing</label>
+              <p class="text-xs text-[#525252]" data-translate="showTcpingDesc">关闭后首页不再展示该服务的 TCPing 图表。</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="edit-show-tcping" name="show_tcping" class="sr-only peer" checked>
+              <div class="w-11 h-6 bg-[#d4d4d4] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500/60 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+            </label>
+          </div>
+        </div>
+
         <div class="rounded-lg bg-[#282828] bg-[#f5f5f5] p-3">
           <p class="text-xs text-[#525252]">
             <strong data-translate="note">注意:</strong> <span data-translate="noteContent">IP 地址、位置、操作系统和指标由代理自动更新，无法手动编辑。</span>
@@ -968,6 +992,11 @@ const customCodePlaceholder = [
         }
       }
       
+      // Visibility toggles: the wire format is inverted (hide_*), the UI is
+      // positively phrased ("show ..."), default = shown.
+      form.elements['show_on_home'].checked = system.hide_on_home !== true;
+      form.elements['show_tcping'].checked = system.hide_tcping !== true;
+
       // Open modal with animation
       openModalWithAnimation(editModal);
     } else {
@@ -1080,7 +1109,10 @@ const customCodePlaceholder = [
       total_net_out_bytes: Number(item.total_net_out_bytes || 0),
       cpu_model: String(item.cpu_model || ''),
       order: Number(item.order || 0),
-      tags: Array.isArray(item.tags) ? item.tags : []
+      tags: Array.isArray(item.tags) ? item.tags : [],
+      // Admin visibility toggles (absent on the wire when false: omitempty)
+      hide_on_home: item.hide_on_home === true,
+      hide_tcping: item.hide_tcping === true
     };
   }
 
@@ -1111,6 +1143,8 @@ const customCodePlaceholder = [
       old.total_net_out_bytes !== new_.total_net_out_bytes ||
       old.cpu_model !== new_.cpu_model ||
       old.order !== new_.order ||
+      old.hide_on_home !== new_.hide_on_home ||
+      old.hide_tcping !== new_.hide_tcping ||
       tagsChanged // Include tags in change detection
     );
   }
@@ -1172,7 +1206,9 @@ const customCodePlaceholder = [
                 String(system.ipv6 || '') + '|' +
                 String(system.os || '') + '|' +
                 String(system.cpu_model || '') + '|' +
-                String(system.virtualization_type || '')
+                String(system.virtualization_type || '') + '|' +
+                (system.hide_on_home === true ? '1' : '0') + '|' +
+                (system.hide_tcping === true ? '1' : '0')
               )}'
               title="Edit system"
               aria-label="Edit system"
@@ -2044,12 +2080,14 @@ const customCodePlaceholder = [
               String(item.ipv6 || '') + '|' +
               String(item.os || '') + '|' +
               String(item.cpu_model || '') + '|' +
-              String(item.virtualization_type || '');
+              String(item.virtualization_type || '') + '|' +
+              (item.hide_on_home === true ? '1' : '0') + '|' +
+              (item.hide_tcping === true ? '1' : '0');
             if (oldEditPayload !== newEditPayload) {
               // Use original item data from API response (includes tags,
               // secret, etc.) for data-system attribute; the modal
               // reads it directly when "Edit" is clicked.
-              editBtn.dataset.system = JSON.stringify(item).replace(/'/g, "&apos;");
+              editBtn.dataset.system = JSON.stringify(item);
               editBtn.dataset.editKey = newEditPayload;
             }
           }
@@ -2939,6 +2977,8 @@ const customCodePlaceholder = [
         agent_version: '1.0.0',
         alert: false,
         tags: tags,
+        hide_on_home: !editForm.elements['show_on_home'].checked,
+        hide_tcping: !editForm.elements['show_tcping'].checked,
       };
 
 
@@ -4363,6 +4403,10 @@ const customCodePlaceholder = [
     'myServer': { en: 'My Server', zh: '我的服务器' },
     'tags': { en: 'Tags', zh: '标签' },
     'tagsCommaSeparated': { en: '(comma-separated)', zh: '（逗号分隔）' },
+    'showOnHomeLabel': { en: 'Show on homepage', zh: '首页展示该服务' },
+    'showOnHomeDesc': { en: 'When off, the homepage hides this service; the API and admin page still list it.', zh: '关闭后首页不再展示该服务，API 与管理页仍然可见。' },
+    'showTcpingLabel': { en: 'Show TCPing', zh: '展示 TCPing' },
+    'showTcpingDesc': { en: 'When off, the homepage hides the TCPing chart for this service.', zh: '关闭后首页不再展示该服务的 TCPing 图表。' },
     'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro). Prefix with spr:/spy:/spb: for a red/amber/blue gradient badge.', zh: '输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。' },
     'cancel': { en: 'Cancel', zh: '取消' },
     'updateSystem': { en: '更新服务', zh: '更新服务' },

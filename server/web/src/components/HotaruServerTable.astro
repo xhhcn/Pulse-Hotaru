@@ -668,12 +668,37 @@
        eventual config probe confirms this deployment has zero
        tcping targets configured (handled below in the script
        init warm-up and again defensively in ensureTcpingChart).  */
+    /* The deployment-wide "are there any tcping targets" fact lives in
+       cachedTcpingConfig (unknown = assume yes so the card chrome is
+       ready when the row opens). Per-row, the admin can additionally
+       hide the card via `hide_tcping` (tcping.hiddenByAdmin). Every
+       place that would reveal or collapse the card goes through
+       applyTcpingVisibility so the two reasons can never disagree. */
+    function deploymentHasTcpingTargets() {
+      return !(cachedTcpingConfig
+               && Array.isArray(cachedTcpingConfig.targets)
+               && cachedTcpingConfig.targets.length === 0);
+    }
+    function applyTcpingVisibility(entry) {
+      const tcping = entry && entry.tcping;
+      if (!tcping || !tcping.wrap) return;
+      const hidden = tcping.hiddenByAdmin === true || !deploymentHasTcpingTargets();
+      if (tcping.wrap.hidden !== hidden) {
+        tcping.wrap.hidden = hidden;
+        syncExpandHeight(entry.detail);
+        /* Re-shown while the row is already expanded: the row click that
+           normally triggers the lazy chart build has long passed, so
+           build it now instead of leaving an empty card. */
+        if (!hidden && entry.detail && entry.detail.classList.contains('is-open')) {
+          ensureTcpingChart(tcping.id, tcping);
+        }
+      }
+    }
+
     function buildTcpingSection(id) {
       const wrap = document.createElement('div');
       wrap.className = 'hotaru-tcping';
-      wrap.hidden = !!(cachedTcpingConfig
-                       && Array.isArray(cachedTcpingConfig.targets)
-                       && cachedTcpingConfig.targets.length === 0);
+      wrap.hidden = !deploymentHasTcpingTargets();
       wrap.dataset.tcpingFor = String(id);
       /* Stop clicks inside the chart card from bubbling up to
          the row click handler that would otherwise collapse the
@@ -792,6 +817,7 @@
        still waits for the panel to settle so Chart.js measures the
        real canvas size on its first layout pass.                  */
     async function ensureTcpingChart(id, tcping) {
+      if (tcping.hiddenByAdmin) return;
       if (tcping.initialized) {
         /* Already running; just nudge a refresh in case a long time
            has passed since the last sample landed, and force a
@@ -1420,12 +1446,7 @@
       const targets = cfg.targets.filter((t) => t && t.address);
       const hasTargets = targets.length > 0;
 
-      rowMap.forEach((entry) => {
-        if (entry && entry.tcping && entry.tcping.wrap) {
-          entry.tcping.wrap.hidden = !hasTargets;
-          syncExpandHeight(entry.detail);
-        }
-      });
+      rowMap.forEach((entry) => applyTcpingVisibility(entry));
 
       if (!hasTargets) {
         rowMap.forEach((entry) => {
@@ -1451,8 +1472,7 @@
       rowMap.forEach((entry, id) => {
         const tcping = entry && entry.tcping;
         if (!tcping) return;
-        if (tcping.wrap) tcping.wrap.hidden = false;
-        syncExpandHeight(entry.detail);
+        applyTcpingVisibility(entry);
 
         if (!tcping.initialized || !tcpingState.has(id)) {
           tcping.initialized = false;
@@ -1917,6 +1937,13 @@
 
     function updateRowEntry(entry, item) {
       const isOffline  = !!item.alert;
+
+      /* Admin per-system toggle: `hide_tcping` removes the tcping card
+         for this row (and stops the lazy chart init, see ensureTcpingChart). */
+      if (entry.tcping) {
+        entry.tcping.hiddenByAdmin = item.hide_tcping === true;
+        applyTcpingVisibility(entry);
+      }
       const isPristine = isOffline && isPristineItem(item);
       const r = entry.refs;
 
@@ -2089,8 +2116,10 @@
       }
 
       if (list.length === 0) {
-        paintPlaceholder(t('暂无服务器，请到管理面板添加。',
-                           'No servers yet — add one in the admin panel.'));
+        paintPlaceholder(hiddenByAdminCount > 0
+          ? t('暂无可展示的服务器。', 'No servers to show.')
+          : t('暂无服务器，请到管理面板添加。',
+              'No servers yet — add one in the admin panel.'));
         if (firstRender) {
           firstRender = false;
           dismissInitialLoader();
@@ -2217,6 +2246,7 @@
          admin-configured probe interval per open chart, not
          once per 3-s broadcast.                                   */
       tcpingState.forEach((tcping, id) => {
+        if (tcping.hiddenByAdmin) return;
         const detailRow = document.querySelector('tr.hotaru-expand[data-expand-for="' + cssEscape(String(id)) + '"]');
         if (!detailRow || !detailRow.classList.contains('is-open')) return;
         refreshTcpingChart(id, tcping);
@@ -2240,8 +2270,9 @@
         if (!res.ok) { showError(); return false; }
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data && (data.systems || data.metrics || data.items)) || [];
-        render(list);
-        broadcast(list);
+        const shown = visibleSystems(list);
+        render(shown);
+        broadcast(shown);
         return true;
       } catch (_) {
         showError();
@@ -2273,14 +2304,32 @@
       clearTimeout(watchdogId);
       watchdogId = setTimeout(async () => {
         if (Date.now() - lastEventAt >= STALE_MS) {
-          // Stream looks silent; do one HTTP poll to repaint, then
-          // re-arm. We do NOT fall back to recurring polling — that
-          // would defeat the whole point of switching to SSE.
+          // The server pushes an update every ~3 s, so 45 s of silence
+          // means the TCP stream is half-open (NAT / CDN dropped it
+          // without a FIN, so `onerror` never fires). Tear the
+          // EventSource down and reconnect, exactly like the admin
+          // page does; a one-shot poll repaints meanwhile. This
+          // never turns into recurring polling: once the new stream
+          // delivers, lastEventAt advances and the watchdog is quiet.
+          try { if (evtSource) evtSource.close(); } catch (_) {}
+          evtSource = null;
           await fetchOnce();
           lastEventAt = Date.now();
+          scheduleReconnect();
         }
         armWatchdog();
       }, STALE_MS);
+    }
+
+    /* Admin per-system toggle: `hide_on_home` rows stay in the API and
+       the admin dashboard but never reach the public table or the card
+       grid (which renders from our broadcast). */
+    let hiddenByAdminCount = 0;
+    function visibleSystems(list) {
+      if (!Array.isArray(list)) return list;
+      const shown = list.filter((s) => !(s && s.hide_on_home === true));
+      hiddenByAdminCount = list.length - shown.length;
+      return shown;
     }
 
     function applyEventPayload(raw) {
@@ -2298,8 +2347,9 @@
         ? payload
         : (payload && (payload.systems || payload.metrics || payload.items)) || null;
       if (!Array.isArray(list)) return;
-      render(list);
-      broadcast(list);
+      const shown = visibleSystems(list);
+      render(shown);
+      broadcast(shown);
       lastEventAt = Date.now();
     }
 
@@ -2375,12 +2425,11 @@
       const hasTargets = !!(cfg
                             && Array.isArray(cfg.targets)
                             && cfg.targets.length > 0);
-      if (!hasTargets) {
-        document.querySelectorAll('.hotaru-tcping').forEach((el) => {
-          el.hidden = true;
-        });
-        return;
-      }
+      /* cachedTcpingConfig is populated now; re-evaluate every row through
+         the single visibility rule so expand panels that were measured
+         with the card visible get their height corrected. */
+      rowMap.forEach((entry) => applyTcpingVisibility(entry));
+      if (!hasTargets) return;
       loadChartJs();
     });
 

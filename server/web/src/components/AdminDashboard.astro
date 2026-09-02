@@ -705,6 +705,13 @@ const customCodePlaceholder = [
       });
     }
     
+    // A close animation may still be pending from a click ~150 ms ago;
+    // cancel it, otherwise its timer hides the freshly opened modal and
+    // runs the reset callback over the user's new input.
+    if (modal._closeTimer) { clearTimeout(modal._closeTimer); modal._closeTimer = null; }
+    modal.classList.remove('modal-backdrop-exit');
+    if (content) content.classList.remove('modal-content-exit');
+    
     // Move modal to body to avoid transform stacking context issues
     document.body.appendChild(modal);
     
@@ -740,7 +747,8 @@ const customCodePlaceholder = [
     }
     
     // Hide modal after animation completes
-    setTimeout(() => {
+    modal._closeTimer = setTimeout(() => {
+      modal._closeTimer = null;
       modal.classList.add('hidden');
       modal.classList.remove('flex');
       modal.classList.remove('modal-backdrop-exit');
@@ -1283,15 +1291,15 @@ const customCodePlaceholder = [
                    surrounding row never jitters as the byte count grows. -->
               <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
                 ${system.total_net_in_bytes ? `
-                <div class="flex items-center min-h-[22px]">
+                <div class="traffic-row-in flex items-center min-h-[22px]">
                   <span class="system-total-net-in text-[#525252]">In: ${formatBytes(system.total_net_in_bytes)}</span>
                 </div>
-                ` : '<div class="min-h-[22px]"></div>'}
+                ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
                 ${system.total_net_out_bytes ? `
-                <div class="flex items-center min-h-[22px]">
+                <div class="traffic-row-out flex items-center min-h-[22px]">
                   <span class="system-total-net-out text-[#525252]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
                 </div>
-                ` : '<div class="min-h-[22px]"></div>'}
+                ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
               </div>
               ` : ''}
             </div>
@@ -1299,7 +1307,7 @@ const customCodePlaceholder = [
             <!-- Copy Linux Install Command Button (mingcute:linux-fill) -->
             <button 
               class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-orange-400 hover:text-orange-600 self-center"
-              data-system-id="${system.id}"
+              data-system-id="${escapeHtmlAttr(system.id || '')}"
               title="Copy Linux install command"
               aria-label="Copy Linux install command"
             >
@@ -1314,7 +1322,7 @@ const customCodePlaceholder = [
             <!-- Copy Windows Install Command Button (mingcute:windows-fill) -->
             <button 
               class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-blue-400 hover:text-blue-600 self-center"
-              data-system-id="${system.id}"
+              data-system-id="${escapeHtmlAttr(system.id || '')}"
               title="Copy Windows install command"
               aria-label="Copy Windows install command"
             >
@@ -1819,15 +1827,15 @@ const customCodePlaceholder = [
         const trafficHTML = `
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
-            <div class="flex items-center min-h-[22px]">
+            <div class="traffic-row-in flex items-center min-h-[22px]">
               <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
-            ` : '<div class="min-h-[22px]"></div>'}
+            ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
-            <div class="flex items-center min-h-[22px]">
+            <div class="traffic-row-out flex items-center min-h-[22px]">
               <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
-            ` : '<div class="min-h-[22px]"></div>'}
+            ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
           </div>
         `;
         const tempDiv = document.createElement('div');
@@ -1840,8 +1848,7 @@ const customCodePlaceholder = [
       
       // Update In traffic value
       if (trafficContainer) {
-        const allRows = trafficContainer.querySelectorAll('.flex.items-center');
-        let inRow = allRows[0]; // First row is In
+        let inRow = trafficContainer.querySelector('.traffic-row-in');
         
         if (item.total_net_in_bytes && item.total_net_in_bytes > 0) {
           const formattedIn = typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B';
@@ -1880,15 +1887,15 @@ const customCodePlaceholder = [
         const trafficHTML = `
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
-            <div class="flex items-center min-h-[22px]">
+            <div class="traffic-row-in flex items-center min-h-[22px]">
               <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
-            ` : '<div class="min-h-[22px]"></div>'}
+            ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
-            <div class="flex items-center min-h-[22px]">
+            <div class="traffic-row-out flex items-center min-h-[22px]">
               <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
-            ` : '<div class="min-h-[22px]"></div>'}
+            ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
           </div>
         `;
         const tempDiv = document.createElement('div');
@@ -1901,8 +1908,7 @@ const customCodePlaceholder = [
       
       // Update Out traffic value
       if (trafficContainer) {
-        const allRows = trafficContainer.querySelectorAll('.flex.items-center');
-        let outRow = allRows[1]; // Second row is Out
+        let outRow = trafficContainer.querySelector('.traffic-row-out');
         
         if (item.total_net_out_bytes && item.total_net_out_bytes > 0) {
           const formattedOut = typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B';
@@ -2091,6 +2097,10 @@ const customCodePlaceholder = [
               editBtn.dataset.editKey = newEditPayload;
             }
           }
+          const deleteBtn = itemElement.querySelector('.delete-btn');
+          if (deleteBtn && deleteBtn.dataset.systemName !== String(item.name || '')) {
+            deleteBtn.dataset.systemName = String(item.name || '');
+          }
         } else {
           // Item was removed from cache, skip update (should be handled by re-render)
         }
@@ -2104,7 +2114,7 @@ const customCodePlaceholder = [
         let insertBefore = null;
         for (let i = index + 1; i < data.length; i++) {
           const nextId = data[i].id;
-          const nextItem = container.querySelector(`[data-system-id="${nextId}"]`);
+          const nextItem = container.querySelector(`[data-system-id="${CSS.escape(String(nextId))}"]`);
           if (nextItem) {
             insertBefore = nextItem;
             break;
@@ -2403,6 +2413,9 @@ const customCodePlaceholder = [
       await renderSystemsSerialized(data);
     } catch (err) {
       console.error('Failed to load systems:', err);
+      // The list DOM is replaced below; forget the diff cache too, otherwise
+      // the next SSE frame appends rows underneath this banner forever.
+      currentData = new Map();
       container.innerHTML = `
         <div class="text-center py-12">
           <p class="text-sm text-red-500">加载服务失败</p>
@@ -2439,9 +2452,6 @@ const customCodePlaceholder = [
 
   // Show temporary message
   function showMessage(text, type = 'info') {
-    const container = document.getElementById('systems-container');
-    if (!container) return;
-
     const messageEl = document.createElement('div');
     messageEl.className = `fixed top-4 right-4 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 ${
       type === 'success' ? 'bg-green-500 text-white' : 
@@ -2877,19 +2887,32 @@ const customCodePlaceholder = [
       }
 
       // Get existing systems to generate unique numeric ID
+      const addSubmitBtn = addForm.querySelector('button[type="submit"]');
+      if (addSubmitBtn && addSubmitBtn.disabled) return; // a submit is already in flight
+      if (addSubmitBtn) addSubmitBtn.disabled = true;
+      const releaseSubmit = () => { if (addSubmitBtn) addSubmitBtn.disabled = false; };
+
       let existingIds = [];
       try {
         const existingRes = await fetch(`${apiBase}/api/metrics`);
+        if (!existingRes.ok) throw new Error(`HTTP ${existingRes.status}`);
         const existingData = await existingRes.json();
-        if (Array.isArray(existingData)) {
-          existingIds = existingData.map(s => {
-            // Extract numeric part from ID (handle both "123" and "server-123" formats)
-            const match = s.id.toString().match(/\d+/);
-            return match ? parseInt(match[0]) : 0;
-          });
-        }
+        if (!Array.isArray(existingData)) throw new Error('unexpected response');
+        existingIds = existingData.map(s => {
+          // Extract numeric part from ID (handle both "123" and "server-123" formats)
+          const match = String(s.id).match(/\d+/);
+          return match ? parseInt(match[0]) : 0;
+        });
       } catch (err) {
-        // Could not fetch existing systems
+        /* Without the current list we cannot pick a free id; guessing
+           "1" would silently rename an existing system. */
+        if (messageEl) {
+          messageEl.className = 'text-sm text-red-500';
+          messageEl.textContent = '❌ 无法读取现有服务列表，请稍后重试：' + err.message;
+          messageEl.classList.remove('hidden');
+        }
+        releaseSubmit();
+        return;
       }
 
       // Generate unique numeric ID
@@ -2932,6 +2955,8 @@ const customCodePlaceholder = [
           messageEl.textContent = '❌ Failed to add system: ' + err.message;
           messageEl.classList.remove('hidden');
         }
+      } finally {
+        releaseSubmit();
       }
     });
   }
@@ -3271,14 +3296,14 @@ const customCodePlaceholder = [
         class="target-name-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
         placeholder="目标名称"
         data-placeholder-en="Target Name" data-placeholder-zh="目标名称"
-        value="${target.name || ''}"
+        value="${escapeHtmlAttr(target.name || '')}"
         required
       />
       <input
         type="text"
         class="target-address-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
         placeholder="8.8.8.8:53"
-        value="${target.address || ''}"
+        value="${escapeHtmlAttr(target.address || '')}"
         required
       />
       <button
@@ -3615,6 +3640,10 @@ const customCodePlaceholder = [
         }
         
         // Update current share link if exists
+        /* Seed the hidden fields the save handler reads, so saving without
+           pressing "generate" keeps the existing link instead of revoking
+           it (an empty share_token is an explicit revoke server-side). */
+        setPrivacyHiddenFields(config.share_token || '', Number(config.expires_in_seconds) || 0);
         if (config.share_token && config.share_token !== '') {
           const shareUrl = `${window.location.origin}/?token=${config.share_token}`;
           if (currentShareLinkInput) {
@@ -3798,6 +3827,17 @@ const customCodePlaceholder = [
       tempExpiresInput.value = '0';
     }
   });
+
+  function setPrivacyHiddenFields(token, seconds) {
+    if (!privacyConfigForm) return;
+    const ensure = (id, name) => {
+      let el = document.getElementById(id);
+      if (!el) { el = document.createElement('input'); el.type = 'hidden'; el.id = id; el.name = name; privacyConfigForm.appendChild(el); }
+      return el;
+    };
+    ensure('temp-share-token', 'share_token').value = token;
+    ensure('temp-expires-in-seconds', 'expires_in_seconds').value = String(seconds);
+  }
 
   // Handle privacy config form submission
   privacyConfigForm?.addEventListener('submit', async (e) => {
@@ -4252,6 +4292,20 @@ const customCodePlaceholder = [
     }, base + jitter);
   }
 
+  let sessionLostHandled = false;
+  async function handleSessionLost() {
+    if (sessionLostHandled) return;
+    sessionLostHandled = true;
+    try {
+      const token = localStorage.getItem('admin_auth_token') || '';
+      const res = await fetch(`${apiBase}/api/auth/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      const data = res.ok ? await res.json() : { valid: false };
+      if (data && data.valid) { sessionLostHandled = false; connectSSE(); return; }
+    } catch (_) {}
+    localStorage.removeItem('admin_auth_token');
+    window.location.href = '/login?redirect=/admin';
+  }
+
   function connectSSE() {
     if (eventSource) {
       eventSource.close();
@@ -4313,6 +4367,12 @@ const customCodePlaceholder = [
       }
 
       if (update.type === 'metric_updated') {
+        /* The server downgrades a stream whose admin_token is no longer
+           valid (restart, 24 h expiry) to the public view instead of
+           failing it. Rendering that would blank every IP and strip the
+           secret from install commands, so verify the session and go
+           back through /login. */
+        if (update.view === 'public') { handleSessionLost(); return; }
         if (Array.isArray(update.systems)) {
           debouncedRenderSystems(update.systems);
         } else {
@@ -4347,6 +4407,8 @@ const customCodePlaceholder = [
       loadSystems();
     }
   }, 2500);
+
+  window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {

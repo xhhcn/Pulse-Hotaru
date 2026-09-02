@@ -155,7 +155,9 @@
       setAttr(r.name, 'title', name);
 
       /* 系统：OS 优先（如 Debian），否则虚拟化类型（与表格一致）        */
-      const sys = item.os || item.virtualization_type || 'Unknown';
+      /* Same label normalisation as the table ("macOS Sequoia 15.x" -> "macOS"). */
+      const rawSys = String(item.os || item.virtualization_type || 'Unknown').trim();
+      const sys = /^(mac\s*os|macos|os\s*x)\b/i.test(rawSys) ? 'macOS' : rawSys;
       setText(r.type, sys);
       r.type.style.display = '';
 

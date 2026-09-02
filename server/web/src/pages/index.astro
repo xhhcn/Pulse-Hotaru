@@ -59,7 +59,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
           const cfg = JSON.parse(xhr.responseText);
           window.__navbarConfig = cfg;
           if (cfg.text) document.title = cfg.text;
-          if (cfg.logo) {
+          /* The logo field may hold raw SVG markup (used inline by the
+             navbar); only URL-shaped values are valid as a favicon href. */
+          if (cfg.logo && /^(https?:\/\/|\/|data:)/i.test(String(cfg.logo).trim())) {
             const link = document.querySelector('link[rel="icon"]');
             if (link) link.href = cfg.logo;
           }

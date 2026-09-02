@@ -361,13 +361,41 @@
       return null;
     }
 
+    /* The icon CDN response is third-party markup that lands in innerHTML.
+       Accept only a plain <svg> tree: drop scripts, foreignObject, event
+       handler attributes and non-image hrefs. Returns '' when anything
+       looks off so the flag is simply not shown. */
+    function sanitizeSvgMarkup(markup) {
+      if (!markup || typeof markup !== 'string') return '';
+      let doc;
+      try { doc = new DOMParser().parseFromString(markup, 'image/svg+xml'); } catch (_) { return ''; }
+      const root = doc.documentElement;
+      if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) return '';
+      const banned = /^(script|foreignobject|iframe|object|embed|use)$/i;
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      const toRemove = [];
+      let node = walker.currentNode;
+      while (node) {
+        if (banned.test(node.nodeName)) toRemove.push(node);
+        else {
+          Array.from(node.attributes).forEach((attr) => {
+            const n = attr.name.toLowerCase(), v = String(attr.value || '');
+            if (n.startsWith('on') || (/href|src/.test(n) && !/^#|^data:image\//i.test(v.trim()))) node.removeAttribute(attr.name);
+          });
+        }
+        node = walker.nextNode();
+      }
+      toRemove.forEach((n) => n.remove());
+      return new XMLSerializer().serializeToString(root);
+    }
+
     async function loadFlagIcons(scope) {
       const root = scope || document;
       const els = root.querySelectorAll('.flag-icon[data-icon]');
       await Promise.all(Array.from(els).map(async (el) => {
         const name = el.dataset.icon;
         if (!name || el.dataset.iconLoaded === name) return;
-        const svg = await fetchIconSvg(name, 32);
+        const svg = sanitizeSvgMarkup(await fetchIconSvg(name, 32));
         if (!svg) return;
         el.innerHTML = svg;
         el.dataset.iconLoaded = name;
@@ -399,9 +427,13 @@
       const adminToken = localStorage.getItem('admin_auth_token');
       const headers = { 'Cache-Control': 'no-store' };
       let qs = '';
-      if (shareToken) qs = '?token=' + encodeURIComponent(shareToken);
-      else if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
-      return { qs, headers };
+      /* EventSource cannot send headers, so the admin session has to
+         travel as ?admin_token= on the stream URL; otherwise a logged-in
+         admin viewing a privacy-mode homepage gets a 401 reconnect loop. */
+      let sseQs = '';
+      if (shareToken) { qs = '?token=' + encodeURIComponent(shareToken); sseQs = qs; }
+      else if (adminToken) { headers['Authorization'] = 'Bearer ' + adminToken; sseQs = '?admin_token=' + encodeURIComponent(adminToken); }
+      return { qs, headers, sseQs };
     }
 
     /* ------------------------------------------------------------------
@@ -532,6 +564,7 @@
           }
           const a = document.createElement('script');
           a.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          a.integrity = 'sha384-cVMg8E3QFwTvGCDuK+ET4PD341jF3W8nO1auiXfuZNQkzbUUiBGLsIQUE+b1mxws';
           a.async = true;
           a.crossOrigin = 'anonymous';
           a.setAttribute('data-chartjs-adapter', 'true');
@@ -576,6 +609,7 @@
         }
         const s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        s.integrity = 'sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g';
         s.async = true;
         s.crossOrigin = 'anonymous';
         s.setAttribute('data-chartjs', 'true');
@@ -589,6 +623,7 @@
              the jsdelivr filename here returns 404 silently. */
           const fb = document.createElement('script');
           fb.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.js';
+          fb.integrity = 'sha384-FcQlsUOd0TJjROrBxhJdUhXTUgNJQxTMcxZe6nHbaEfFL1zjQ+bq/uRoBQxb0KMo';
           fb.async = true;
           fb.crossOrigin = 'anonymous';
           fb.setAttribute('data-chartjs', 'true');
@@ -1966,7 +2001,7 @@
          lose its identity in the broadcast, and the row demoted
          from .is-offline to .is-pristine) get force-collapsed so
          the empty expand row doesn't linger in the DOM. */
-      if (isPristine) setExpandOpen(entry.detail, false);
+      if (isPristine && entry.detail.classList.contains('is-open')) setExpandOpen(entry.detail, false);
 
       setStatusBar(r.status, isOffline);
 
@@ -2057,6 +2092,17 @@
        (loading / error / empty) tr so subsequent renders rebuild
        fresh row DOM rather than diffing against stale references.  */
     function clearDiffState() {
+      /* Same teardown as the per-row removal path: without it every open
+         chart, its canvas and its 24 h sample cache leaked whenever the
+         table was replaced by a placeholder. */
+      rowMap.forEach((entry) => {
+        const tcping = entry && entry.tcping;
+        if (!tcping) return;
+        if (tcping.chart) { try { tcping.chart.destroy(); } catch (_) {} tcping.chart = null; }
+        if (tcping._cache) tcping._cache.clear();
+        if (tcping._inflight) tcping._inflight.clear();
+      });
+      tcpingState.clear();
       rowMap.clear();
       tbody.innerHTML = '';
       inPlaceholderState = true;
@@ -2198,6 +2244,13 @@
     }
 
     function showError() {
+      /* A transient fetch failure while rows are already on screen must
+         not wipe the table (and every open chart): keep the last known
+         state and just show the banner; the next SSE frame clears it. */
+      if (rowMap.size > 0 && !inPlaceholderState) {
+        if (errEl) errEl.hidden = false;
+        return;
+      }
       paintPlaceholder(t('无法连接到服务器…', 'Cannot reach the server…'));
       if (errEl) errEl.hidden = false;
       // Reveal the page even on first-render failure so the user
@@ -2355,11 +2408,8 @@
 
     function connectSSE() {
       try {
-        const { qs } = authParts();
-        // EventSource doesn't let us set headers; the server falls
-        // back to cookie / token query for SSE auth, same way
-        // Pulse's other realtime consumers do.
-        evtSource = new EventSource(getApiBase() + SSE_PATH + qs);
+        const { sseQs } = authParts();
+        evtSource = new EventSource(getApiBase() + SSE_PATH + sseQs);
       } catch (_) {
         scheduleReconnect();
         return;
@@ -2447,6 +2497,10 @@
     // tabs and SPAs that swap this page out without a full reload won't
     // call back into our row-removal cleanup path, so doing it here
     // guarantees no 2D canvas context survives the unload.
+    /* Back/forward-cache restore: beforeunload already tore down the
+       stream, the watchdog and the charts, so a restored page would sit
+       frozen forever. A reload is the cheapest correct recovery. */
+    window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
     window.addEventListener('beforeunload', () => {
       try { if (evtSource) evtSource.close(); } catch (_) {}
       clearTimeout(watchdogId);

@@ -275,6 +275,15 @@ body.hotaru-theme {
   visibility: visible;
 }
 
+/* Failsafe: if the bundled script never runs (blocked, 404 after a
+   stale-HTML deploy, JS disabled) the veil would hide the page forever.
+   After 10 s CSS alone reveals the content and drops the loader; when the
+   script does run it reaches the same end state much earlier. */
+@keyframes hotaru-app-failsafe { to { opacity: 1; visibility: visible; } }
+@keyframes hotaru-loader-failsafe { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+.hotaru-app { animation: hotaru-app-failsafe 0s 10s forwards; }
+.hotaru-initial-loader { animation: hotaru-loader-failsafe 0s 10s forwards; }
+
 /* First-paint card arrival
    ----------------------------------------------------------------
    The table itself stays static like upstream Hotaru. Summary

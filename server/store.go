@@ -587,6 +587,97 @@ func putAgentMetric(bucket *bolt.Bucket, metric SystemMetric) error {
 	return nil
 }
 
+// UpdateOrders sets Order = index for every listed system inside one write
+// transaction, touching only that field. The previous implementation did a
+// Get + full-record Upsert per system: N fsyncs queued behind the agent
+// writes (seconds for a hundred systems on a VPS disk) and a
+// read-modify-write that could overwrite metrics a push had just stored.
+func (s *Store) UpdateOrders(ids []string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket not found")
+		}
+		for i, id := range ids {
+			data := bucket.Get([]byte(id))
+			if data == nil {
+				continue
+			}
+			var metric SystemMetric
+			if err := json.Unmarshal(data, &metric); err != nil {
+				continue
+			}
+			if metric.Order == i {
+				continue
+			}
+			metric.Order = i
+			out, err := json.Marshal(metric)
+			if err != nil {
+				return fmt.Errorf("failed to marshal metric: %w", err)
+			}
+			if err := bucket.Put([]byte(id), out); err != nil {
+				return fmt.Errorf("failed to put metric: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// PruneTCPingTargets removes the given targets from every system's "latest
+// tcping" map in one transaction (used when targets are deleted from the
+// tcping config).
+func (s *Store) PruneTCPingTargets(targets []string) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	removed := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		removed[t] = struct{}{}
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket not found")
+		}
+		type change struct {
+			key  []byte
+			data []byte
+		}
+		var changes []change
+		err := bucket.ForEach(func(k, v []byte) error {
+			var metric SystemMetric
+			if err := json.Unmarshal(v, &metric); err != nil || len(metric.TCPingData) == 0 {
+				return nil
+			}
+			mutated := false
+			for target := range metric.TCPingData {
+				if _, gone := removed[target]; gone {
+					delete(metric.TCPingData, target)
+					mutated = true
+				}
+			}
+			if !mutated {
+				return nil
+			}
+			out, err := json.Marshal(metric)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, change{key: append([]byte(nil), k...), data: out})
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, c := range changes {
+			if err := bucket.Put(c.key, c.data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // UpsertFromAgent is Upsert for records produced from agent data (pull
 // polling, legacy /api/metrics ingest). Admin-owned fields are taken from
 // the stored record atomically; see putAgentMetric.
@@ -895,100 +986,97 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 	return results, nil
 }
 
-// DeleteTCPingResultsByTarget deletes all tcping results for a specific target
-func (s *Store) DeleteTCPingResultsByTarget(target string) error {
-	var keysToDelete [][]byte
+// tcpingDeleteChunk bounds how many history records one write transaction
+// removes. bbolt has a single writer, so one huge delete transaction would
+// stall every agent push for its whole duration; chunks keep each pause to
+// a few milliseconds and let pushes interleave.
+const tcpingDeleteChunk = 5000
 
-	// First pass: collect keys to delete
+// collectTCPingKeys walks the history bucket and returns the keys of the
+// records selected by candidate (a cheap test on the key alone) and
+// confirmed by verify (run on the decoded record). Keys embed the client id
+// and target ("<ts>_<client>_..._<target>"), so the vast majority of records
+// are rejected without a JSON decode; verification guards against prefix
+// collisions such as client "a" vs "a_b".
+func (s *Store) collectTCPingKeys(candidate func(k []byte) bool, verify func(r TCPingResult) bool) ([][]byte, error) {
+	var keys [][]byte
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
 			return fmt.Errorf("tcping bucket not found")
 		}
-
 		return bucket.ForEach(func(k, v []byte) error {
+			if !candidate(k) {
+				return nil
+			}
 			var result TCPingResult
 			if err := json.Unmarshal(v, &result); err != nil {
-				return nil // Skip corrupted entry
+				return nil // corrupted entry: left for the hourly cleaner
 			}
-
-			if result.Target == target {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
+			if verify(result) {
+				keys = append(keys, append([]byte(nil), k...))
 			}
 			return nil
 		})
 	})
+	return keys, err
+}
 
-	if err != nil {
-		return err
-	}
-
-	// Second pass: delete entries
-	if len(keysToDelete) > 0 {
-		return s.db.Update(func(tx *bolt.Tx) error {
+// deleteTCPingKeys removes keys from the history bucket in bounded
+// transactions (see tcpingDeleteChunk).
+func (s *Store) deleteTCPingKeys(keys [][]byte) error {
+	for start := 0; start < len(keys); start += tcpingDeleteChunk {
+		end := start + tcpingDeleteChunk
+		if end > len(keys) {
+			end = len(keys)
+		}
+		chunk := keys[start:end]
+		if err := s.db.Update(func(tx *bolt.Tx) error {
 			bucket := tx.Bucket([]byte(tcpingBucket))
 			if bucket == nil {
 				return fmt.Errorf("tcping bucket not found")
 			}
-
-			for _, key := range keysToDelete {
+			for _, key := range chunk {
 				if err := bucket.Delete(key); err != nil {
 					return err
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
-// DeleteTCPingResultsByClient deletes all tcping results for a specific client
-func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
-	var keysToDelete [][]byte
-
-	// First pass: collect keys to delete
-	err := s.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(tcpingBucket))
-		if bucket == nil {
-			return fmt.Errorf("tcping bucket not found")
-		}
-
-		return bucket.ForEach(func(k, v []byte) error {
-			var result TCPingResult
-			if err := json.Unmarshal(v, &result); err != nil {
-				return nil // Skip corrupted entry
-			}
-
-			if result.ClientID == clientID {
-				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
-			}
-			return nil
-		})
-	})
-
+// DeleteTCPingResultsByTarget deletes all tcping results for a specific target.
+func (s *Store) DeleteTCPingResultsByTarget(target string) error {
+	suffix := []byte("_" + target)
+	keys, err := s.collectTCPingKeys(
+		func(k []byte) bool { return bytes.HasSuffix(k, suffix) },
+		func(r TCPingResult) bool { return r.Target == target },
+	)
 	if err != nil {
 		return err
 	}
+	return s.deleteTCPingKeys(keys)
+}
 
-	// Second pass: delete entries
-	if len(keysToDelete) > 0 {
-		return s.db.Update(func(tx *bolt.Tx) error {
-			bucket := tx.Bucket([]byte(tcpingBucket))
-			if bucket == nil {
-				return fmt.Errorf("tcping bucket not found")
-			}
-
-			for _, key := range keysToDelete {
-				if err := bucket.Delete(key); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+// DeleteTCPingResultsByClient deletes all tcping results for a specific client.
+func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
+	clientPrefix := []byte(clientID + "_")
+	keys, err := s.collectTCPingKeys(
+		func(k []byte) bool {
+			// Skip the "<unix-seconds>_" prefix, then require "<client>_".
+			i := bytes.IndexByte(k, '_')
+			return i >= 0 && bytes.HasPrefix(k[i+1:], clientPrefix)
+		},
+		func(r TCPingResult) bool { return r.ClientID == clientID },
+	)
+	if err != nil {
+		return err
 	}
-
-	return nil
+	return s.deleteTCPingKeys(keys)
 }
 
 // CleanupOldTCPingResults removes tcping results older than 24 hours.
@@ -1039,23 +1127,10 @@ func (s *Store) cleanupOldTCPingResults() (int, error) {
 		return 0, err
 	}
 
-	// Second pass: delete old entries
-	if len(keysToDelete) > 0 {
-		if err := s.db.Update(func(tx *bolt.Tx) error {
-			bucket := tx.Bucket([]byte(tcpingBucket))
-			if bucket == nil {
-				return fmt.Errorf("tcping bucket not found")
-			}
-
-			for _, key := range keysToDelete {
-				if err := bucket.Delete(key); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return 0, err
-		}
+	// Second pass: delete old entries in bounded transactions so the hourly
+	// cleaner never holds the write lock long enough to stall agent pushes.
+	if err := s.deleteTCPingKeys(keysToDelete); err != nil {
+		return 0, err
 	}
 
 	return len(keysToDelete), nil

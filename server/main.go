@@ -2129,11 +2129,21 @@ func handleDeleteMetric(store *Store, broker *SSEBroker, registry *ClientRegistr
 		return
 	}
 
-	// Delete all TCPing history data for this client
-	_ = store.DeleteTCPingResultsByClient(id)
-
 	// Invalidate TCPing cache for this client
 	invalidateTCPingCache(id)
+
+	// The history of a deleted system is not reachable from the UI any more,
+	// so remove it in the background: scanning a day of history for a
+	// hundred systems takes seconds and used to keep the admin waiting (and
+	// the write lock busy) for the whole time.
+	go func(id string) {
+		start := time.Now()
+		if err := store.DeleteTCPingResultsByClient(id); err != nil {
+			log.Printf("⚠️  history cleanup for deleted system %s failed: %v", id, err)
+			return
+		}
+		log.Printf("🧹 Removed tcping history of deleted system %s in %v", id, time.Since(start).Round(time.Millisecond))
+	}(id)
 
 	// Remove client from registry to stop polling
 	registry.Remove(id)
@@ -3593,17 +3603,10 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 		return
 	}
 
-	// Update order for each system
-	for i, id := range payload.Order {
-		system, err := store.Get(id)
-		if err != nil || system == nil {
-			continue
-		}
-
-		system.Order = i
-		if err := store.Upsert(*system); err != nil {
-			continue
-		}
+	// One transaction for the whole list (see Store.UpdateOrders).
+	if err := store.UpdateOrders(payload.Order); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	// Push a single authoritative snapshot so every connected browser
@@ -4279,10 +4282,8 @@ func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegi
 			newTargets[t.Address] = true
 		}
 
-		// Delete HISTORY data for removed targets.
 		for oldTarget := range oldTargets {
 			if !newTargets[oldTarget] {
-				_ = store.DeleteTCPingResultsByTarget(oldTarget)
 				removedTargets = append(removedTargets, oldTarget)
 			}
 		}
@@ -4301,35 +4302,23 @@ func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegi
 		clearAllTCPingCache()
 	}
 
-	// Prune the "latest per target" snapshot (SystemMetric.TCPingData) for
-	// every system that still carries a deleted target. Without this step
-	// the map keeps the stale entry forever; that single leftover datum is
-	// what produced the "first point still remaining after delete" the
-	// user observed. Note that DeleteTCPingResultsByTarget above already
-	// cleaned the history bucket, so after this loop there is literally
-	// zero trace of the target anywhere in the store.
+	// Removed targets: prune the "latest per target" snapshot of every system
+	// in one transaction (so the frontend stops showing the target at once)
+	// and drop their history in the background, where the full-bucket scan
+	// cannot keep the admin waiting or stall agent pushes.
 	if len(removedTargets) > 0 {
-		if metrics, listErr := store.List(); listErr == nil {
-			removedSet := make(map[string]struct{}, len(removedTargets))
-			for _, t := range removedTargets {
-				removedSet[t] = struct{}{}
-			}
-			for _, m := range metrics {
-				if len(m.TCPingData) == 0 {
-					continue
-				}
-				mutated := false
-				for target := range m.TCPingData {
-					if _, isRemoved := removedSet[target]; isRemoved {
-						delete(m.TCPingData, target)
-						mutated = true
-					}
-				}
-				if mutated {
-					_ = store.Upsert(m)
-				}
-			}
+		if err := store.PruneTCPingTargets(removedTargets); err != nil {
+			log.Printf("⚠️  failed to prune removed tcping targets: %v", err)
 		}
+		go func(targets []string) {
+			start := time.Now()
+			for _, target := range targets {
+				if err := store.DeleteTCPingResultsByTarget(target); err != nil {
+					log.Printf("⚠️  history cleanup for removed target %s failed: %v", target, err)
+				}
+			}
+			log.Printf("🧹 Removed history of %d deleted tcping target(s) in %v", len(targets), time.Since(start).Round(time.Millisecond))
+		}(removedTargets)
 	}
 
 	// Notify every connected browser that the tcping config changed so

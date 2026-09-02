@@ -398,3 +398,80 @@ func TestAgentWriteNeverRevertsConcurrentAdminEdit(t *testing.T) {
 		t.Fatalf("SaveClientPushBatch reverted admin-owned fields: %+v", got)
 	}
 }
+
+// --- admin operations: single-transaction reorder, key-based history deletes ----
+
+func TestUpdateOrdersTouchesOnlyOrder(t *testing.T) {
+	store := newTestStore(t)
+	for i, id := range []string{"a", "b", "c"} {
+		if err := store.Upsert(SystemMetric{ID: id, Name: "n-" + id, Order: i, CPU: float64(10 * i), Secret: "s"}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+	if err := store.UpdateOrders([]string{"c", "missing", "a", "b"}); err != nil {
+		t.Fatalf("UpdateOrders: %v", err)
+	}
+	want := map[string]int{"c": 0, "a": 2, "b": 3}
+	for id, order := range want {
+		m, _ := store.Get(id)
+		if m.Order != order {
+			t.Fatalf("%s: order = %d, want %d", id, m.Order, order)
+		}
+		if m.Secret != "s" || m.Name != "n-"+id {
+			t.Fatalf("%s: other fields changed: %+v", id, m)
+		}
+	}
+}
+
+func TestDeleteTCPingHistoryDoesNotMatchPrefixCollisions(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().UTC()
+	lat := 1.0
+	put := func(client, target string, offset time.Duration) {
+		if err := store.SaveTCPingResult(TCPingResult{ClientID: client, Target: target, Latency: &lat, Timestamp: now.Add(offset)}); err != nil {
+			t.Fatalf("SaveTCPingResult: %v", err)
+		}
+	}
+	put("a", "x:1", -time.Minute)
+	put("a_b", "x:1", -2*time.Minute) // shares the "a_" key prefix
+	put("a", "x:10", -3*time.Minute)  // shares the "_x:1" suffix start
+	put("b", "x:1", -4*time.Minute)
+
+	if err := store.DeleteTCPingResultsByClient("a"); err != nil {
+		t.Fatalf("DeleteTCPingResultsByClient: %v", err)
+	}
+	if r, _ := store.GetTCPingResults("a"); len(r) != 0 {
+		t.Fatalf("client a still has %d records", len(r))
+	}
+	if r, _ := store.GetTCPingResults("a_b"); len(r) != 1 {
+		t.Fatalf("client a_b lost records: %d", len(r))
+	}
+	if err := store.DeleteTCPingResultsByTarget("x:1"); err != nil {
+		t.Fatalf("DeleteTCPingResultsByTarget: %v", err)
+	}
+	if r, _ := store.GetTCPingResults("b", "x:1"); len(r) != 0 {
+		t.Fatalf("target x:1 of b still present")
+	}
+	if r, _ := store.GetTCPingResults("a_b"); len(r) != 0 {
+		t.Fatalf("target x:1 of a_b still present")
+	}
+}
+
+func TestDeleteTCPingKeysChunksLargeSets(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().UTC()
+	lat := 1.0
+	var batch []TCPingResult
+	for i := 0; i < 2*tcpingDeleteChunk+7; i++ {
+		batch = append(batch, TCPingResult{ClientID: "big", Target: "t:1", Latency: &lat, Timestamp: now.Add(-time.Duration(i) * time.Second), ExactTimestamp: true})
+	}
+	if err := store.SaveClientPushBatch(SystemMetric{ID: "big", Name: "big"}, batch); err != nil {
+		t.Fatalf("SaveClientPushBatch: %v", err)
+	}
+	if err := store.DeleteTCPingResultsByClient("big"); err != nil {
+		t.Fatalf("DeleteTCPingResultsByClient: %v", err)
+	}
+	if r, _ := store.GetTCPingResults("big"); len(r) != 0 {
+		t.Fatalf("%d records survived the chunked delete", len(r))
+	}
+}

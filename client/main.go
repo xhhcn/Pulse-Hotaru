@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -701,6 +702,16 @@ func startPeriodicRegistration() {
 	}
 }
 
+// secretEqual mirrors the server-side helper of the same name: a
+// constant-time comparison so an attacker probing /metrics or /tcping cannot
+// recover the secret byte by byte from response timing.
+func secretEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // Handle metrics request from backend
 func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -722,7 +733,7 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 			providedSecret = r.URL.Query().Get("secret")
 		}
 
-		if providedSecret != secret {
+		if !secretEqual(providedSecret, secret) {
 			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
 		}
@@ -781,7 +792,7 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 			providedSecret = r.URL.Query().Get("secret")
 		}
 
-		if providedSecret != secret {
+		if !secretEqual(providedSecret, secret) {
 			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
 		}

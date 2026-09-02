@@ -543,6 +543,63 @@ func (s *Store) Upsert(metric SystemMetric) error {
 	})
 }
 
+// mergeAdminOwned copies the fields only the admin may change from the
+// record currently on disk into an agent-supplied metric. Agents compose
+// their record from a snapshot read moments earlier, so without this an
+// admin edit that lands between that read and the agent's write would be
+// silently reverted (name, tags, order, secret, visibility toggles). The
+// per-target "latest tcping" map is merged the same way so a concurrent
+// server-side tcping write is not lost either.
+func mergeAdminOwned(dst *SystemMetric, current *SystemMetric) {
+	dst.Name = current.Name
+	dst.Tags = current.Tags
+	dst.Order = current.Order
+	dst.Secret = current.Secret
+	dst.HideOnHome = current.HideOnHome
+	dst.HideTCPing = current.HideTCPing
+	for target, cur := range current.TCPingData {
+		if mine, ok := dst.TCPingData[target]; !ok || cur.Timestamp.After(mine.Timestamp) {
+			if dst.TCPingData == nil {
+				dst.TCPingData = make(map[string]TCPingTargetData, len(current.TCPingData))
+			}
+			dst.TCPingData[target] = cur
+		}
+	}
+}
+
+// putAgentMetric writes an agent-supplied record inside tx, taking the
+// admin-owned fields from the stored record in the same transaction (see
+// mergeAdminOwned). Unknown systems are stored as-is.
+func putAgentMetric(bucket *bolt.Bucket, metric SystemMetric) error {
+	if data := bucket.Get([]byte(metric.ID)); data != nil {
+		var current SystemMetric
+		if err := json.Unmarshal(data, &current); err == nil {
+			mergeAdminOwned(&metric, &current)
+		}
+	}
+	data, err := json.Marshal(metric)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metric: %w", err)
+	}
+	if err := bucket.Put([]byte(metric.ID), data); err != nil {
+		return fmt.Errorf("failed to put metric: %w", err)
+	}
+	return nil
+}
+
+// UpsertFromAgent is Upsert for records produced from agent data (pull
+// polling, legacy /api/metrics ingest). Admin-owned fields are taken from
+// the stored record atomically; see putAgentMetric.
+func (s *Store) UpsertFromAgent(metric SystemMetric) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket not found")
+		}
+		return putAgentMetric(bucket, metric)
+	})
+}
+
 // List returns all system metrics sorted by order
 func (s *Store) List() ([]SystemMetric, error) {
 	metrics := make([]SystemMetric, 0)
@@ -640,10 +697,23 @@ type TCPingResult struct {
 	Target    string    `json:"target"`  // Target address (e.g., "8.8.8.8:53")
 	Latency   *float64  `json:"latency"` // Latency in milliseconds (nil for timeout/failure)
 	Timestamp time.Time `json:"timestamp"`
+	// ExactTimestamp is set by handleClientPush when Timestamp is the agent's
+	// own unmodified measurement time. Only then does (timestamp, client,
+	// target) identify one measurement, so only then may a batch write skip an
+	// existing record as a re-send. Server-stamped or clock-adjusted samples
+	// go through the sequence-number path and are never dropped.
+	ExactTimestamp bool `json:"-"`
 }
 
 func tcpingResultKeyPrefix(result TCPingResult) string {
 	return fmt.Sprintf("%d_%s_%09d_", result.Timestamp.Unix(), result.ClientID, result.Timestamp.Nanosecond())
+}
+
+// tcpingResultKey is the single definition of the on-disk key layout:
+// "<unix-seconds>_<client>_<nanosecond>_<sequence>_<target>". Both writers
+// below and the prefix scans in GetTCPingResults depend on it.
+func tcpingResultKey(result TCPingResult, seq int) []byte {
+	return []byte(fmt.Sprintf("%s%06d_%s", tcpingResultKeyPrefix(result), seq, result.Target))
 }
 
 func putTCPingResult(bucket *bolt.Bucket, result TCPingResult) error {
@@ -652,14 +722,32 @@ func putTCPingResult(bucket *bolt.Bucket, result TCPingResult) error {
 		return fmt.Errorf("failed to marshal tcping result: %w", err)
 	}
 
-	prefix := tcpingResultKeyPrefix(result)
 	for seq := 0; seq < 1_000_000; seq++ {
-		key := fmt.Sprintf("%s%06d_%s", prefix, seq, result.Target)
-		if bucket.Get([]byte(key)) == nil {
-			return bucket.Put([]byte(key), data)
+		key := tcpingResultKey(result, seq)
+		if bucket.Get(key) == nil {
+			return bucket.Put(key, data)
 		}
 	}
 	return fmt.Errorf("too many tcping results for %s/%s at %s", result.ClientID, result.Target, result.Timestamp.Format(time.RFC3339Nano))
+}
+
+// putTCPingResultIdempotent is putTCPingResult for agent-timestamped
+// batches. An agent re-sends the same measurements when its push timed out
+// after the server had already committed them, so an existing record with
+// the identical (timestamp, client, target) key is that same measurement,
+// not a second sample, and is left untouched. Server-stamped results
+// (SaveTCPingResult) keep the sequence-number path because two genuinely
+// distinct samples can share a wall-clock instant there.
+func putTCPingResultIdempotent(bucket *bolt.Bucket, result TCPingResult) error {
+	key := tcpingResultKey(result, 0)
+	if bucket.Get(key) != nil {
+		return nil
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tcping result: %w", err)
+	}
+	return bucket.Put(key, data)
 }
 
 // SaveTCPingResult saves a tcping result
@@ -675,19 +763,16 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 }
 
 // SaveClientPushBatch atomically writes the system metric and all tcping
-// results from a single push in one bbolt transaction.
+// results from a single push in one bbolt transaction. Admin-owned fields
+// are taken from the stored record inside the transaction (putAgentMetric).
 func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingResult) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		systems := tx.Bucket([]byte(bucketName))
 		if systems == nil {
 			return fmt.Errorf("systems bucket not found")
 		}
-		data, err := json.Marshal(metric)
-		if err != nil {
-			return fmt.Errorf("marshal metric: %w", err)
-		}
-		if err := systems.Put([]byte(metric.ID), data); err != nil {
-			return fmt.Errorf("put metric: %w", err)
+		if err := putAgentMetric(systems, metric); err != nil {
+			return err
 		}
 
 		if len(tcpingResults) == 0 {
@@ -701,7 +786,13 @@ func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingR
 			if r.Target == "" {
 				continue
 			}
-			if err := putTCPingResult(tcping, r); err != nil {
+			var err error
+			if r.ExactTimestamp {
+				err = putTCPingResultIdempotent(tcping, r)
+			} else {
+				err = putTCPingResult(tcping, r)
+			}
+			if err != nil {
 				return fmt.Errorf("put tcping result: %w", err)
 			}
 		}

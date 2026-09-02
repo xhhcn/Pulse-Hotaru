@@ -110,6 +110,13 @@ type SystemMetric struct {
 	TCPingData         map[string]TCPingTargetData `json:"tcping_data,omitempty"` // Map of target -> latest tcping data
 	Tags               []string                    `json:"tags,omitempty"`        // User-defined tags for the service
 	Secret             string                      `json:"secret,omitempty"`      // Secret for client authentication
+	// Admin-controlled visibility toggles. Both default to false (= shown).
+	// HideOnHome hides the row from the public homepage only; the REST API
+	// and the admin dashboard still return it. HideTCPing hides just the
+	// tcping card of this system on the homepage. Agents never set these;
+	// every client write path preserves the stored values.
+	HideOnHome bool `json:"hide_on_home,omitempty"`
+	HideTCPing bool `json:"hide_tcping,omitempty"`
 }
 
 // TCPingTargetData represents the latest tcping data for a specific target
@@ -353,6 +360,10 @@ type metricPayload struct {
 	Alert              bool     `json:"alert"`
 	Tags               []string `json:"tags,omitempty"`   // User-defined tags
 	Secret             string   `json:"secret,omitempty"` // Secret for client authentication (sent by client during registration)
+	// Admin-only visibility toggles. Pointers so "not provided" (agent
+	// pushes, older admin UIs) is distinguishable from an explicit false.
+	HideOnHome *bool `json:"hide_on_home,omitempty"`
+	HideTCPing *bool `json:"hide_tcping,omitempty"`
 }
 
 // SSE Broker for broadcasting updates.
@@ -392,34 +403,104 @@ const (
 // 30 × payload size per subscriber.
 const sseSubscriberBuffer = 2
 
+// Subscriber caps. Every subscriber costs a goroutine, a TCP connection and
+// up to sseSubscriberBuffer queued full snapshots, and /api/events is
+// reachable anonymously whenever privacy mode is off. Without a ceiling a
+// single misbehaving client could open thousands of streams and drive RSS
+// up by 2 × snapshot size per stream. The per-IP cap is generous on purpose:
+// behind an untrusted reverse proxy all viewers share one address.
+// Defaults; override with SSE_MAX_STREAMS / SSE_MAX_STREAMS_PER_IP. Behind a
+// reverse proxy that is not listed in TRUSTED_PROXIES every viewer shares the
+// proxy's address, so the per-IP limit should then be raised (or the proxy
+// trusted). Authenticated admin streams are exempt from both caps: they are
+// gated by a login token, and an operator must never be locked out of the
+// dashboard by anonymous traffic.
+const (
+	sseDefaultMaxSubscribers      = 2000
+	sseDefaultMaxSubscribersPerIP = 200
+	// Per-write deadline. WriteTimeout on http.Server must stay 0 for SSE,
+	// so a peer that stops reading (half-open NAT, frozen tab on a lossy
+	// link) would otherwise block the handler in Flush forever and pin its
+	// goroutine and connection. 15 s is far above any realistic flush time
+	// for a payload of a few hundred KB.
+	sseWriteTimeout = 15 * time.Second
+)
+
+var errSSETooManySubscribers = fmt.Errorf("too many event stream subscribers")
+
 type sseSubscriber struct {
 	ch   chan string
 	view SSEView
+	ip   string
 }
 
 type SSEBroker struct {
-	clients map[*sseSubscriber]struct{}
-	mu      sync.RWMutex
+	clients  map[*sseSubscriber]struct{}
+	perIP    map[string]int
+	maxTotal int
+	maxPerIP int
+	mu       sync.RWMutex
+
+	// Latest state-carrying payload per view, remembered by BroadcastByView
+	// so a freshly connected subscriber can be primed without rebuilding
+	// the snapshot from the database (see LatestSnapshot).
+	latest   map[SSEView]string
+	latestAt time.Time
+}
+
+// sseSnapshotMaxAge bounds how old a remembered broadcast payload may be
+// before a new subscriber falls back to building its own snapshot. The
+// broadcaster ticks every 3 s, so anything older means it has stalled.
+const sseSnapshotMaxAge = 5 * time.Second
+
+// LatestSnapshot returns the most recent broadcast payload for view when it
+// is younger than sseSnapshotMaxAge.
+func (b *SSEBroker) LatestSnapshot(view SSEView) (string, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.latest == nil || time.Since(b.latestAt) > sseSnapshotMaxAge {
+		return "", false
+	}
+	payload, ok := b.latest[view]
+	return payload, ok
 }
 
 func NewSSEBroker() *SSEBroker {
 	return &SSEBroker{
-		clients: make(map[*sseSubscriber]struct{}),
+		clients:  make(map[*sseSubscriber]struct{}),
+		perIP:    make(map[string]int),
+		maxTotal: intFromEnv("SSE_MAX_STREAMS", sseDefaultMaxSubscribers),
+		maxPerIP: intFromEnv("SSE_MAX_STREAMS_PER_IP", sseDefaultMaxSubscribersPerIP),
 	}
 }
 
+// intFromEnv reads a positive integer from the environment, falling back to
+// def when unset or invalid.
+func intFromEnv(name string, def int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && v > 0 {
+		return v
+	}
+	return def
+}
+
 // Subscribe registers a new subscriber with the given view level. The returned
-// pointer must be passed to Unsubscribe when the SSE handler exits.
-func (b *SSEBroker) Subscribe(view SSEView) *sseSubscriber {
+// pointer must be passed to Unsubscribe when the SSE handler exits. Public
+// subscriptions fail with errSSETooManySubscribers when either cap is reached.
+func (b *SSEBroker) Subscribe(view SSEView, ip string) (*sseSubscriber, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if view != SSEViewAdmin && (len(b.clients) >= b.maxTotal || b.perIP[ip] >= b.maxPerIP) {
+		return nil, errSSETooManySubscribers
+	}
 	sub := &sseSubscriber{
 		ch:   make(chan string, sseSubscriberBuffer),
 		view: view,
+		ip:   ip,
 	}
 	b.clients[sub] = struct{}{}
-	return sub
+	b.perIP[ip]++
+	return sub, nil
 }
 
 func (b *SSEBroker) Unsubscribe(sub *sseSubscriber) {
@@ -430,7 +511,19 @@ func (b *SSEBroker) Unsubscribe(sub *sseSubscriber) {
 		return
 	}
 	delete(b.clients, sub)
+	if b.perIP[sub.ip] <= 1 {
+		delete(b.perIP, sub.ip)
+	} else {
+		b.perIP[sub.ip]--
+	}
 	close(sub.ch)
+}
+
+// SubscriberCount reports the number of live subscribers (for /api/admin/runtime).
+func (b *SSEBroker) SubscriberCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.clients)
 }
 
 // Broadcast delivers the same payload to every subscriber, regardless of
@@ -449,6 +542,11 @@ func (b *SSEBroker) Broadcast(event string) {
 // level. The caller is responsible for ensuring each payload is correctly
 // masked for its audience.
 func (b *SSEBroker) BroadcastByView(byView map[SSEView]string) {
+	b.mu.Lock()
+	b.latest = byView
+	b.latestAt = time.Now()
+	b.mu.Unlock()
+
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -1121,6 +1219,7 @@ func main() {
 				}
 				return len(clientRegistry.GetAll())
 			}(),
+			"sse_subscribers": broker.SubscriberCount(),
 		})
 	})
 
@@ -1421,6 +1520,42 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Subscribe before committing any headers so a refused subscription can
+	// still answer with a plain 503. The view decides how every broadcast is
+	// masked for this connection.
+	view := SSEViewPublic
+	if isAdmin {
+		view = SSEViewAdmin
+	}
+	sub, err := broker.Subscribe(view, getClientIP(r))
+	if err != nil {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "too many event streams", http.StatusServiceUnavailable)
+		return
+	}
+	defer broker.Unsubscribe(sub)
+
+	// Every write goes through writeEvent: it arms a fresh write deadline
+	// and flushes, returning false as soon as the peer stops draining so the
+	// handler exits instead of blocking forever (see sseWriteTimeout).
+	rc := http.NewResponseController(w)
+	// The deadline is absolute and net/http only re-arms it per request when
+	// Server.WriteTimeout is set (it is not, on purpose). Clear it on exit so
+	// a keep-alive connection reused for a later request is not left with a
+	// stale, already-expired write deadline.
+	defer rc.SetWriteDeadline(time.Time{})
+	// parts are written back to back so a multi-hundred-KB snapshot is never
+	// copied into a fresh string per subscriber just to add the SSE framing.
+	writeEvent := func(parts ...string) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+		for _, part := range parts {
+			if _, werr := io.WriteString(w, part); werr != nil {
+				return false
+			}
+		}
+		return rc.Flush() == nil
+	}
+
 	// Set headers for SSE with CDN support
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, private")
@@ -1433,30 +1568,13 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 	// CDN-specific headers to prevent caching and buffering
 	w.Header().Set("X-Cache-Control", "no-cache")
 
-	// Subscribe to broker with the correct view so every broadcast is masked
-	// per our auth decision above.
-	view := SSEViewPublic
-	if isAdmin {
-		view = SSEViewAdmin
-	}
-	sub := broker.Subscribe(view)
-	defer broker.Unsubscribe(sub)
-
-	// Get flusher for real-time streaming
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
 	// Tell the browser to auto-reconnect in 3 s if the stream is ever lost.
 	// This overrides the default (3–5 s, browser dependent) with a deterministic
 	// value so all browsers behave the same. Must be the first SSE line.
-	fmt.Fprint(w, "retry: 3000\n\n")
-
-	// Send initial connection message
-	fmt.Fprintf(w, "event: connected\ndata: {\"message\":\"Connected to updates stream\"}\n\n")
-	flusher.Flush()
+	// Then send the initial connection message.
+	if !writeEvent("retry: 3000\n\nevent: connected\ndata: {\"message\":\"Connected to updates stream\"}\n\n") {
+		return
+	}
 
 	// Immediately push a full state snapshot so the frontend can render on
 	// connect without ever calling GET /api/metrics. Between this initial
@@ -1472,24 +1590,33 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 	// snapshot. Genuinely new broadcasts arriving after we enter the select
 	// loop below are always fresher than the initial snapshot and get
 	// delivered in order.
-	if snapshot, err := buildMetricsSnapshot(store, globalClientRegistry, isAdmin); err == nil {
-		payload, merr := json.Marshal(map[string]interface{}{
-			"type":    "metric_updated",
-			"systems": snapshot,
-			"count":   len(snapshot),
-		})
-		if merr == nil {
-		drain:
-			for {
-				select {
-				case <-sub.ch:
-					// Discard: no fresher than our snapshot.
-				default:
-					break drain
-				}
+	payload, havePayload := broker.LatestSnapshot(view)
+	if !havePayload {
+		// Nothing fresh from the broadcaster (first seconds after start, or
+		// no tick yet): build one. Reconnect storms after a restart or a CDN
+		// blip otherwise turn into one full DB scan + marshal per viewer.
+		if snapshot, err := buildMetricsSnapshot(store, globalClientRegistry, isAdmin); err == nil {
+			if b, merr := json.Marshal(map[string]interface{}{
+				"type":    "metric_updated",
+				"systems": snapshot,
+				"count":   len(snapshot),
+			}); merr == nil {
+				payload, havePayload = string(b), true
 			}
-			fmt.Fprintf(w, "event: update\ndata: %s\n\n", string(payload))
-			flusher.Flush()
+		}
+	}
+	if havePayload {
+	drain:
+		for {
+			select {
+			case <-sub.ch:
+				// Discard: no fresher than our snapshot.
+			default:
+				break drain
+			}
+		}
+		if !writeEvent("event: update\ndata: ", payload, "\n\n") {
+			return
 		}
 	}
 
@@ -1517,13 +1644,15 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 				// Channel closed by Unsubscribe — stream is being torn down.
 				return
 			}
-			fmt.Fprintf(w, "event: update\ndata: %s\n\n", msg)
-			flusher.Flush()
+			if !writeEvent("event: update\ndata: ", msg, "\n\n") {
+				return
+			}
 		case <-keepalive.C:
 			// Comment-line heartbeat; ignored by EventSource but keeps the
 			// proxy/CDN connection alive.
-			fmt.Fprint(w, ": ping\n\n")
-			flusher.Flush()
+			if !writeEvent(": ping\n\n") {
+				return
+			}
 		}
 	}
 }
@@ -1576,8 +1705,12 @@ func buildMetricsSnapshot(store *Store, registry *ClientRegistry, authenticated 
 		var shouldBeOffline bool
 		if regClient, inReg := registryMap[metrics[i].ID]; inReg {
 			if regClient.PushMode {
+				// 15 s: push interval (3 s) + one full 8 s push timeout +
+				// scheduling slack. The old 10 s threshold sat so close to
+				// the timeout that a single slow push flickered the row
+				// offline for one tick on high-latency links.
 				shouldBeOffline = regClient.LastPushAt.IsZero() ||
-					time.Since(regClient.LastPushAt) > 10*time.Second
+					time.Since(regClient.LastPushAt) > 15*time.Second
 			} else {
 				shouldBeOffline = metrics[i].UpdatedAt.IsZero() ||
 					now.Sub(metrics[i].UpdatedAt) > 5*time.Second
@@ -1824,12 +1957,19 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		if payload.Tags != nil {
 			metric.Tags = payload.Tags
 		}
+		if payload.HideOnHome != nil {
+			metric.HideOnHome = *payload.HideOnHome
+		}
+		if payload.HideTCPing != nil {
+			metric.HideTCPing = *payload.HideTCPing
+		}
 		// Keep existing order, updatedAt, and secret
 	} else {
 		// Either from client, or new system from admin page
 		// Preserve existing values for new fields if updating existing system
 		var cpuModel, memoryInfo, swapInfo, diskInfo, secret string
 		var tags []string
+		var hideOnHome, hideTCPing bool
 		var tcpingData map[string]TCPingTargetData
 		if existing != nil {
 			cpuModel = existing.CPUModel
@@ -1838,6 +1978,8 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 			diskInfo = existing.DiskInfo
 			secret = existing.Secret
 			tags = existing.Tags
+			hideOnHome = existing.HideOnHome
+			hideTCPing = existing.HideTCPing
 			// Preserve existing tcping data map
 			if existing.TCPingData != nil {
 				tcpingData = make(map[string]TCPingTargetData)
@@ -1862,6 +2004,15 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		// Update tags if provided in payload (from admin form)
 		if payload.Tags != nil {
 			tags = payload.Tags
+		}
+		// Visibility toggles are admin-only: ignore them on the client path.
+		if !isFromClient {
+			if payload.HideOnHome != nil {
+				hideOnHome = *payload.HideOnHome
+			}
+			if payload.HideTCPing != nil {
+				hideTCPing = *payload.HideTCPing
+			}
 		}
 		// Use payload values if provided, otherwise keep existing or use empty string
 		if payload.CPUModel != "" {
@@ -1905,10 +2056,20 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 			TCPingData:         tcpingData,
 			Tags:               tags,
 			Secret:             secret,
+			HideOnHome:         hideOnHome,
+			HideTCPing:         hideTCPing,
 		}
 	}
 
-	if err := store.Upsert(metric); err != nil {
+	// Agent writes merge the admin-owned fields from the stored record inside
+	// the transaction; admin writes are authoritative for those fields.
+	var saveErr error
+	if isFromClient {
+		saveErr = store.UpsertFromAgent(metric)
+	} else {
+		saveErr = store.Upsert(metric)
+	}
+	if saveErr != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -2208,32 +2369,8 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	}
 	registry.UpdatePushState(clientID, now)
 
-	// Resolve location from IP if client didn't provide one
-	if payload.Location == "" {
-		for _, ip := range []string{payload.IPv4, payload.IPv6} {
-			if ip == "" {
-				continue
-			}
-			if country, found := ipCache.Get(ip); found {
-				if country != "" {
-					payload.Location = country
-				}
-			} else {
-				country = getCountryFromIP(ip)
-				if country != "" {
-					ipCache.Set(ip, country)
-					payload.Location = country
-				} else {
-					ipCache.SetFailed(ip)
-				}
-			}
-			if payload.Location != "" {
-				break
-			}
-		}
-	} else {
-		payload.Location = extractCountry(payload.Location)
-	}
+	// Resolve location without ever blocking the push (see resolveLocation).
+	payload.Location = resolveLocation(ipCache, existing, payload.Location, payload.IPv4, payload.IPv6)
 
 	timeDisplay := formatUptime(payload.Uptime)
 
@@ -2275,23 +2412,56 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	}
 
 	nowUTC := time.Now().UTC()
-	const maxPast = 10 * time.Minute
-	const maxFuture = 30 * time.Second
-	sanitize := func(t time.Time) time.Time {
+	// Agents queue up to 500 measurements while the server is unreachable and
+	// deliver them on the next successful push, each stamped with its real
+	// MeasuredAt. Those stamps are kept so an outage shows as a gap instead of
+	// a burst of fake "now" points (the previous behaviour). The agent clock is
+	// not trusted blindly, though: the newest stamp in a batch is at most one
+	// push cycle old on a healthy clock, so a larger distance from now is
+	// clock skew and the whole batch is shifted by that offset. Samples older
+	// than the retention window after adjustment are dropped.
+	var newest time.Time
+	for _, tr := range payload.TCPingResults {
+		if tr.MeasuredAt.After(newest) {
+			newest = tr.MeasuredAt
+		}
+	}
+	var skew time.Duration
+	if !newest.IsZero() {
+		if d := nowUTC.Sub(newest.UTC()); d > 2*time.Minute || d < -30*time.Second {
+			skew = d
+		}
+	}
+	const maxPast = 24 * time.Hour
+	// sanitize returns the timestamp to store, whether it is the agent's own
+	// unmodified stamp (only then is it safe to use as an idempotency key), and
+	// whether the sample is worth keeping at all.
+	sanitize := func(t time.Time) (ts time.Time, exact bool, keep bool) {
 		if t.IsZero() {
-			return nowUTC
+			return nowUTC, false, true // pre-1.3.6 agents: server clock
 		}
-		if t.After(nowUTC.Add(maxFuture)) || nowUTC.Sub(t) > maxPast {
-			return nowUTC
+		ts = t.UTC().Add(skew)
+		if nowUTC.Sub(ts) > maxPast {
+			return time.Time{}, false, false
 		}
-		return t.UTC()
+		return ts, skew == 0, true
 	}
 
 	var batchedResults []TCPingResult
 	if len(payload.TCPingResults) > 0 {
 		batchedResults = make([]TCPingResult, 0, len(payload.TCPingResults))
+		// Targets whose "latest" entry this batch has already written. A
+		// backfilled batch may arrive out of order, so within the batch only a
+		// newer sample may replace the entry; the persisted entry is always
+		// replaced by the first sample, so a stale future-dated value can never
+		// freeze the card.
+		latestWritten := make(map[string]struct{})
 		for _, tr := range payload.TCPingResults {
 			if tr.Target == "" || !targetAllowed(tr.Target) {
+				continue
+			}
+			ts, exact, keep := sanitize(tr.MeasuredAt)
+			if !keep {
 				continue
 			}
 			var latencyPtr *float64
@@ -2301,16 +2471,20 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 				if tcpingData == nil {
 					tcpingData = make(map[string]TCPingTargetData)
 				}
-				tcpingData[tr.Target] = TCPingTargetData{
-					Latency:   tr.Latency,
-					Timestamp: sanitize(tr.MeasuredAt),
+				if _, written := latestWritten[tr.Target]; !written || !ts.Before(tcpingData[tr.Target].Timestamp) {
+					tcpingData[tr.Target] = TCPingTargetData{
+						Latency:   tr.Latency,
+						Timestamp: ts,
+					}
+					latestWritten[tr.Target] = struct{}{}
 				}
 			}
 			batchedResults = append(batchedResults, TCPingResult{
-				ClientID:  clientID,
-				Target:    tr.Target,
-				Latency:   latencyPtr,
-				Timestamp: sanitize(tr.MeasuredAt),
+				ClientID:       clientID,
+				Target:         tr.Target,
+				Latency:        latencyPtr,
+				Timestamp:      ts,
+				ExactTimestamp: exact,
 			})
 		}
 	}
@@ -2343,6 +2517,8 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		TCPingData:         tcpingData,
 		Tags:               tags,
 		Secret:             dbSecret,
+		HideOnHome:         existing.HideOnHome,
+		HideTCPing:         existing.HideTCPing,
 	}
 
 	if err := store.SaveClientPushBatch(metric, batchedResults); err != nil {
@@ -2895,71 +3071,29 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		return false
 	}
 
-	// Get location from IP if not provided
-	// Try IPv4 first, then IPv6 as fallback
-	if payload.Location == "" {
-		var country string
-		var found bool
+	// Load the stored record first: it carries the admin-owned fields we must
+	// preserve and the persisted Location that lets us skip the geo lookup.
+	var existing *SystemMetric
+	existing, _ = store.Get(client.ID)
 
-		// Try IPv4 first
-		if payload.IPv4 != "" {
-			if country, found = ipCache.Get(payload.IPv4); found {
-				// Cache hit (including failed lookups)
-				if country != "" {
-					payload.Location = country
-				}
-			} else {
-				// Query and cache
-				country = getCountryFromIP(payload.IPv4)
-				if country != "" {
-					ipCache.Set(payload.IPv4, country)
-					payload.Location = country
-				} else {
-					// Cache the failure to avoid repeated API calls
-					ipCache.SetFailed(payload.IPv4)
-				}
-			}
-		}
-
-		// If IPv4 lookup failed or IPv4 is empty, try IPv6
-		if payload.Location == "" && payload.IPv6 != "" {
-			if country, found = ipCache.Get(payload.IPv6); found {
-				// Cache hit (including failed lookups)
-				if country != "" {
-					payload.Location = country
-				}
-			} else {
-				// Query and cache
-				country = getCountryFromIP(payload.IPv6)
-				if country != "" {
-					ipCache.Set(payload.IPv6, country)
-					payload.Location = country
-				} else {
-					// Cache the failure to avoid repeated API calls
-					ipCache.SetFailed(payload.IPv6)
-				}
-			}
-		}
-	} else {
-		// Ensure location is only country
-		payload.Location = extractCountry(payload.Location)
-	}
+	// Resolve location without ever blocking the poll (see resolveLocation).
+	payload.Location = resolveLocation(ipCache, existing, payload.Location, payload.IPv4, payload.IPv6)
 
 	// Format uptime for display
 	timeDisplay := formatUptime(payload.Uptime)
 
-	// Get existing system to preserve order, name, tags, and secret from database
-	var existing *SystemMetric
-	existing, _ = store.Get(client.ID)
 	order := 0
 	name := client.Name // Default to client name if not in database
 	var tcpingData map[string]TCPingTargetData
 	var tags []string
+	var hideOnHome, hideTCPing bool
 	// Update secret from database (will be synced to registry cache)
 	if existing != nil {
 		order = existing.Order
 		// Preserve name from database (don't override with client name)
 		name = existing.Name
+		hideOnHome = existing.HideOnHome
+		hideTCPing = existing.HideTCPing
 		// CRITICAL: Preserve tags and secret from database (client should never override these)
 		tags = existing.Tags
 		secret = existing.Secret
@@ -3009,12 +3143,16 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		TCPingData:         tcpingData,
 		Tags:               tags,   // CRITICAL: Preserve tags from database
 		Secret:             secret, // CRITICAL: Preserve secret from database
+		HideOnHome:         hideOnHome,
+		HideTCPing:         hideTCPing,
 	}
 
 	// If system was offline and is now online, log the reconnection
 	_ = wasOffline // Can be used for notifications in the future
 
-	if err := store.Upsert(metric); err != nil {
+	// Agent write: admin-owned fields are merged from the stored record
+	// inside the transaction so a concurrent admin edit is never reverted.
+	if err := store.UpsertFromAgent(metric); err != nil {
 		return false
 	}
 
@@ -3107,9 +3245,120 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+// Background geo-IP resolution.
+//
+// Geo lookups used to run inline in handleClientPush / pollClient. When the
+// external services are slow or unreachable (common for servers in mainland
+// China) every lookup blocked its request for ~100 s while the agent kept
+// retrying every 3 s. Measured with 100 agents this piled up ~5 000
+// goroutines and ~1 100 outbound sockets within two minutes, and it repeated
+// after every restart because the IP cache is memory-only. The rules now:
+//
+//  1. Never block a push or poll on a lookup. Return the best value already
+//     at hand (cache hit, or the Location persisted in the DB) and schedule
+//     the lookup in the background.
+//  2. One outstanding lookup per IP, a fixed pool of geoMaxConcurrent
+//     workers and a bounded queue, so cost never scales with agent count.
+//  3. The answer lands in the IP cache; the next push persists it inside the
+//     metric it writes anyway, so a restart never needs the lookup again.
+const (
+	geoMaxConcurrent = 8    // background lookup workers
+	geoQueueSize     = 1024 // pending lookups; overflow is dropped and re-queued by the next push
+)
+
+type geoJob struct {
+	ip      string
+	ipCache *IPCountryCache
+}
+
+var (
+	geoInflightMu  sync.Mutex
+	geoInflight    = make(map[string]struct{})
+	geoQueue       = make(chan geoJob, geoQueueSize)
+	geoWorkersOnce sync.Once
+)
+
+// resolveLocation returns the country to store for a system right now.
+// reported is what the agent sent (may be empty); existing is the stored
+// record (may be nil). The call never performs network I/O: a cache miss
+// only queues a background lookup, and the next push (<= 3 s later) picks
+// the cached answer up and persists it as part of its normal write.
+func resolveLocation(ipCache *IPCountryCache, existing *SystemMetric, reported, ipv4, ipv6 string) string {
+	if reported != "" {
+		return extractCountry(reported)
+	}
+	fallback := ""
+	if existing != nil {
+		// Records written by older versions may hold "City, CC"; normalise so a
+		// reused value is always the bare country code the frontend expects.
+		fallback = extractCountry(existing.Location)
+		// Reuse the persisted value as long as the public IPs are unchanged.
+		if fallback != "" && existing.IPv4 == ipv4 && existing.IPv6 == ipv6 {
+			return fallback
+		}
+	}
+	for _, ip := range []string{ipv4, ipv6} {
+		if ip == "" || isPrivateIPStr(ip) {
+			continue
+		}
+		if country, found := ipCache.Get(ip); found {
+			if country != "" {
+				return country
+			}
+			continue // cached failure for this family; try the other one
+		}
+		scheduleGeoLookup(ipCache, ip)
+		// Do not queue the other family yet: if this one succeeds the
+		// answer covers the system, and the next push re-evaluates anyway.
+		return fallback
+	}
+	return fallback
+}
+
+// scheduleGeoLookup queues ip for resolution by the worker pool. One
+// outstanding lookup per IP; a full queue drops the request (the next push
+// re-queues it) so neither goroutines nor memory grow with agent count.
+func scheduleGeoLookup(ipCache *IPCountryCache, ip string) {
+	geoWorkersOnce.Do(func() {
+		for i := 0; i < geoMaxConcurrent; i++ {
+			go geoWorker()
+		}
+	})
+
+	geoInflightMu.Lock()
+	if _, busy := geoInflight[ip]; busy {
+		geoInflightMu.Unlock()
+		return
+	}
+	geoInflight[ip] = struct{}{}
+	geoInflightMu.Unlock()
+
+	select {
+	case geoQueue <- geoJob{ip: ip, ipCache: ipCache}:
+	default:
+		geoInflightMu.Lock()
+		delete(geoInflight, ip)
+		geoInflightMu.Unlock()
+	}
+}
+
+func geoWorker() {
+	for job := range geoQueue {
+		if country := getCountryFromIP(job.ip); country != "" {
+			job.ipCache.Set(job.ip, country)
+		} else {
+			job.ipCache.SetFailed(job.ip)
+		}
+		geoInflightMu.Lock()
+		delete(geoInflight, job.ip)
+		geoInflightMu.Unlock()
+	}
+}
+
 // Get country from IP address using free IP geolocation API
 // Uses multiple services with fallback for better reliability, especially for China
-// Includes retry mechanism and better error handling
+// Runs only from scheduleGeoLookup (background, bounded), so the per-service
+// budget is kept short: one attempt of at most 4 s each.
 func getCountryFromIP(ip string) string {
 	if ip == "" {
 		return ""
@@ -3236,66 +3485,42 @@ func getCountryFromIP(ip string) string {
 		},
 	}
 
-	// Try each service with retry mechanism
-	maxRetries := 2
+	// One attempt per service, 6 s each: enough for the slow-but-working
+	// case (mainland China reaching overseas APIs), while a dead service
+	// cannot hold a background worker for long.
 	for _, service := range services {
-		for attempt := 0; attempt < maxRetries; attempt++ {
-			// Use longer timeout for cross-continent networks (15 seconds)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		req, err := http.NewRequestWithContext(ctx, "GET", service.url, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		req.Header.Set("User-Agent", "PulseMonitor/1.0")
+		req.Header.Set("Accept", "application/json")
 
-			req, err := http.NewRequestWithContext(ctx, "GET", service.url, nil)
-			if err != nil {
-				cancel() // ✅ Cancel context on error
-				break    // Try next service
-			}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.LimitReader(resp.Body, 32<<10), resp.Body}
 
-			req.Header.Set("User-Agent", "PulseMonitor/1.0")
-			req.Header.Set("Accept", "application/json")
-
-			resp, err := httpClient.Do(req)
-
-			if err != nil {
-				cancel()
-				if resp != nil {
-					resp.Body.Close()
-				}
-				// Network error - retry if not last attempt
-				if attempt < maxRetries-1 {
-					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Exponential backoff
-					continue
-				}
-				break // Try next service
-			}
-
-			resp.Body = struct {
-				io.Reader
-				io.Closer
-			}{io.LimitReader(resp.Body, 32<<10), resp.Body}
-
-			// Handle rate limiting (429 Too Many Requests)
-			if resp.StatusCode == http.StatusTooManyRequests {
-				resp.Body.Close()
-				cancel()
-				// Wait a bit before trying next service
-				time.Sleep(1 * time.Second)
-				break // Try next service
-			}
-
-			if resp.StatusCode == http.StatusOK {
-				country := service.parser(resp)
-				resp.Body.Close()
-				cancel()
-				if country != "" {
-					return country
-				}
-				// If parsing failed but got 200, don't retry this service
-				break
-			} else {
-				resp.Body.Close()
-				cancel()
-				// For non-200 status codes, try next service immediately
-				break
-			}
+		country := ""
+		if resp.StatusCode == http.StatusOK {
+			country = service.parser(resp)
+		}
+		resp.Body.Close()
+		cancel()
+		if country != "" {
+			return country
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// Rate limited: give the next service a moment so we do not
+			// trip its limiter as well.
+			time.Sleep(1 * time.Second)
 		}
 	}
 

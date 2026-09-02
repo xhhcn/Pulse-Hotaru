@@ -7,6 +7,10 @@ services:
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
+    # Docker's default grace period is 10 s, but supervisord gives the
+    # backend 30 s (stopwaitsecs) to flush and close bbolt cleanly. Match
+    # that plus slack so docker stop never SIGKILLs a half-written DB.
+    stop_grace_period: 45s
 volumes:
   pulse-data:
 

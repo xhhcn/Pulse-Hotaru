@@ -7,6 +7,13 @@ services:
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
+    # Bound container log growth: Docker's default json-file driver never
+    # rotates, so a long-running deployment would slowly fill the disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     # Docker's default grace period is 10 s, but supervisord gives the
     # backend 30 s (stopwaitsecs) to flush and close bbolt cleanly. Match
     # that plus slack so docker stop never SIGKILLs a half-written DB.

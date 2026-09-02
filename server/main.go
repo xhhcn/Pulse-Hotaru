@@ -826,9 +826,15 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		Secret:     cachedSecret, // caller (handleClientRegister) will overwrite with DB value
 	}
 
-	// Log registration details
+	// Log the "no reachable URL" condition once per transition, not on every
+	// 60 s re-registration: a NAT agent otherwise writes ~1 400 identical
+	// lines per day for years, which is pure log noise and, under Docker's
+	// default json-file driver, unbounded disk growth.
 	if url == "" && url6 == "" {
-		log.Printf("⚠️  Client %s registered but no valid URL (IPv4=%s, IPv6=%s) - client may be behind NAT", id, ip, ipv6)
+		hadURL := !exists || existingClient == nil || existingClient.URL != "" || existingClient.URL6 != ""
+		if hadURL {
+			log.Printf("⚠️  Client %s registered but no valid URL (IPv4=%s, IPv6=%s) - client may be behind NAT (push mode expected; logged once)", id, ip, ipv6)
+		}
 	}
 }
 

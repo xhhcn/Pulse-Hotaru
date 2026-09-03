@@ -2459,7 +2459,7 @@ const customCodePlaceholder = [
         throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
-      showMessage('保存排序失败：' + error.message, 'error');
+      showMessage(((localStorage.getItem('preferred-language') || 'zh') === 'zh' ? '保存排序失败：' : 'Failed to save order: ') + error.message, 'error');
     } finally {
       orderSaveInFlight = false;
       pendingSystemsData = null;
@@ -3221,7 +3221,7 @@ const customCodePlaceholder = [
       const formData = new FormData(changePasswordForm);
       const currentPassword = String(formData.get('currentPassword') || '').trim();
       const newPassword = String(formData.get('newPassword') || '').trim();
-      const confirmNewPassword = formData.get('confirmNewPassword');
+      const confirmNewPassword = String(formData.get('confirmNewPassword') || '').trim();
 
       // Clear previous messages
       changePasswordFormMessage.classList.add('hidden');
@@ -4282,6 +4282,10 @@ const customCodePlaceholder = [
         }
         current = pendingSystemsData;
         pendingSystemsData = null;
+        // An order save started while we were rendering: hold the snapshot
+        // (the save's own reload renders the confirmed order) instead of
+        // painting the pre-drag order behind the admin's back.
+        if (current && orderSaveInFlight) { pendingSystemsData = current; break; }
       }
     } finally {
       isRenderSystemsRunning = false;

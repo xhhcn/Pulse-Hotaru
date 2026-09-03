@@ -475,3 +475,58 @@ func TestDeleteTCPingKeysChunksLargeSets(t *testing.T) {
 		t.Fatalf("%d records survived the chunked delete", len(r))
 	}
 }
+
+// --- privacy: a plain save keeps the existing link, its expiry and its duration ---
+
+func TestPrivacySaveWithoutNewTokenKeepsExpiryAndDuration(t *testing.T) {
+	store := newTestStore(t)
+	authTokensMu.Lock()
+	authTokens["test-admin-token"] = time.Now().Add(time.Hour)
+	authTokensMu.Unlock()
+	t.Cleanup(func() {
+		authTokensMu.Lock()
+		delete(authTokens, "test-admin-token")
+		authTokensMu.Unlock()
+	})
+
+	// Generate a 24 h link.
+	rr := httptest.NewRecorder()
+	handleSetPrivacyConfig(store, rr, adminRequest(t, http.MethodPost, "/api/privacy/config", map[string]interface{}{
+		"enabled": true, "share_token": "tok-1", "expires_in_seconds": 86400,
+	}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("generate: status %d body %s", rr.Code, rr.Body.String())
+	}
+	first, _ := store.GetPrivacyConfig()
+	if first.ShareToken != "tok-1" || first.ExpiresInSeconds != 86400 || first.TokenExpires.IsZero() {
+		t.Fatalf("unexpected stored config after generate: %+v", first)
+	}
+
+	// Plain save (toggle only) as the fixed admin UI sends it.
+	time.Sleep(1100 * time.Millisecond)
+	rr = httptest.NewRecorder()
+	handleSetPrivacyConfig(store, rr, adminRequest(t, http.MethodPost, "/api/privacy/config", map[string]interface{}{
+		"enabled": false, "share_token": "tok-1", "expires_in_seconds": 0, "token_expires": first.TokenExpires.Format(time.RFC3339),
+	}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("plain save: status %d body %s", rr.Code, rr.Body.String())
+	}
+	second, _ := store.GetPrivacyConfig()
+	if second.Enabled || second.ShareToken != "tok-1" {
+		t.Fatalf("plain save changed token/enabled: %+v", second)
+	}
+	if d := second.TokenExpires.Sub(first.TokenExpires); d < -time.Second || d > time.Second {
+		t.Fatalf("plain save restarted the countdown: %v vs %v", second.TokenExpires, first.TokenExpires)
+	}
+	if second.ExpiresInSeconds != 86400 {
+		t.Fatalf("plain save lost the saved duration: %d", second.ExpiresInSeconds)
+	}
+
+	// Empty share_token is still an explicit revoke.
+	rr = httptest.NewRecorder()
+	handleSetPrivacyConfig(store, rr, adminRequest(t, http.MethodPost, "/api/privacy/config", map[string]interface{}{"enabled": true, "share_token": ""}))
+	third, _ := store.GetPrivacyConfig()
+	if third.ShareToken != "" || !third.TokenExpires.IsZero() {
+		t.Fatalf("revoke did not clear the link: %+v", third)
+	}
+}

@@ -4090,6 +4090,16 @@ func handleSetPrivacyConfig(store *Store, w http.ResponseWriter, r *http.Request
 		ExpiresInSeconds: payload.ExpiresInSeconds, // Save the expiration seconds value
 	}
 
+	// A plain save that keeps the existing link sends expires_in_seconds = 0
+	// plus the stored token_expires (so the countdown is not restarted).
+	// Keep the previously chosen duration as well: the admin UI shows it as
+	// the default for the next link and must not fall back to 1 h.
+	if payload.ShareToken != "" && payload.ExpiresInSeconds <= 0 && payload.TokenExpires != "" {
+		if current, err := store.GetPrivacyConfig(); err == nil && current.ShareToken == payload.ShareToken {
+			config.ExpiresInSeconds = current.ExpiresInSeconds
+		}
+	}
+
 	// Calculate expiration time on server side
 	if payload.ShareToken != "" {
 		if payload.ExpiresInSeconds > 0 {

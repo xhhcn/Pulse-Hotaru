@@ -530,3 +530,30 @@ func TestPrivacySaveWithoutNewTokenKeepsExpiryAndDuration(t *testing.T) {
 		t.Fatalf("revoke did not clear the link: %+v", third)
 	}
 }
+
+// --- server-driven tcping reaches pull-mode agents ----------------------------
+
+func TestTCPingPullGateDistinguishesOwnPollFromPush(t *testing.T) {
+	now := time.Now()
+	fresh := &SystemMetric{ID: "a", UpdatedAt: now.Add(-2 * time.Second)}
+
+	// Pure pull-mode agent: our poll wrote the record moments ago.
+	pulled := ClientInfo{ID: "a", LastPollAt: now.Add(-2 * time.Second)}
+	if tcpingPullSuppressed(pulled, fresh, now) {
+		t.Fatalf("a record written by our own poll must not suppress the tcping pull")
+	}
+	// Never polled, yet the record is fresh: a push wrote it (re-registration window).
+	if !tcpingPullSuppressed(ClientInfo{ID: "a"}, fresh, now) {
+		t.Fatalf("a fresh record we did not poll must suppress the pull")
+	}
+	// Poll happened, but a newer write landed afterwards: something else is pushing.
+	stalePoll := ClientInfo{ID: "a", LastPollAt: now.Add(-8 * time.Second)}
+	if !tcpingPullSuppressed(stalePoll, fresh, now) {
+		t.Fatalf("a write newer than our last poll must suppress the pull")
+	}
+	// Old record: never suppressed.
+	old := &SystemMetric{ID: "a", UpdatedAt: now.Add(-30 * time.Second)}
+	if tcpingPullSuppressed(ClientInfo{ID: "a"}, old, now) {
+		t.Fatalf("a stale record must not suppress the pull")
+	}
+}

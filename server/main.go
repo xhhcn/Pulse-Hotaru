@@ -625,6 +625,10 @@ type ClientInfo struct {
 	// When PushMode is true, server skips polling and instead tracks LastPushAt for offline detection
 	PushMode   bool      `json:"-"` // in-memory only, not persisted
 	LastPushAt time.Time `json:"-"` // time of last successful push (in-memory only)
+	// LastPollAt is when pollClient last fetched /metrics from this client
+	// successfully (in-memory only). The tcping loop uses it to tell a fresh
+	// UpdatedAt written by our own poll from one written by a push.
+	LastPollAt time.Time `json:"-"`
 }
 
 // ClientTCPingResult is a single TCPing measurement sent by the client in push mode.
@@ -784,6 +788,7 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	var workingURL string
 	var pushMode bool
 	var lastPushAt time.Time
+	var lastPollAt time.Time
 	var cachedSecret string
 
 	if exists && existingClient != nil {
@@ -796,6 +801,9 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 			}
 			// Otherwise reset — pollClient will rediscover on next success.
 		}
+
+		// --- Poll state: preserved so the tcping loop keeps its context ---
+		lastPollAt = existingClient.LastPollAt
 
 		// --- Push-mode state: MUST be preserved ---
 		// If we zero these out, the polling loop briefly sees PushMode=false for a
@@ -823,6 +831,7 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		WorkingURL: workingURL,
 		PushMode:   pushMode,
 		LastPushAt: lastPushAt,
+		LastPollAt: lastPollAt,
 		Secret:     cachedSecret, // caller (handleClientRegister) will overwrite with DB value
 	}
 
@@ -905,6 +914,15 @@ func (r *ClientRegistry) UpdatePushState(id string, lastPushAt time.Time) {
 	if client, exists := r.clients[id]; exists && client != nil {
 		client.PushMode = true
 		client.LastPushAt = lastPushAt
+	}
+}
+
+// UpdatePollState records a successful pull of /metrics from the client.
+func (r *ClientRegistry) UpdatePollState(id string, polledAt time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if client, exists := r.clients[id]; exists && client != nil {
+		client.LastPollAt = polledAt
 	}
 }
 
@@ -3182,6 +3200,9 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	if err := store.UpsertFromAgent(metric); err != nil {
 		return false
 	}
+	if globalClientRegistry != nil {
+		globalClientRegistry.UpdatePollState(client.ID, time.Now())
+	}
 
 	// Keep the registry's cached secret in sync with the DB value so pollClient
 	// never uses a stale secret.  UpdateSecret holds the write lock, avoiding the
@@ -4360,6 +4381,26 @@ func handleSetTCPingConfig(store *Store, broker *SSEBroker, registry *ClientRegi
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// tcpingPullSuppressed implements the registry-churn guard of the tcping
+// loop for clients that have never pushed. A fresh UpdatedAt means "somebody
+// wrote this record in the last 10 s"; if that writer was our own poll
+// (LastPollAt at or after UpdatedAt) the client is a genuine pull-mode agent
+// and must be probed. Only a fresh write that our poll did not produce, i.e.
+// a push arriving in the re-registration window, suppresses the pull.
+//
+// The previous version skipped on any fresh UpdatedAt, which pollClient
+// refreshes every 3 s, so pull-mode agents never received server-driven
+// tcping at all.
+func tcpingPullSuppressed(client ClientInfo, m *SystemMetric, now time.Time) bool {
+	if m == nil || m.UpdatedAt.IsZero() || now.Sub(m.UpdatedAt) >= 10*time.Second {
+		return false
+	}
+	if !client.LastPollAt.IsZero() && !m.UpdatedAt.After(client.LastPollAt.Add(500*time.Millisecond)) {
+		return false // the fresh record is our own poll result
+	}
+	return true
+}
+
 // Shared HTTP client for TCPing operations (connection pooling)
 var tcpingHTTPClient *http.Client
 var tcpingHTTPClientOnce sync.Once
@@ -4501,10 +4542,8 @@ func startTCPingPolling(ctx context.Context, registry *ClientRegistry, store *St
 			// the server first polling it, so this unambiguously marks "something is
 			// pushing to this ID right now".
 			if client.LastPushAt.IsZero() {
-				if m, err := store.Get(client.ID); err == nil && m != nil {
-					if !m.UpdatedAt.IsZero() && time.Since(m.UpdatedAt) < 10*time.Second {
-						continue
-					}
+				if m, err := store.Get(client.ID); err == nil && m != nil && tcpingPullSuppressed(client, m, time.Now()) {
+					continue
 				}
 			}
 

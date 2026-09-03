@@ -557,3 +557,31 @@ func TestTCPingPullGateDistinguishesOwnPollFromPush(t *testing.T) {
 		t.Fatalf("a stale record must not suppress the pull")
 	}
 }
+
+// --- connect-time snapshot reuse must never serve stale data -----------------
+
+func TestSSEBrokerLatestSnapshotAgeAndPerView(t *testing.T) {
+	b := NewSSEBroker()
+	if _, ok := b.LatestSnapshot(SSEViewPublic); ok {
+		t.Fatalf("empty broker must not return a snapshot")
+	}
+	b.RememberSnapshot(SSEViewAdmin, "admin-1")
+	if _, ok := b.LatestSnapshot(SSEViewPublic); ok {
+		t.Fatalf("a payload remembered for the admin view must not be served to the public view")
+	}
+	if p, ok := b.LatestSnapshot(SSEViewAdmin); !ok || p != "admin-1" {
+		t.Fatalf("fresh admin payload not returned: %q %v", p, ok)
+	}
+	b.BroadcastByView(map[SSEView]string{SSEViewPublic: "pub-2", SSEViewAdmin: "admin-2"})
+	if p, _ := b.LatestSnapshot(SSEViewPublic); p != "pub-2" {
+		t.Fatalf("broadcast payload not remembered: %q", p)
+	}
+	b.mu.Lock()
+	for v := range b.latestAt {
+		b.latestAt[v] = time.Now().Add(-2 * sseSnapshotMaxAge)
+	}
+	b.mu.Unlock()
+	if _, ok := b.LatestSnapshot(SSEViewPublic); ok {
+		t.Fatalf("a payload older than %v must not prime a new subscriber", sseSnapshotMaxAge)
+	}
+}

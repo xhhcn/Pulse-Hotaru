@@ -442,27 +442,47 @@ type SSEBroker struct {
 	mu       sync.RWMutex
 
 	// Latest state-carrying payload per view, remembered by BroadcastByView
-	// so a freshly connected subscriber can be primed without rebuilding
-	// the snapshot from the database (see LatestSnapshot).
+	// and by connect-time builds (RememberSnapshot) so a freshly connected
+	// subscriber can be primed without rebuilding the snapshot from the
+	// database on every connection (see LatestSnapshot).
 	latest   map[SSEView]string
-	latestAt time.Time
+	latestAt map[SSEView]time.Time
 }
 
-// sseSnapshotMaxAge bounds how old a remembered broadcast payload may be
-// before a new subscriber falls back to building its own snapshot. The
-// broadcaster ticks every 3 s, so anything older means it has stalled.
-const sseSnapshotMaxAge = 5 * time.Second
+// sseSnapshotMaxAge bounds how old a remembered payload may be before a new
+// subscriber gets a freshly built one. It must stay well below the 3 s
+// broadcast tick: the homepage fetches /api/metrics right before it opens
+// the stream, and priming it with a payload older than that fetch makes
+// every value visibly jump backwards for one tick on each page load.
+const sseSnapshotMaxAge = time.Second
 
-// LatestSnapshot returns the most recent broadcast payload for view when it
-// is younger than sseSnapshotMaxAge.
+// LatestSnapshot returns the most recent payload for view when it is younger
+// than sseSnapshotMaxAge.
 func (b *SSEBroker) LatestSnapshot(view SSEView) (string, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.latest == nil || time.Since(b.latestAt) > sseSnapshotMaxAge {
+	if b.latest == nil {
+		return "", false
+	}
+	if at, ok := b.latestAt[view]; !ok || time.Since(at) > sseSnapshotMaxAge {
 		return "", false
 	}
 	payload, ok := b.latest[view]
 	return payload, ok
+}
+
+// RememberSnapshot stores a payload built at connect time so that other
+// subscribers connecting within sseSnapshotMaxAge (a reconnect storm after a
+// restart or a CDN blip) reuse it instead of each scanning the database.
+func (b *SSEBroker) RememberSnapshot(view SSEView, payload string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.latest == nil {
+		b.latest = make(map[SSEView]string)
+		b.latestAt = make(map[SSEView]time.Time)
+	}
+	b.latest[view] = payload
+	b.latestAt[view] = time.Now()
 }
 
 func NewSSEBroker() *SSEBroker {
@@ -543,8 +563,13 @@ func (b *SSEBroker) Broadcast(event string) {
 // masked for its audience.
 func (b *SSEBroker) BroadcastByView(byView map[SSEView]string) {
 	b.mu.Lock()
-	b.latest = byView
-	b.latestAt = time.Now()
+	now := time.Now()
+	b.latest = make(map[SSEView]string, len(byView))
+	b.latestAt = make(map[SSEView]time.Time, len(byView))
+	for view, payload := range byView {
+		b.latest[view] = payload
+		b.latestAt[view] = now
+	}
 	b.mu.Unlock()
 
 	b.mu.RLock()
@@ -1616,9 +1641,10 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 	// delivered in order.
 	payload, havePayload := broker.LatestSnapshot(view)
 	if !havePayload {
-		// Nothing fresh from the broadcaster (first seconds after start, or
-		// no tick yet): build one. Reconnect storms after a restart or a CDN
-		// blip otherwise turn into one full DB scan + marshal per viewer.
+		// No payload younger than one second: build a fresh one and remember
+		// it, so a burst of connections (restart, CDN blip) costs one DB scan
+		// per second instead of one per viewer, while any single viewer still
+		// starts from data at most one second old.
 		if snapshot, err := buildMetricsSnapshot(store, globalClientRegistry, isAdmin); err == nil {
 			viewName := "public"
 			if isAdmin {
@@ -1631,6 +1657,7 @@ func handleSSE(store *Store, broker *SSEBroker, w http.ResponseWriter, r *http.R
 				"count":   len(snapshot),
 			}); merr == nil {
 				payload, havePayload = string(b), true
+				broker.RememberSnapshot(view, payload)
 			}
 		}
 	}

@@ -2370,7 +2370,9 @@
         if (!res.ok) { showError(); return false; }
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data && (data.systems || data.metrics || data.items)) || [];
-        const shown = visibleSystems(list);
+        const clean = list.filter((s) => s && typeof s === 'object');
+        if (isStaleSnapshot(clean)) return true;
+        const shown = visibleSystems(clean);
         render(shown);
         broadcast(shown);
         return true;
@@ -2424,6 +2426,32 @@
     /* Admin per-system toggle: `hide_on_home` rows stay in the API and
        the admin dashboard but never reach the public table or the card
        grid (which renders from our broadcast). */
+    /* Freshness guard. The page fetches /api/metrics and then opens the
+       stream, and a stream may reconnect at any time; the first payload of
+       a (re)connection can be slightly older than what is already on
+       screen. Painting it would make every value step backwards for one
+       tick. Skip a payload that is strictly older than the current one
+       while describing the same set of systems (a changed set, e.g. a
+       deletion, is always applied). */
+    let paintedFreshness = 0;
+    let paintedIdKey = '';
+    function snapshotFreshness(list) {
+      let max = 0;
+      for (const s of list) {
+        const t = s && s.updated_at ? Date.parse(s.updated_at) : 0;
+        if (t > max) max = t;
+      }
+      return max;
+    }
+    function isStaleSnapshot(list) {
+      const idKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
+      const fresh = snapshotFreshness(list);
+      if (idKey === paintedIdKey && fresh && paintedFreshness && fresh < paintedFreshness) return true;
+      paintedIdKey = idKey;
+      paintedFreshness = fresh || paintedFreshness;
+      return false;
+    }
+
     let hiddenByAdminCount = 0;
     function visibleSystems(list) {
       if (!Array.isArray(list)) return list;
@@ -2450,7 +2478,9 @@
         ? payload
         : (payload && (payload.systems || payload.metrics || payload.items)) || null;
       if (!Array.isArray(list)) return;
-      const shown = visibleSystems(list.filter((s) => s && typeof s === 'object'));
+      const clean = list.filter((s) => s && typeof s === 'object');
+      if (isStaleSnapshot(clean)) return;
+      const shown = visibleSystems(clean);
       try {
         render(shown);
         broadcast(shown);

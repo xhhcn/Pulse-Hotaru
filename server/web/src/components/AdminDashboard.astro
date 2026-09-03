@@ -4310,6 +4310,18 @@ const customCodePlaceholder = [
   //   * 45 s liveness watchdog: server emits either an update event (~3 s) or
   //     a keepalive comment (~15 s), so 45 s of silence means the TCP stream
   //     is half-open and we should reconnect proactively.
+  let paintedAdminFreshness = 0;
+  let paintedAdminIdKey = '';
+  function isStaleAdminSnapshot(list) {
+    let max = 0;
+    for (const s of list) { const t = s && s.updated_at ? Date.parse(s.updated_at) : 0; if (t > max) max = t; }
+    const idKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
+    if (idKey === paintedAdminIdKey && max && paintedAdminFreshness && max < paintedAdminFreshness) return true;
+    paintedAdminIdKey = idKey;
+    paintedAdminFreshness = max || paintedAdminFreshness;
+    return false;
+  }
+
   let sseReconnectAttempt = 0;
   let sseWatchdogTimer = null;
   // Tracked so beforeunload can cancel a pending reconnect — otherwise
@@ -4427,7 +4439,10 @@ const customCodePlaceholder = [
            back through /login. */
         if (update.view === 'public') { handleSessionLost(); return; }
         if (Array.isArray(update.systems)) {
-          debouncedRenderSystems(update.systems);
+          // Skip a (re)connection's first payload when it is older than the
+          // list already on screen for the same systems; painting it would
+          // step every value backwards for one tick.
+          if (!isStaleAdminSnapshot(update.systems)) debouncedRenderSystems(update.systems);
         } else {
           debouncedLoadSystems();
         }

@@ -878,11 +878,17 @@
         return;
       }
       tcping.initialized = true;
+      /* Generation token: a collapse (resetTcpingCard) that happens while
+         the awaits below are pending must make this build a no-op, or the
+         card would be rebuilt on a closed row and a later open would
+         create a second chart on the same canvas. */
+      const gen = (tcping.gen = (tcping.gen || 0) + 1);
 
       const chartReady = loadChartJs();
       const configReady = loadTcpingConfig();
 
       const cfg = await configReady;
+      if (tcping.gen !== gen) return;
       if (cfg == null) {
         tcping.initialized = false;
         if (tcping.loading) tcping.loading.hidden = true;
@@ -899,6 +905,7 @@
       }
 
       const ok = await chartReady;
+      if (tcping.gen !== gen) return;
       if (!ok || !window.Chart) {
         /* Chart.js failed to load. Leave the empty card in place
            rather than yanking it out from under the user mid-
@@ -1492,6 +1499,7 @@
        deployment has no targets at all. The next expand rebuilds it. */
     function resetTcpingCard(tcping) {
       if (!tcping) return;
+      tcping.gen = (tcping.gen || 0) + 1; // invalidate any in-flight build
       if (tcping.chart) {
         try { tcping.chart.destroy(); } catch (_) {}
         tcping.chart = null;
@@ -2185,20 +2193,14 @@
       if (!Array.isArray(list)) { showError(); return; }
       if (errEl) errEl.hidden = true;
 
-      // Coming back from a placeholder state (error / empty list)?
-      // Wipe the placeholder <tr> before diffing real rows in.
-      if (inPlaceholderState) {
-        rowMap.clear();
-        tbody.innerHTML = '';
-        inPlaceholderState = false;
-      }
-
       if (list.length === 0) {
         const message = hiddenByAdminCount > 0
           ? t('暂无可展示的服务器。', 'No servers to show.')
           : t('暂无服务器，请到管理面板添加。',
               'No servers yet — add one in the admin panel.');
         // Same placeholder already on screen: nothing to do this tick.
+        // (Checked before the placeholder is wiped below, otherwise the
+        // row would be torn down and rebuilt every 3 s.)
         if (!(inPlaceholderState && placeholderMessage === message)) {
           paintPlaceholder(message);
           placeholderMessage = message;
@@ -2208,6 +2210,14 @@
           dismissInitialLoader();
         }
         return;
+      }
+
+      // Coming back from a placeholder state (error / empty list)?
+      // Wipe the placeholder <tr> before diffing real rows in.
+      if (inPlaceholderState) {
+        rowMap.clear();
+        tbody.innerHTML = '';
+        inPlaceholderState = false;
       }
 
       const sorted = list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));

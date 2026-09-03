@@ -206,6 +206,13 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       function redirectLogin() {
         window.location.href = '/login?redirect=/';
       }
+      // Explicit verdicts only: 401 means invalid, a JSON body speaks for
+      // itself, anything else (429 verify limit behind a shared proxy
+      // address, 5xx, network) fails open like the rest of this check.
+      function verdict(r) {
+        if (r.status === 401) return { valid: false };
+        return r.ok ? r.json().catch(() => null) : null;
+      }
 
       const url = new URL(window.location.href);
       const shareToken = url.searchParams.get('token');
@@ -224,15 +231,15 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ token: shareToken })
-            }).then((r) => r.ok ? r.json() : null)
-              .then((v) => { if (!v || !v.valid) redirectLogin(); });
+            }).then(verdict)
+              .then((v) => { if (v && v.valid === false) redirectLogin(); });
           }
           return fetch('/api/auth/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token: adminToken })
-          }).then((r) => r.ok ? r.json() : null)
-            .then((v) => { if (!v || !v.valid) redirectLogin(); });
+          }).then(verdict)
+            .then((v) => { if (v && v.valid === false) redirectLogin(); });
         })
         .catch(() => { /* fail open */ });
     })();

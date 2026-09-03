@@ -794,7 +794,11 @@ const customCodePlaceholder = [
       .filter((m) => !m.classList.contains('hidden'));
     if (openModals.length === 0) return;
     const topModal = openModals[openModals.length - 1];
-    closeModalWithAnimation(topModal);
+    // Route through the modal's own close/cancel button so the per-modal
+    // reset callback runs (clears stale messages, pending delete ids, an
+    // unsaved regenerated secret...). Fall back to a plain close.
+    const closer = topModal.querySelector('button[id^="close-"], button[id^="cancel-"]');
+    if (closer) closer.click(); else closeModalWithAnimation(topModal);
   });
 
   // Format bytes to human readable format (B, KiB, MiB, GiB, TiB)
@@ -802,7 +806,7 @@ const customCodePlaceholder = [
     if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))));
     const value = bytes / Math.pow(k, i);
     // CRITICAL: width-stable formatting.
     //
@@ -1028,7 +1032,7 @@ const customCodePlaceholder = [
         const submitBtn = form.querySelector('button[type="submit"]');
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = '更新服务';
+          submitBtn.innerHTML = '<span data-translate="updateSystem">更新服务</span>';
         }
       }
     });
@@ -1097,7 +1101,7 @@ const customCodePlaceholder = [
     } finally {
       if (confirmDeleteBtn) {
         confirmDeleteBtn.disabled = false;
-        confirmDeleteBtn.textContent = '删除';
+        confirmDeleteBtn.innerHTML = '<span data-translate="delete">删除</span>';
       }
     }
   });
@@ -1120,7 +1124,10 @@ const customCodePlaceholder = [
       tags: Array.isArray(item.tags) ? item.tags : [],
       // Admin visibility toggles (absent on the wire when false: omitempty)
       hide_on_home: item.hide_on_home === true,
-      hide_tcping: item.hide_tcping === true
+      hide_tcping: item.hide_tcping === true,
+      // Rotated by the shared-secret editor; the copy-install-command
+      // buttons read it from the row snapshot.
+      secret: String(item.secret || '')
     };
   }
 
@@ -1153,6 +1160,7 @@ const customCodePlaceholder = [
       old.order !== new_.order ||
       old.hide_on_home !== new_.hide_on_home ||
       old.hide_tcping !== new_.hide_tcping ||
+      old.secret !== new_.secret ||
       tagsChanged // Include tags in change detection
     );
   }
@@ -2211,8 +2219,9 @@ const customCodePlaceholder = [
     // Setup copy IP buttons
     container.querySelectorAll('.copy-ip-btn').forEach(btn => {
       // Remove existing listeners by cloning
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
+      if (btn.dataset.wired === '1') return; // already has its listener
+      btn.dataset.wired = '1';
+      const newBtn = btn;
       
       newBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -2248,8 +2257,9 @@ const customCodePlaceholder = [
     // Setup edit buttons
     container.querySelectorAll('.edit-btn').forEach(btn => {
       // Remove existing listeners by cloning
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
+      if (btn.dataset.wired === '1') return; // already has its listener
+      btn.dataset.wired = '1';
+      const newBtn = btn;
       
       newBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2261,8 +2271,9 @@ const customCodePlaceholder = [
     // Setup delete buttons
     container.querySelectorAll('.delete-btn').forEach(btn => {
       // Remove existing listeners by cloning
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
+      if (btn.dataset.wired === '1') return; // already has its listener
+      btn.dataset.wired = '1';
+      const newBtn = btn;
       
       newBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2274,8 +2285,9 @@ const customCodePlaceholder = [
 
     // Setup copy Linux command buttons
     container.querySelectorAll('.copy-linux-cmd-btn').forEach(btn => {
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
+      if (btn.dataset.wired === '1') return; // already has its listener
+      btn.dataset.wired = '1';
+      const newBtn = btn;
       
       newBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -2322,8 +2334,9 @@ const customCodePlaceholder = [
 
     // Setup copy Windows command buttons
     container.querySelectorAll('.copy-windows-cmd-btn').forEach(btn => {
-      const newBtn = btn.cloneNode(true);
-      btn.parentNode.replaceChild(newBtn, btn);
+      if (btn.dataset.wired === '1') return; // already has its listener
+      btn.dataset.wired = '1';
+      const newBtn = btn;
       
       newBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -2394,7 +2407,7 @@ const customCodePlaceholder = [
       if (!res.ok) {
         if (res.status === 401) {
           // Unauthorized - redirect to login
-          window.location.href = '/login';
+          window.location.href = '/login?redirect=/admin';
           return;
         }
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -2426,7 +2439,13 @@ const customCodePlaceholder = [
   }
 
   // Save order to backend
+  // While an order save is in flight, SSE snapshots (which still carry the
+  // old order for up to one tick) are held back so the row the admin just
+  // dropped does not jump back and forth. The reload at the end renders the
+  // confirmed order, or reverts the optimistic move if the save failed.
+  let orderSaveInFlight = false;
   async function saveOrderToBackend(order) {
+    orderSaveInFlight = true;
     try {
       const response = await fetch(`${apiBase}/api/metrics/order`, {
         method: 'PUT',
@@ -2439,14 +2458,14 @@ const customCodePlaceholder = [
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-
-      const result = await response.json();
-      
+    } catch (error) {
+      showMessage('保存排序失败：' + error.message, 'error');
+    } finally {
+      orderSaveInFlight = false;
+      pendingSystemsData = null;
       // Reload systems to update all data-index attributes
       // This is crucial for subsequent drag operations
       await loadSystems();
-    } catch (error) {
-      showMessage('Failed to save order: ' + error.message, 'error');
     }
   }
 
@@ -2725,8 +2744,9 @@ const customCodePlaceholder = [
         }
         draggedElement = null;
         draggedIndex = null;
-        // Remove all drag-over classes
-        items.forEach(i => i.classList.remove('border-blue-400', 'bg-blue-500/10', 'border-t-2', 'border-b-2'));
+        // Remove all drag-over classes (query afresh: rows added after this
+        // handler was bound are not in the captured NodeList)
+        container.querySelectorAll('.draggable-item').forEach(i => i.classList.remove('border-blue-400', 'bg-blue-500/10', 'border-t-2', 'border-b-2'));
       });
 
       item.addEventListener('dragover', (e) => {
@@ -2818,6 +2838,12 @@ const customCodePlaceholder = [
         finalInsertIndex = Math.max(0, Math.min(finalInsertIndex, newOrder.length));
         newOrder.splice(finalInsertIndex, 0, draggedId);
 
+        // Move the row now so the drop feels instant; the reload after the
+        // save confirms (or reverts) the position.
+        const parent = draggedElement.parentNode;
+        if (parent && item.parentNode === parent) {
+          parent.insertBefore(draggedElement, insertAbove ? item : item.nextSibling);
+        }
 
         // Save new order to backend (this will also reload after save)
         saveOrderToBackend(newOrder);
@@ -3028,7 +3054,7 @@ const customCodePlaceholder = [
         // Re-enable submit button
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = '更新服务';
+          submitBtn.innerHTML = '<span data-translate="updateSystem">更新服务</span>';
         }
       }
     });
@@ -3193,8 +3219,8 @@ const customCodePlaceholder = [
       e.preventDefault();
       
       const formData = new FormData(changePasswordForm);
-      const currentPassword = formData.get('currentPassword');
-      const newPassword = formData.get('newPassword');
+      const currentPassword = String(formData.get('currentPassword') || '').trim();
+      const newPassword = String(formData.get('newPassword') || '').trim();
       const confirmNewPassword = formData.get('confirmNewPassword');
 
       // Clear previous messages
@@ -3599,12 +3625,35 @@ const customCodePlaceholder = [
   const tokenExpiresInfo = document.getElementById('token-expires-info');
   const tokenExpiresHoursInput = document.getElementById('token-expires-hours');
 
+  /* One timer for the "已过期" flip. setTimeout silently overflows above
+     2^31-1 ms (~24.8 days) and fires immediately, which mislabelled every
+     link longer than ~596 h as expired; and each modal open used to arm
+     another untracked timer that could stamp a newer, valid link. */
+  let tokenExpiryTimer = null;
+  function scheduleExpiryLabel(msUntilExpiry) {
+    if (tokenExpiryTimer) { clearTimeout(tokenExpiryTimer); tokenExpiryTimer = null; }
+    const MAX_DELAY = 2147483647;
+    const delay = Math.min(msUntilExpiry, MAX_DELAY);
+    tokenExpiryTimer = setTimeout(() => {
+      tokenExpiryTimer = null;
+      if (msUntilExpiry > MAX_DELAY) { scheduleExpiryLabel(msUntilExpiry - MAX_DELAY); return; }
+      if (tokenExpiresInfo) {
+        tokenExpiresInfo.textContent = '已过期';
+        tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
+      }
+    }, delay);
+  }
+
   // Function to generate random token
   function generateToken() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    // This token grants dashboard access without a login: use the CSPRNG,
+    // never Math.random() (predictable, and operator custom_js shares the realm).
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
     let token = '';
     for (let i = 0; i < 32; i++) {
-      token += chars.charAt(Math.floor(Math.random() * chars.length));
+      token += chars.charAt(bytes[i] % chars.length);
     }
     return token;
   }
@@ -3643,7 +3692,9 @@ const customCodePlaceholder = [
         /* Seed the hidden fields the save handler reads, so saving without
            pressing "generate" keeps the existing link instead of revoking
            it (an empty share_token is an explicit revoke server-side). */
-        setPrivacyHiddenFields(config.share_token || '', Number(config.expires_in_seconds) || 0);
+        setPrivacyHiddenFields(config.share_token || '', 0);
+        const storedExpires = document.getElementById('temp-token-expires');
+        if (storedExpires) storedExpires.value = config.token_expires || '';
         if (config.share_token && config.share_token !== '') {
           const shareUrl = `${window.location.origin}/?token=${config.share_token}`;
           if (currentShareLinkInput) {
@@ -3672,12 +3723,7 @@ const customCodePlaceholder = [
                 
                 // Set up a timer to update the status when it actually expires
                 // Use the calculated time difference
-                setTimeout(() => {
-                  if (tokenExpiresInfo) {
-                    tokenExpiresInfo.textContent = '已过期';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
-                  }
-                }, timeDiff);
+                scheduleExpiryLabel(timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
                 tokenExpiresInfo.textContent = '已过期';
@@ -3837,6 +3883,10 @@ const customCodePlaceholder = [
     };
     ensure('temp-share-token', 'share_token').value = token;
     ensure('temp-expires-in-seconds', 'expires_in_seconds').value = String(seconds);
+    // Absolute expiry of the stored link (RFC3339). Sent back verbatim when
+    // no new link was generated so a plain Save keeps the existing expiry
+    // instead of restarting the countdown.
+    ensure('temp-token-expires', 'token_expires').value = '';
   }
 
   // Handle privacy config form submission
@@ -3850,11 +3900,15 @@ const customCodePlaceholder = [
     // Get seconds from hidden input (converted from hours)
     const expiresInSeconds = parseInt(document.getElementById('temp-expires-in-seconds')?.value || '0');
 
+    const storedTokenExpires = document.getElementById('temp-token-expires')?.value || '';
     const data = {
       enabled: enabled,
       share_token: shareToken,
       expires_in_seconds: expiresInSeconds,
     };
+    // No freshly generated link in this session: keep the existing absolute
+    // expiry (the server only recomputes when expires_in_seconds > 0).
+    if (!(expiresInSeconds > 0) && storedTokenExpires) data.token_expires = storedTokenExpires;
 
     // Set button to saving state
     if (submitBtn) {
@@ -3902,12 +3956,7 @@ const customCodePlaceholder = [
                 tokenExpiresInfo.className = 'mt-1 text-xs text-[#525252]';
                 
                 // Set up timer to update when expired (using server time difference)
-                setTimeout(() => {
-                  if (tokenExpiresInfo) {
-                    tokenExpiresInfo.textContent = '已过期';
-                    tokenExpiresInfo.className = 'mt-1 text-xs text-red-500';
-                  }
-                }, timeDiff);
+                scheduleExpiryLabel(timeDiff);
               } else {
                 // Token is expired or will expire within 1 second
                 tokenExpiresInfo.textContent = '已过期';
@@ -3924,7 +3973,7 @@ const customCodePlaceholder = [
           if (saveSpan) {
             saveSpan.textContent = '保存';
           } else {
-            submitBtn.textContent = '保存';
+            submitBtn.innerHTML = '<span data-translate="save">保存</span>';
           }
         }
         // Close modal immediately on success
@@ -3943,7 +3992,7 @@ const customCodePlaceholder = [
         if (saveSpan) {
           saveSpan.textContent = '保存';
         } else {
-          submitBtn.textContent = '保存';
+          submitBtn.innerHTML = '<span data-translate="save">保存</span>';
         }
       }
       if (messageEl) {
@@ -4080,7 +4129,7 @@ const customCodePlaceholder = [
         if (saveSpan) {
           saveSpan.textContent = '保存';
         } else {
-          submitBtn.textContent = '保存';
+          submitBtn.innerHTML = '<span data-translate="save">保存</span>';
         }
       }
       if (messageEl) {
@@ -4183,7 +4232,7 @@ const customCodePlaceholder = [
     } finally {
       if (submitBtn) {
         submitBtn.disabled = false;
-        submitBtn.textContent = '保存';
+        submitBtn.innerHTML = '<span data-translate="save">保存</span>';
       }
     }
   });
@@ -4214,6 +4263,10 @@ const customCodePlaceholder = [
   let pendingSystemsData = null;
   async function renderSystemsSerialized(data) {
     if (!Array.isArray(data)) return;
+    if (orderSaveInFlight) {
+      pendingSystemsData = data; // dropped when the save's reload renders
+      return;
+    }
     if (isRenderSystemsRunning) {
       pendingSystemsData = data;
       return;

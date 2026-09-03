@@ -58,7 +58,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
             if (config.text) {
               document.title = `登录 · ${config.text}`;
             }
-            if (config.logo) {
+            /* The logo field may hold raw SVG markup; only URL-shaped values
+               are valid as a favicon href. */
+            if (config.logo && /^(https?:\/\/|\/|data:)/i.test(String(config.logo).trim())) {
               const favicon = document.querySelector('link[rel="icon"]');
               if (favicon) {
                 favicon.href = config.logo;

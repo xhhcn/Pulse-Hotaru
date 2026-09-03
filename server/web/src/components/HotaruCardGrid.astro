@@ -325,6 +325,9 @@
     // source of truth halves the network load and guarantees the
     // cards stay in lockstep with the table.
     window.addEventListener('pulse:metrics-updated', (e) => {
+      // hide_cards is enforced by CSS; skip the per-tick diff and the
+      // flag-icon requests for a grid nobody can see.
+      if (window.__navbarConfig && window.__navbarConfig.hide_cards === true) return;
       if (e && Array.isArray(e.detail)) render(e.detail);
     });
   })();

@@ -65,7 +65,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
             if (!config) return;
             window.__navbarConfig = config;
             if (config.text) document.title = `管理 · ${config.text}`;
-            if (config.logo) {
+            /* The logo field may hold raw SVG markup; only URL-shaped values
+               are valid as a favicon href. */
+            if (config.logo && /^(https?:\/\/|\/|data:)/i.test(String(config.logo).trim())) {
               const favicon = document.querySelector('link[rel="icon"]');
               if (favicon) {
                 favicon.href = config.logo;
@@ -230,9 +232,15 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       });
-      if (!res.ok) throw new Error('verify failed');
-      const data = await res.json();
-      if (!data.valid) throw new Error('token invalid');
+      // Only an explicit verdict ends the session. A 429 (per-IP verify
+      // limit behind a shared proxy address), a 5xx or a dropped request
+      // must not wipe a valid 24 h token; any API call made with a bad
+      // token is redirected by the fetch wrapper below anyway.
+      if (res.status === 401) throw new Error('token invalid');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.valid === false) throw new Error('token invalid');
+      }
 
       // Show the dashboard, fade the overlay out.
       authCheck.removeAttribute('hidden');
@@ -245,13 +253,25 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       const originalFetch = window.fetch;
       window.fetch = function (...args) {
         const [url, options = {}] = args;
-        if (typeof url === 'string' && (url.startsWith(apiBase) || url.startsWith('/api/'))) {
+        const isApi = typeof url === 'string' && (url.startsWith(apiBase) || url.startsWith('/api/'));
+        if (isApi) {
           options.headers = {
             ...options.headers,
             Authorization: `Bearer ${token}`,
           };
         }
-        return originalFetch.apply(this, [url, options]);
+        const p = originalFetch.apply(this, [url, options]);
+        if (!isApi) return p;
+        // Session tokens live only in server memory: a restart or the 24 h
+        // expiry turns every later call into a 401. Send the admin back to
+        // the login page instead of surfacing "unauthorized" alerts.
+        return p.then((res) => {
+          if (res && res.status === 401 && !/\/api\/auth\//.test(url)) {
+            localStorage.removeItem('admin_auth_token');
+            window.location.href = '/login?redirect=/admin';
+          }
+          return res;
+        });
       };
     } catch (_) {
       localStorage.removeItem('admin_auth_token');

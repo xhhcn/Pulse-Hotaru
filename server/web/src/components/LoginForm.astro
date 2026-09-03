@@ -81,11 +81,17 @@
   function validateRedirect(redirect) {
     if (!redirect || typeof redirect !== 'string') return '/admin';
     redirect = redirect.trim();
-    if (!redirect.startsWith('/')) return '/admin';
-    if (redirect.startsWith('//')) return '/admin';
-    if (redirect.includes(':')) return '/admin';
-    if (redirect.includes('..')) return '/admin';
-    return redirect;
+    if (!redirect.startsWith('/') || redirect.startsWith('//')) return '/admin';
+    /* Resolve with the same parser the browser will use: "/\\evil.com" and
+       "/<tab>/evil.com" pass naive string checks but leave the origin. */
+    try {
+      const u = new URL(redirect, window.location.origin);
+      if (u.origin !== window.location.origin) return '/admin';
+      if (u.pathname.includes('..')) return '/admin';
+      return u.pathname + u.search + u.hash;
+    } catch (_) {
+      return '/admin';
+    }
   }
 
   async function checkPasswordStatus() {
@@ -219,8 +225,16 @@
         if (isSetupMode) {
           const setup = await setupPassword(password);
           if (setup && setup.success) {
+            const ok = await login(password);
+            if (!ok) {
+              // Password is stored; only the follow-up login failed. Say so
+              // instead of bouncing the user off /admin without explanation.
+              isSetupMode = false;
+              applyMode();
+              showAlert('error', T.invalidPassword);
+              return;
+            }
             showAlert('ok', T.setupSuccess);
-            await login(password);
             const params = new URLSearchParams(window.location.search);
             window.location.href = validateRedirect(params.get('redirect') || '/admin');
           } else {

@@ -268,6 +268,10 @@
           return null;
         }
       })();
+      // A failed fetch must not be cached for the whole session (the CDN
+      // is third-party and flaky on some networks): drop it so the next
+      // metrics tick retries.
+      p = p.then((svg) => { if (svg == null) iconSvgCache.delete(key); return svg; });
       iconSvgCache.set(key, p);
       return p;
     }
@@ -416,8 +420,9 @@
        ------------------------------------------------------------------ */
     function getApiBase() {
       const root = document.getElementById('hotaru-table-wrap');
-      if (root && root.dataset.apiBase && root.dataset.apiBase.trim() !== '') {
-        return root.dataset.apiBase.trim();
+      const candidates = [root && root.dataset.apiBase, document.body && document.body.dataset.apiBase];
+      for (const c of candidates) {
+        if (c && c.trim() !== '') return c.trim();
       }
       return window.location.origin;
     }
@@ -458,6 +463,7 @@
        inPlaceholderState only flips to true when paintPlaceholder()
        writes an error / empty-list row.                              */
     let inPlaceholderState = false;
+    let placeholderMessage = '';
 
     /* ==================================================================
        TCPing chart in expand row
@@ -655,6 +661,11 @@
           const r = await fetch(url, { headers, cache: 'no-store' });
           if (!r.ok) return null;
           const cfg = await r.json();
+          if (cfg && Array.isArray(cfg.targets)) {
+            // Drop half-saved rows without an address here, once, so every
+            // consumer (visibility, tabs, refresh) sees the same list.
+            cfg.targets = cfg.targets.filter((t) => t && typeof t.address === 'string' && t.address.trim() !== '');
+          }
           cachedTcpingConfig = cfg;
           return cfg;
         } catch (_) {
@@ -1475,30 +1486,36 @@
       }
     }
 
+    /* Return a tcping card to its pristine state: chart, sample cache and
+       tabs gone, nothing in flight. Used when the row collapses, when the
+       target list changes underneath a collapsed row, and when the
+       deployment has no targets at all. The next expand rebuilds it. */
+    function resetTcpingCard(tcping) {
+      if (!tcping) return;
+      if (tcping.chart) {
+        try { tcping.chart.destroy(); } catch (_) {}
+        tcping.chart = null;
+      }
+      if (tcping._cache) tcping._cache.clear();
+      if (tcping._inflight) tcping._inflight.clear();
+      if (tcping.tabs) tcping.tabs.innerHTML = '';
+      if (tcping.stats) tcping.stats.hidden = true;
+      if (tcping.loading) tcping.loading.hidden = true;
+      if (tcping.empty) tcping.empty.hidden = true;
+      tcping.target = '';
+      tcping.initialized = false;
+    }
+
     async function handleTcpingConfigUpdated() {
       const cfg = await loadTcpingConfig(/*force=*/true);
       if (!cfg || !Array.isArray(cfg.targets)) return;
-      const targets = cfg.targets.filter((t) => t && t.address);
+      const targets = cfg.targets;
       const hasTargets = targets.length > 0;
 
       rowMap.forEach((entry) => applyTcpingVisibility(entry));
 
       if (!hasTargets) {
-        rowMap.forEach((entry) => {
-          const tcping = entry && entry.tcping;
-          if (!tcping) return;
-          if (tcping.chart) {
-            try { tcping.chart.destroy(); } catch (_) {}
-            tcping.chart = null;
-          }
-          if (tcping._cache) tcping._cache.clear();
-          if (tcping.tabs) tcping.tabs.innerHTML = '';
-          if (tcping.stats) tcping.stats.hidden = true;
-          if (tcping.loading) tcping.loading.hidden = true;
-          if (tcping.empty) tcping.empty.hidden = true;
-          tcping.target = '';
-          tcping.initialized = false;
-        });
+        rowMap.forEach((entry) => resetTcpingCard(entry && entry.tcping));
         tcpingState.clear();
         return;
       }
@@ -1507,14 +1524,20 @@
       rowMap.forEach((entry, id) => {
         const tcping = entry && entry.tcping;
         if (!tcping) return;
-        applyTcpingVisibility(entry);
+
+        /* Only rows that are open right now get rebuilt (and re-fetch
+           history). Collapsed rows are torn down instead of each firing a
+           24 h history request for a chart nobody can see. */
+        const isOpen = !!(entry.detail && entry.detail.classList.contains('is-open'));
+        if (!isOpen) {
+          resetTcpingCard(tcping);
+          tcpingState.delete(id);
+          return;
+        }
 
         if (!tcping.initialized || !tcpingState.has(id)) {
           tcping.initialized = false;
-          const detailRow = entry && entry.detail;
-          if (detailRow && detailRow.classList.contains('is-open')) {
-            ensureTcpingChart(id, tcping);
-          }
+          ensureTcpingChart(id, tcping);
           return;
         }
 
@@ -1881,7 +1904,15 @@
         if (row.classList.contains('is-pristine')) return;
         const opening = !detail.classList.contains('is-open');
         setExpandOpen(detail, opening);
-        if (opening) ensureTcpingChart(id, tcping);
+        if (opening) {
+          ensureTcpingChart(id, tcping);
+        } else {
+          /* Collapsed rows keep nothing alive: a session that has browsed
+             many rows would otherwise pin one Chart.js instance and a
+             24 h sample cache per row it ever opened. */
+          resetTcpingCard(tcping);
+          tcpingState.delete(id);
+        }
       });
 
       return {
@@ -2121,6 +2152,7 @@
     }
 
     function paintPlaceholder(message) {
+      inPlaceholderState = true;
       clearDiffState();
       tbody.appendChild(buildSkeletonPlaceholderRow(message));
     }
@@ -2162,10 +2194,15 @@
       }
 
       if (list.length === 0) {
-        paintPlaceholder(hiddenByAdminCount > 0
+        const message = hiddenByAdminCount > 0
           ? t('暂无可展示的服务器。', 'No servers to show.')
           : t('暂无服务器，请到管理面板添加。',
-              'No servers yet — add one in the admin panel.'));
+              'No servers yet — add one in the admin panel.');
+        // Same placeholder already on screen: nothing to do this tick.
+        if (!(inPlaceholderState && placeholderMessage === message)) {
+          paintPlaceholder(message);
+          placeholderMessage = message;
+        }
         if (firstRender) {
           firstRender = false;
           dismissInitialLoader();
@@ -2300,8 +2337,8 @@
          once per 3-s broadcast.                                   */
       tcpingState.forEach((tcping, id) => {
         if (tcping.hiddenByAdmin) return;
-        const detailRow = document.querySelector('tr.hotaru-expand[data-expand-for="' + cssEscape(String(id)) + '"]');
-        if (!detailRow || !detailRow.classList.contains('is-open')) return;
+        const entry = rowMap.get(id);
+        if (!entry || !entry.detail.classList.contains('is-open')) return;
         refreshTcpingChart(id, tcping);
       });
     }
@@ -2396,14 +2433,20 @@
         handleTcpingConfigUpdated();
         return;
       }
+      // Any well-formed event proves the stream is alive; a payload we
+      // cannot render must not push the watchdog into a reconnect loop.
+      lastEventAt = Date.now();
       const list = Array.isArray(payload)
         ? payload
         : (payload && (payload.systems || payload.metrics || payload.items)) || null;
       if (!Array.isArray(list)) return;
-      const shown = visibleSystems(list);
-      render(shown);
-      broadcast(shown);
-      lastEventAt = Date.now();
+      const shown = visibleSystems(list.filter((s) => s && typeof s === 'object'));
+      try {
+        render(shown);
+        broadcast(shown);
+      } catch (err) {
+        console.error('render failed:', err);
+      }
     }
 
     function connectSSE() {

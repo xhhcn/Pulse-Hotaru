@@ -94,8 +94,8 @@ sudo systemctl daemon-reload
 
 - **资源**：服务端为单二进制，1 核 2G 的 VPS 足够。实测 1000 个客户端每 3 秒推送一次并各带 TCPing 结果时，单核 CPU 占用约 25%，常驻内存约 30 MB。
 - **TCPing 数据量**：历史保留 24 小时，磁盘占用约为 `客户端数 × 目标数 × (86400 / 间隔秒) × 0.4 KB`。客户端很多时请把间隔保持在 60 秒以上、目标数控制在 3 到 5 个。
-- **反向代理 / CDN**：服务端只信任本机回环和 `TRUSTED_PROXIES`（逗号分隔的 IP 或 CIDR）转发的 `X-Forwarded-For`。若前面还有一层反代或 CDN，请设置该变量，否则登录限流与 SSE 连接上限会按代理 IP 计数。
-- **SSE 上限**：匿名实时流默认全局 2000 路、单 IP 200 路，可用 `SSE_MAX_STREAMS` 与 `SSE_MAX_STREAMS_PER_IP` 调整；管理员会话不受限制。
+- **反向代理 / CDN**：服务端只信任本机回环和 `TRUSTED_PROXIES`（逗号分隔的 IP 或 CIDR）转发的 `X-Forwarded-For`。若前面还有一层反代或 CDN，请设置该变量，否则登录限流会按代理 IP 计数。镜像内置的 nginx 会保留上游的 `X-Forwarded-For` 链，因此 docker 部署时可把桥接网关（如 `172.17.0.0/16`）加入 `TRUSTED_PROXIES`。
+- **SSE 上限**：匿名实时流默认全局 2000 路、单 IP 200 路，可用 `SSE_MAX_STREAMS` 与 `SSE_MAX_STREAMS_PER_IP` 调整；管理员会话不受限制。单 IP 上限只对公网地址生效，经 docker 桥接或未受信反代到达的内网地址不会被单独限流（全局上限仍然有效）。
 - **Docker**：`docker-compose.yaml` 已设置 45 秒优雅停止，请勿缩短，否则强制退出可能损坏数据库。
 
 ## 发布页

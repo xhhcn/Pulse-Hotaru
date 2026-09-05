@@ -2137,6 +2137,10 @@
       rowMap.forEach((entry) => {
         const tcping = entry && entry.tcping;
         if (!tcping) return;
+        // resetTcpingCard also bumps the generation so a chart build that
+        // is still awaiting Chart.js or a history fetch cannot paint into
+        // the detached row afterwards.
+        try { resetTcpingCard(tcping); } catch (_) {}
         if (tcping.chart) { try { tcping.chart.destroy(); } catch (_) {} tcping.chart = null; }
         if (tcping._cache) tcping._cache.clear();
         if (tcping._inflight) tcping._inflight.clear();
@@ -2145,6 +2149,9 @@
       rowMap.clear();
       tbody.innerHTML = '';
       inPlaceholderState = true;
+      // The placeholder text painted next may differ from the last one
+      // render() remembered; forget it so the next empty render repaints.
+      placeholderMessage = '';
     }
 
     function buildSkeletonPlaceholderRow(message) {
@@ -2271,6 +2278,7 @@
           entry.row.remove();
           entry.detail.remove();
           if (entry.tcping) {
+            try { resetTcpingCard(entry.tcping); } catch (_) {}
             if (entry.tcping.chart) {
               try { entry.tcping.chart.destroy(); } catch (_) {}
               entry.tcping.chart = null;
@@ -2435,6 +2443,11 @@
        deletion, is always applied). */
     let paintedFreshness = 0;
     let paintedIdKey = '';
+    // Only the first payload after a (re)connection is checked: later
+    // payloads come from the broadcast ticker in order, and judging them by
+    // updated_at would freeze the table whenever that stamp legitimately
+    // goes down (a system marked offline, a server clock step).
+    let streamPrimePending = false;
     function snapshotFreshness(list) {
       let max = 0;
       for (const s of list) {
@@ -2443,12 +2456,15 @@
       }
       return max;
     }
+    function noteSnapshot(list) {
+      paintedIdKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
+      paintedFreshness = snapshotFreshness(list) || paintedFreshness;
+    }
     function isStaleSnapshot(list) {
       const idKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
       const fresh = snapshotFreshness(list);
       if (idKey === paintedIdKey && fresh && paintedFreshness && fresh < paintedFreshness) return true;
-      paintedIdKey = idKey;
-      paintedFreshness = fresh || paintedFreshness;
+      noteSnapshot(list);
       return false;
     }
 
@@ -2479,7 +2495,12 @@
         : (payload && (payload.systems || payload.metrics || payload.items)) || null;
       if (!Array.isArray(list)) return;
       const clean = list.filter((s) => s && typeof s === 'object');
-      if (isStaleSnapshot(clean)) return;
+      if (streamPrimePending) {
+        streamPrimePending = false;
+        if (isStaleSnapshot(clean)) return;
+      } else {
+        noteSnapshot(clean);
+      }
       const shown = visibleSystems(clean);
       try {
         render(shown);
@@ -2492,6 +2513,7 @@
     function connectSSE() {
       try {
         const { sseQs } = authParts();
+        streamPrimePending = true;
         evtSource = new EventSource(getApiBase() + SSE_PATH + sseQs);
       } catch (_) {
         scheduleReconnect();

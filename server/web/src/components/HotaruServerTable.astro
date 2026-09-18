@@ -1748,10 +1748,12 @@
       const td = document.createElement('td');
       td.className = className;
       const a = document.createElement('span');
+      a.className = 'hotaru-pipe-a';
       const pipe = document.createElement('span');
       pipe.className = 'hotaru-pipe';
       pipe.textContent = '|';
       const b = document.createElement('span');
+      b.className = 'hotaru-pipe-b';
       const sep1 = document.createTextNode(' ');
       const sep2 = document.createTextNode(' ');
       const dash = document.createElement('span');
@@ -1759,7 +1761,13 @@
       dash.textContent = '–';
       dash.hidden = true;
       td.append(a, sep1, pipe, sep2, b, dash);
+      let mode = false;
       function setMode(offline) {
+        // Only touch the DOM on a real change: every write here (even
+        // with the same value) invalidates the row's layout, and this
+        // runs for every row on every 3 s tick.
+        if (offline === mode) return;
+        mode = offline;
         a.hidden    = offline;
         pipe.hidden = offline;
         b.hidden    = offline;
@@ -1973,17 +1981,17 @@
     function setTagPills(refs, tags) {
       const cfg = (typeof window !== 'undefined') ? window.__navbarConfig : null;
       if (cfg && cfg.hide_tags === true) {
-        refs.tagsLine.hidden = true;
+        if (!refs.tagsLine.hidden) refs.tagsLine.hidden = true;
         return;
       }
       const list = Array.isArray(tags) ? tags.filter(Boolean) : [];
       const sig  = JSON.stringify(list);
       if (refs.tagsList.dataset.tagSig === sig) {
-        refs.tagsLine.hidden = list.length === 0;
+        if (refs.tagsLine.hidden !== (list.length === 0)) refs.tagsLine.hidden = list.length === 0;
         return;
       }
       refs.tagsList.dataset.tagSig = sig;
-      refs.tagsLine.hidden = list.length === 0;
+      if (refs.tagsLine.hidden !== (list.length === 0)) refs.tagsLine.hidden = list.length === 0;
       while (refs.tagsList.firstChild) {
         refs.tagsList.removeChild(refs.tagsList.firstChild);
       }
@@ -2030,10 +2038,9 @@
                            in it).
          A row is only ever in one state at a time, but both classes
          live on the same <tr> and CSS keys off them independently. */
-      if (isOffline)  entry.row.classList.add('is-offline');
-      else            entry.row.classList.remove('is-offline');
-      if (isPristine) entry.row.classList.add('is-pristine');
-      else            entry.row.classList.remove('is-pristine');
+      const cl = entry.row.classList;
+      if (cl.contains('is-offline')  !== isOffline)  cl.toggle('is-offline',  isOffline);
+      if (cl.contains('is-pristine') !== isPristine) cl.toggle('is-pristine', isPristine);
 
       /* Pristine rows that the user had previously expanded (e.g.
          the row had data, the agent disappeared for long enough to
@@ -2198,7 +2205,7 @@
 
     function render(list) {
       if (!Array.isArray(list)) { showError(); return; }
-      if (errEl) errEl.hidden = true;
+      if (errEl && !errEl.hidden) errEl.hidden = true;
 
       if (list.length === 0) {
         const message = hiddenByAdminCount > 0
@@ -2448,6 +2455,12 @@
     // updated_at would freeze the table whenever that stamp legitimately
     // goes down (a system marked offline, a server clock step).
     let streamPrimePending = false;
+    // After the initial REST paint the first stream payload is dropped
+    // outright: it is a broadcast built up to a few seconds before the
+    // fetch and would repaint every changed value 0.1-1 s after the first
+    // paint, which reads as "the page loaded twice". The next tick lands
+    // within 3 s anyway. Reconnects keep the "only if newer" rule.
+    let streamPrimePolicy = 'if-newer';
     function snapshotFreshness(list) {
       let max = 0;
       for (const s of list) {
@@ -2463,7 +2476,10 @@
     function isStaleSnapshot(list) {
       const idKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
       const fresh = snapshotFreshness(list);
-      if (idKey === paintedIdKey && fresh && paintedFreshness && fresh < paintedFreshness) return true;
+      // Not strictly newer than what is on screen (same systems): skip.
+      // An equal stamp means the same data built at a different instant;
+      // painting it could only flip derived state such as the offline flag.
+      if (idKey === paintedIdKey && fresh && paintedFreshness && fresh <= paintedFreshness) return true;
       noteSnapshot(list);
       return false;
     }
@@ -2497,6 +2513,9 @@
       const clean = list.filter((s) => s && typeof s === 'object');
       if (streamPrimePending) {
         streamPrimePending = false;
+        const policy = streamPrimePolicy;
+        streamPrimePolicy = 'if-newer';
+        if (policy === 'drop' && paintedIdKey) return;
         if (isStaleSnapshot(clean)) return;
       } else {
         noteSnapshot(clean);
@@ -2557,10 +2576,12 @@
     // hand off to SSE for ongoing diffs.
     (async () => {
       const ok = await fetchOnce();
-      if (ok || true) {  // start SSE either way; it'll repaint on first event
-        connectSSE();
-        armWatchdog();
-      }
+      // The REST paint is the first paint; the stream's connect-time
+      // snapshot is dropped so the page renders exactly once on open.
+      // If the fetch failed nothing is on screen and the prime is used.
+      streamPrimePolicy = ok ? 'drop' : 'if-newer';
+      connectSSE();
+      armWatchdog();
     })();
 
     /* Tcping warm-up. Fire the config probe right at script init so

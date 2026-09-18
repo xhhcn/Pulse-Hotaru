@@ -27,6 +27,8 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
        chrome render with a warm tint that didn't match the page. -->
   <meta name="theme-color" content="#ffffff" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preload" href="/fonts/lato/lato-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/lato/lato-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <title>Server Status</title>
 
   <!-- Force light mode: clear any leftover .dark from previous

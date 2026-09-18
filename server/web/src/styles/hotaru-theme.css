@@ -24,7 +24,13 @@
    We mirror that exactly so Latin text renders in real Lato (not a
    Helvetica fallback) — same geometry hotaru actually paints in
    production deployments.                                          */
-@import url('https://fonts.googleapis.com/css?family=Lato:400,700,400italic,700italic&subset=latin');
+/* Self-hosted (latin subset, woff2). The Google Fonts @import was
+   render-blocking, unreachable from mainland China, and when it did
+   arrive late the swap re-measured every column of the table. */
+@font-face { font-family: 'Lato'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/lato/lato-latin-400.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Lato'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/lato/lato-latin-700.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Lato'; font-style: italic; font-weight: 400; font-display: swap; src: url('/fonts/lato/lato-latin-400-italic.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Lato'; font-style: italic; font-weight: 700; font-display: swap; src: url('/fonts/lato/lato-latin-700-italic.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
 :root {
   --hotaru-text:        #616366;   /* main text  (hotaru's own #616366) */
@@ -215,7 +221,9 @@ body.hotaru-theme {
   letter-spacing: 0.02em;
   /* Same easing curve as the expand-row open animation so the
      overall page motion feels consistent.                     */
-  transition: opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Short fade of the white veil only; the content underneath is
+     revealed instantly (see .hotaru-app) so nothing cross-fades. */
+  transition: opacity 0.16s ease-out;
 }
 .hotaru-initial-loader.is-done {
   opacity: 0;
@@ -226,7 +234,17 @@ body.hotaru-theme {
   /* Reserve space for the trailing "..." so the word "Loading"
      doesn't shift horizontally as dots appear/disappear.        */
   display: inline-block;
+  /* The word only appears when loading really takes a while; on a
+     fast connection the veil is gone before this delay elapses, so
+     the page does not blink "加载中" for two frames. */
+  opacity: 0;
+  animation: hotaru-loader-text-in 0s 280ms forwards;
 }
+.hotaru-initial-loader.is-done .hotaru-initial-loader__text {
+  opacity: 0 !important;
+  animation: none;
+}
+@keyframes hotaru-loader-text-in { to { opacity: 1; } }
 .hotaru-initial-loader__ellipsis {
   display: inline-block;
   /* Width of three "."s in Lato 1rem ≈ 0.9em — fixed so the
@@ -265,10 +283,12 @@ body.hotaru-theme {
   75%, 100%   { opacity: 0; }
 }
 
+/* Hidden until the first metrics response; revealed in one frame
+   (no transition) under the fading veil, so the table never shows
+   half-transparent with the loader text ghosting over it. */
 .hotaru-app {
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .hotaru-app.is-ready {
   opacity: 1;
@@ -380,7 +400,21 @@ body.hotaru-theme {
   font-size: 1rem;
   font-style: normal;
   text-transform: none;
+  /* Digits of equal width: a value changing from 8 to 9 (or 138.4M to
+     1.4M) must not change the width of its cell, otherwise the auto
+     table layout redistributes every column on every 3 s tick and the
+     whole table twitches. */
+  font-variant-numeric: tabular-nums;
 }
+/* Each half of "↓ | ↑" gets a fixed minimum box so the network and
+   traffic columns keep a constant width whatever value they show. */
+.hotaru-pipe-a,
+.hotaru-pipe-b {
+  display: inline-block;
+  min-width: 7ch;
+}
+.hotaru-pipe-a { text-align: right; }
+.hotaru-pipe-b { text-align: left; }
 
 /* Network / traffic cells inherit the row's `font-size: 1rem` and
    `font-weight: bold` like every other cell — hotaru never gives

@@ -415,6 +415,23 @@ body.hotaru-theme {
   .hotaru-pipe-a,
   .hotaru-pipe-b { min-width: 7ch; }
 }
+/* Cap the name so one long label cannot widen the table past its
+   container (the auto layout would otherwise clip the last columns);
+   the full name is in the cell's title. */
+.hotaru-cell-name .hotaru-name {
+  display: inline-block;
+  max-width: 18em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+@media (max-width: 910px) {
+  .hotaru-cell-name .hotaru-name { max-width: 12em; }
+}
+@media (max-width: 533px) {
+  .hotaru-cell-name .hotaru-name { max-width: 100%; }
+}
 /* `display: inline-block` above would otherwise beat the `[hidden]`
    reset; setMode() hides both halves for rows that never reported. */
 .hotaru-pipe-a[hidden],

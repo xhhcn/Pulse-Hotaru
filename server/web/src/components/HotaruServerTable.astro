@@ -1831,6 +1831,12 @@
 
       const tdName = document.createElement('td');
       tdName.className = 'hotaru-cell-name';
+      // The text lives in an inline-block so an unusually long name is
+      // ellipsised (max-width in CSS) instead of pushing the last columns
+      // out of the container; the full name stays in the title.
+      const nameText = document.createElement('span');
+      nameText.className = 'hotaru-name';
+      tdName.appendChild(nameText);
       row.appendChild(tdName);
 
       const tdType = document.createElement('td');
@@ -1934,7 +1940,7 @@
       return {
         row, detail, tcping,
         refs: {
-          status, name: tdName, type: tdType, location: tdLoc,
+          status, name: nameText, type: tdType, location: tdLoc,
           uptime: tdUptime,
           net,  traf,
           netIn: net.a,  netOut: net.b,

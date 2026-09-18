@@ -97,6 +97,7 @@ sudo systemctl daemon-reload
 - **反向代理 / CDN**：服务端只信任本机回环和 `TRUSTED_PROXIES`（逗号分隔的 IP 或 CIDR）转发的 `X-Forwarded-For`。若前面还有一层反代或 CDN，请设置该变量，否则登录限流会按代理 IP 计数。镜像内置的 nginx 会保留上游的 `X-Forwarded-For` 链，因此 docker 部署时可把桥接网关（如 `172.17.0.0/16`）加入 `TRUSTED_PROXIES`。
 - **SSE 上限**：匿名实时流默认全局 2000 路、单 IP 200 路，可用 `SSE_MAX_STREAMS` 与 `SSE_MAX_STREAMS_PER_IP` 调整；管理员会话不受限制。单 IP 上限只对公网地址生效，经 docker 桥接或未受信反代到达的内网地址不会被单独限流（全局上限仍然有效）。
 - **Docker**：`docker-compose.yaml` 已设置 45 秒优雅停止，请勿缩短，否则强制退出可能损坏数据库。
+- **外部资源**：页面字体已随服务端自托管；展开行的 TCPing 图表在首次打开时从 `cdn.jsdelivr.net`（备用 `unpkg.com`）加载 Chart.js，访客所在网络需能访问其中之一。
 
 ## 发布页
 

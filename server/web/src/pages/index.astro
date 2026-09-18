@@ -166,9 +166,8 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
 <body class="hotaru-theme" data-api-base={apiBase}>
   <!-- Full-page initial loader. Sits fixed-positioned over a hidden
        <main> until the first metrics response (success OR failure)
-       arrives, then fades out and reveals the content beneath.
-       HotaruServerTable's render() / showError() both call
-       window.__dismissHotaruLoader() to trigger the cross-fade.   -->
+       arrives; HotaruServerTable's render() / showError() then reveal
+       <main> and fade the veil out (dismissInitialLoader).          -->
   <div class="hotaru-initial-loader" id="hotaru-initial-loader" role="status" aria-label="加载中">
     <span class="hotaru-initial-loader__text"
       >加载中<span class="hotaru-initial-loader__ellipsis" aria-hidden="true"

@@ -19,14 +19,11 @@
    No Pixiv artwork is bundled — the cover SVG is original.
    ============================================================ */
 
-/* Hotaru loads Lato via Semantic UI's first @import line:
-   `@import url(https://fonts.googleapis.com/css?family=Lato:400,700,...)`.
-   We mirror that exactly so Latin text renders in real Lato (not a
-   Helvetica fallback) — same geometry hotaru actually paints in
-   production deployments.                                          */
-/* Self-hosted (latin subset, woff2). The Google Fonts @import was
+/* Lato, self-hosted (latin subset, woff2), the face upstream Hotaru
+   loads through Semantic UI. The Google Fonts @import it used was
    render-blocking, unreachable from mainland China, and when it did
-   arrive late the swap re-measured every column of the table. */
+   arrive late the swap re-measured every column of the table. CJK text
+   falls through to the system font as before. */
 @font-face { font-family: 'Lato'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/lato/lato-latin-400.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 @font-face { font-family: 'Lato'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/lato/lato-latin-700.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 @font-face { font-family: 'Lato'; font-style: italic; font-weight: 400; font-display: swap; src: url('/fonts/lato/lato-latin-400-italic.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
@@ -202,10 +199,10 @@ body.hotaru-theme {
    The whole page (`<main class="hotaru-app">`) is hidden
    underneath via `opacity: 0; visibility: hidden`. When the
    first response (success or error) lands we add `.is-ready`
-   to <main> (fades the content in) and `.is-done` to the
-   loader (fades the veil out, then it's removed from the DOM).
-   Times are deliberately short (~320ms) — hotaru's aesthetic
-   is calm but not slow.                                       */
+   to <main> (revealed in one frame, no fade) and `.is-done` to
+   the loader (veil fades out in 160 ms, then it's removed from
+   the DOM). The word "加载中" only appears after 280 ms, so a
+   fast load never blinks it.                                  */
 .hotaru-initial-loader {
   position: fixed;
   inset: 0;
@@ -219,8 +216,6 @@ body.hotaru-theme {
   color: #616366;
   font-size: 1rem;
   letter-spacing: 0.02em;
-  /* Same easing curve as the expand-row open animation so the
-     overall page motion feels consistent.                     */
   /* Short fade of the white veil only; the content underneath is
      revealed instantly (see .hotaru-app) so nothing cross-fades. */
   transition: opacity 0.16s ease-out;
@@ -400,19 +395,30 @@ body.hotaru-theme {
   font-size: 1rem;
   font-style: normal;
   text-transform: none;
-  /* Digits of equal width: a value changing from 8 to 9 (or 138.4M to
-     1.4M) must not change the width of its cell, otherwise the auto
-     table layout redistributes every column on every 3 s tick and the
-     whole table twitches. */
+  /* Lato's digits are already uniform; this keeps fallback fonts on
+     the same footing so a value changing from 8 to 9 cannot change the
+     width of its cell. */
   font-variant-numeric: tabular-nums;
 }
-/* Each half of "↓ | ↑" gets a fixed minimum box so the network and
-   traffic columns keep a constant width whatever value they show. */
+/* Each half of a "down | up" cell gets a fixed minimum box, so the
+   network and traffic columns keep a constant width whatever value
+   they show (138.4M to 1.4M would otherwise make the auto table layout
+   redistribute every column on every 3 s tick). 6ch fits every value
+   the formatter emits except the rare 7-character ones; on wide
+   screens, where the table has slack, the box is 7ch. */
 .hotaru-pipe-a,
 .hotaru-pipe-b {
   display: inline-block;
-  min-width: 7ch;
+  min-width: 6ch;
 }
+@media (min-width: 1076px) {
+  .hotaru-pipe-a,
+  .hotaru-pipe-b { min-width: 7ch; }
+}
+/* `display: inline-block` above would otherwise beat the `[hidden]`
+   reset; setMode() hides both halves for rows that never reported. */
+.hotaru-pipe-a[hidden],
+.hotaru-pipe-b[hidden] { display: none !important; }
 .hotaru-pipe-a { text-align: right; }
 .hotaru-pipe-b { text-align: left; }
 

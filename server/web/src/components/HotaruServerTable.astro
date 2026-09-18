@@ -2179,7 +2179,7 @@
       tbody.appendChild(buildSkeletonPlaceholderRow(message));
     }
 
-    /** Cross-fade the full-page initial loader off, reveal <main>.
+    /** Dismiss the full-page initial loader, reveal <main>.
         Idempotent — safe to call from both render() (success path)
         and showError() (failure path), only the first call has any
         visible effect.                                            */
@@ -2379,6 +2379,9 @@
           signal: controller.signal,
         });
         if (res.status === 401) {
+          // The stored admin token is rejected: forget it so the login
+          // page does not bounce straight back here with the same token.
+          try { localStorage.removeItem('admin_auth_token'); } catch (_) {}
           window.location.href = '/login?redirect=/';
           return false;
         }
@@ -2559,6 +2562,9 @@
     }
 
     function scheduleReconnect() {
+      // A reconnect never drops its first payload: after an outage that
+      // payload may be the only fresh state (a system added or removed).
+      streamPrimePolicy = 'if-newer';
       // Coalesce: if a reconnect is already queued, do not stack another
       // (otherwise rapid onerror bursts during a flaky network would
       // queue multiple connectSSE timers that all fire and create

@@ -15,12 +15,14 @@ server/probe-server.exe
 server/pulse-server-standalone
 server/pulse-server-standalone-linux-amd64
 server/pulse-server-standalone-linux-arm64
-# NOTE: client/probe-client* binaries ARE intentionally committed to the
-# repo for distribution (install.sh downloads them via raw.githubusercontent).
-# The Build Client Binaries workflow regenerates them on every push to main
-# and commits the updated artifacts. Do NOT add them here — if they were
-# gitignored, CI would need `git add -f` and devs couldn't normally track
-# local rebuilds.
+# Client binaries are not committed here: Pulse-Hotaru ships only the
+# server, and client/install.sh downloads the agent from xhhcn/Pulse
+# (whose CI rebuilds and commits them on every client change).
+client/probe-client
+client/probe-client-arm64
+client/probe-client-darwin-amd64
+client/probe-client-darwin-arm64
+client/probe-client.exe
 
 # Database and data files
 *.db

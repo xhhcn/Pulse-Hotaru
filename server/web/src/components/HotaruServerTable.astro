@@ -254,7 +254,12 @@
     /* iconify SVG cache. Used by card flags (`loadFlagIcons`) and any
        other iconify spans. "服务器位置" uses `locationToZh` text.     */
     const iconSvgCache = new Map();
+    /* Icon names must be a plain iconify "prefix:name" pair before they
+       can influence the CDN URL path (today only FLAG_NAMES values reach
+       here; the gate keeps that true for any future caller). */
+    const ICONIFY_NAME_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
     function fetchIconSvg(name, height) {
+      if (!ICONIFY_NAME_RE.test(String(name || ''))) return Promise.resolve(null);
       const key = `${name}@${height}`;
       let p = iconSvgCache.get(key);
       if (p) return p;
@@ -375,7 +380,7 @@
       try { doc = new DOMParser().parseFromString(markup, 'image/svg+xml'); } catch (_) { return ''; }
       const root = doc.documentElement;
       if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) return '';
-      const banned = /^(script|foreignobject|iframe|object|embed|use)$/i;
+      const banned = /^(script|foreignobject|iframe|object|embed|use|style|animate|set|animatetransform|animatemotion)$/i;
       const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
       const toRemove = [];
       let node = walker.currentNode;

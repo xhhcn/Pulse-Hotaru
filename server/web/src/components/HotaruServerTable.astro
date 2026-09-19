@@ -499,6 +499,48 @@
        leaves a gap rather than spiking the line up to 5000 ms).     */
     const TCPING_LOSS_THRESHOLD_MS = 1000;
 
+    /* "Probe never attempted" marker.
+       ------------------------------------------------------------------
+       A node with no IPv6 route that is handed an IPv6 target (or the
+       mirror case for IPv4) cannot even open the socket, so the backend
+       stopped recording those probes as packet loss. Nothing is written
+       to history at all; the snapshot instead carries
+
+           item.tcping_data[target] = { latency: 0, timestamp, skipped: true }
+
+       and `/api/tcping/history` returns zero rows for that pair forever.
+       Rendering that through the normal path would be wrong twice over:
+       the chart area would claim "暂无 TCPing 数据" (which means "no
+       samples yet", i.e. wait a moment) and the chips would read 0ms /
+       100% (which means "everything is dropping"). Neither is true — the
+       probe is simply not runnable from this host — so a skipped target
+       gets its own notice + "不适用" chips and never touches the network.
+
+       Normal entries have no `skipped` key, so `=== true` keeps old
+       backends (and the loss case, which is still a real measurement)
+       on the existing code path.                                       */
+    function tcpingEntry(item, target) {
+      if (!item || !item.tcping_data || !target) return null;
+      const v = item.tcping_data[target];
+      return (v && typeof v === 'object') ? v : null;
+    }
+    function tcpingEntrySkipped(item, target) {
+      const v = tcpingEntry(item, target);
+      return !!(v && v.skipped === true);
+    }
+    /* Same question answered against the most recent broadcast. */
+    function tcpingTargetSkipped(id, target) {
+      return tcpingEntrySkipped(tcpingLatestItem(id), target);
+    }
+    /* Hotaru is a zh-only view (see the `t` helper at the top of this
+       script — it always returns its first argument). The English
+       strings are kept alongside so the copy stays in one place if the
+       view ever grows a language switch.                              */
+    const TCPING_SKIPPED_NOTICE = t(
+      '此节点无法访问该目标（无对应的 IPv4/IPv6 路由）',
+      'This node cannot reach this target (no IPv4/IPv6 route)');
+    const TCPING_SKIPPED_STAT = t('不适用', 'N/A');
+
     /* id → { chart, tabs, canvas, empty, loading, wrap, target,
               _cache: Map<target, {points, range, sig}>,
               _inflight: Set<target>, ts }
@@ -836,10 +878,26 @@
       empty.hidden = true;
       chartBox.appendChild(empty);
 
+      /* "This node cannot reach this target" notice. Deliberately built
+         as a third absolutely-positioned overlay inside the *same*
+         fixed-height .hotaru-tcping__chart box that holds the canvas,
+         the loading dots and the empty-state icon: swapping the chart
+         for the notice can then never change the card height, the row
+         height or any column width. textContent (never innerHTML) —
+         the copy is static, and the surrounding card never interpolates
+         the admin-supplied target name into markup either (tab labels
+         go through textContent too).                                  */
+      const notice = document.createElement('div');
+      notice.className = 'hotaru-tcping__notice';
+      notice.textContent = TCPING_SKIPPED_NOTICE;
+      notice.title = TCPING_SKIPPED_NOTICE;
+      notice.hidden = true;
+      chartBox.appendChild(notice);
+
       wrap.append(head, chartBox);
 
       return {
-        id, wrap, tabs, canvas, empty, loading,
+        id, wrap, tabs, canvas, empty, loading, notice,
         stats, avgVal, lossVal,
         chart: null, target: null,
         /* Per-target cache of already-fetched samples. Keyed by
@@ -939,7 +997,11 @@
 
       const initialTarget = tcping.target;
       let initialFetch = null;
-      if (initialTarget) {
+      /* A target this node cannot probe has no history to prefetch —
+         the response would always be empty. Leave initialFetch null so
+         drawNow() falls through to refreshTcpingChart(), which paints
+         the notice without a round-trip.                              */
+      if (initialTarget && !tcpingTargetSkipped(id, initialTarget)) {
         const initialSig = tcpingTargetSignature(tcpingLatestItem(id), initialTarget);
         tcping._inflight.add(initialTarget);
         initialFetch = refreshTcpingChartInner(id, tcping, initialTarget, initialSig, {
@@ -1053,6 +1115,15 @@
         const matches = (b.dataset.target || null) === target;
         b.classList.toggle('hotaru-tcping__tab--active', matches);
       });
+      /* 0. The node can't probe this target at all. Paint the notice
+            straight away: no loading dots (nothing is loading) and no
+            fetch (the server keeps no history for a probe it never
+            ran).                                                      */
+      if (tcpingTargetSkipped(tcping.id, target)) {
+        showTcpingSkipped(tcping, target);
+        return;
+      }
+      clearTcpingSkipped(tcping);
       if (tcping._cache.has(target)) {
         applyTcpingDataset(tcping, target);
       } else {
@@ -1099,9 +1170,17 @@
        broadcast hasn't yet reported this target — treated as
        "no signal", same as the old empty-data path.               */
     function tcpingTargetSignature(item, target) {
-      if (!item || !item.tcping_data || !target) return '';
-      const v = item.tcping_data[target];
-      return (v && v.timestamp) ? String(v.timestamp) : '';
+      const v = tcpingEntry(item, target);
+      if (!v) return '';
+      const ts = v.timestamp ? String(v.timestamp) : '';
+      /* The `skipped:` prefix folds the marker into the memoisation key,
+         so a flip in either direction is a signature *change* even when
+         the backend reuses the same timestamp. Without it, a target that
+         goes from unreachable to measured (or back) could keep matching
+         a cached entry and the panel would sit on the wrong rendering
+         until the next tab switch.                                     */
+      if (v.skipped === true) return 'skipped:' + ts;
+      return ts;
     }
 
     /* Summary chips for the active target.
@@ -1205,6 +1284,59 @@
       });
     }
 
+    /* Paint the "unreachable target" state.
+       --------------------------------------
+       Occupies the same fixed-height chart box as the canvas (the notice
+       is an overlay, exactly like the loading dots and the empty icon),
+       so this never resizes the card, the expand row or the table — no
+       syncExpandHeight churn, no column reflow.
+
+       Memoised on `_skipped`: the 3-s snapshot runs refreshTcpingChart()
+       for every open row on every tick, and after the first paint each
+       further call costs one string comparison and nothing else — same
+       "no extra renders per tick" contract the signature gate provides
+       for the chart path.                                              */
+    function showTcpingSkipped(tcping, target) {
+      if (!tcping || !tcping.notice) return;
+      if (tcping._skipped === target) return;
+      tcping._skipped = target;
+
+      /* Invalidate any pending reveal so a fetch that resolves late
+         can't fade a stale canvas back in on top of the notice.      */
+      tcping._revealToken = (tcping._revealToken || 0) + 1;
+      if (tcping.chart) {
+        try { tcping.chart.destroy(); } catch (_) {}
+        tcping.chart = null;
+      }
+      const chartBox = tcping.canvas && tcping.canvas.parentElement;
+      if (chartBox) {
+        /* Keep the box in layout (height stays 200 px / 150 px on
+           mobile) and drop is-ready so the now-empty canvas fades
+           back out instead of lingering at opacity 1.              */
+        chartBox.style.display = '';
+        chartBox.classList.remove('is-ready');
+      }
+      if (tcping.loading) tcping.loading.hidden = true;
+      if (tcping.empty)   tcping.empty.hidden   = true;
+      tcping.notice.hidden = false;
+
+      /* Chips read "不适用" rather than 0ms / 100%: there is no
+         measurement here, successful or failed, to summarise.     */
+      if (tcping.stats) {
+        tcping.stats.hidden = false;
+        setTcpingStatValue(tcping.avgVal,  TCPING_SKIPPED_STAT);
+        setTcpingStatValue(tcping.lossVal, TCPING_SKIPPED_STAT);
+      }
+    }
+
+    /* Leave the skipped state. A cheap no-op when we were never in it,
+       so every normal paint path can call it unconditionally.        */
+    function clearTcpingSkipped(tcping) {
+      if (!tcping) return;
+      tcping._skipped = null;
+      if (tcping.notice && !tcping.notice.hidden) tcping.notice.hidden = true;
+    }
+
     function revealTcpingChart(tcping, chartBox, wasFresh) {
       if (!chartBox) {
         if (tcping.loading) tcping.loading.hidden = true;
@@ -1245,6 +1377,11 @@
        whitespace that used to appear when other targets had a
        different start time.                                       */
     function applyTcpingDataset(tcping, target) {
+      /* Real samples supersede the unreachable-target notice — e.g. a
+         probe finally succeeded while a fetch was in flight. If the
+         newest snapshot still says "skipped", refreshTcpingChart()
+         repaints the notice on the next tick.                        */
+      clearTcpingSkipped(tcping);
       const cached = tcping._cache.get(target);
       const points = cached ? cached.points : [];
       const hasAny = points.length > 0;
@@ -1405,6 +1542,18 @@
 
       const item      = tcpingLatestItem(id);
       const targetSig = tcpingTargetSignature(item, target);
+      /* Unreachable from this node: history holds nothing for this
+         (client, target) pair, so a fetch could only come back empty and
+         be mis-rendered as "no data yet". Paint the notice instead, and
+         drop any cached samples so that when the target later becomes
+         measurable this function restarts from a clean cache miss and
+         re-fetches on that very snapshot.                             */
+      if (tcpingEntrySkipped(item, target)) {
+        tcping._cache.delete(target);
+        showTcpingSkipped(tcping, target);
+        return;
+      }
+      clearTcpingSkipped(tcping);
       const cached    = tcping._cache.get(target);
       if (!force && cached && cached.sig === targetSig) {
         const fetchedAt = Number(cached.fetchedAt || 0);
@@ -1449,7 +1598,8 @@
            Same logic for the stat pills: collapse them so the user
            doesn't see chips breathing forever next to a dead
            chart card.                                              */
-        if (shouldPaint && tcping.target === target && !tcping.chart) {
+        if (shouldPaint && tcping.target === target && !tcping.chart
+            && tcping._skipped !== target) {
           if (tcping.loading) tcping.loading.hidden = true;
           if (tcping.stats)   tcping.stats.hidden   = true;
         }
@@ -1492,7 +1642,11 @@
         fetchedAt: Date.now(),
       });
 
-      if (shouldPaint && tcping.target === target) {
+      /* `_skipped !== target` covers the race where the snapshot flipped
+         this target to "cannot probe" while our fetch was in flight: the
+         samples still go into the cache, but painting them would flash a
+         chart over the notice we just put up.                          */
+      if (shouldPaint && tcping.target === target && tcping._skipped !== target) {
         applyTcpingDataset(tcping, target);
         tcping.ts = Date.now();
       }
@@ -1515,6 +1669,8 @@
       if (tcping.stats) tcping.stats.hidden = true;
       if (tcping.loading) tcping.loading.hidden = true;
       if (tcping.empty) tcping.empty.hidden = true;
+      if (tcping.notice) tcping.notice.hidden = true;
+      tcping._skipped = null;
       tcping.target = '';
       tcping.initialized = false;
     }

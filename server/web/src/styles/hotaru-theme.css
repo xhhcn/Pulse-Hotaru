@@ -1032,6 +1032,38 @@ body.hotaru-theme {
 }
 .hotaru-tcping__empty[hidden] { display: none !important; }
 
+/* "This node cannot reach this target" notice.
+   ------------------------------------------------------------------
+   Shown instead of the line chart when the snapshot marks the active
+   target as `skipped: true` (no IPv4/IPv6 route from this node, so the
+   probe was never attempted and history holds nothing for it). This is
+   a *different* statement from .hotaru-tcping__empty, which means "no
+   samples yet" — hence separate copy rather than reusing the crossed-
+   out-chart icon.
+
+   Same overlay geometry as the loading dots and the empty state
+   (position:absolute; inset:0 inside the fixed-height chart box), so
+   replacing the chart with the notice cannot change the card height,
+   the expand row height or any table column width. Muted colour +
+   normal weight keeps it reading as secondary metadata, matching the
+   axis tick colour of the chart it stands in for.                    */
+.hotaru-tcping__notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1.2em;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--hotaru-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.6;
+  pointer-events: none;
+}
+.hotaru-tcping__notice[hidden] { display: none !important; }
+
 /* Mobile font-size floor for Pulse-extension chips.
    ----------------------------------------------------
    Hotaru's own @media cascade in App.vue drops the root
@@ -1062,6 +1094,9 @@ body.hotaru-theme {
   .hotaru-tag,
   .hotaru-tcping__stat { font-size: 0.92rem; }   /* 11.0 px */
   .hotaru-tcping__tab  { font-size: 0.86rem; }   /* 10.3 px */
+  /* Same floor for the unreachable-target notice, which shares the
+     tab's 0.82rem desktop size.                                    */
+  .hotaru-tcping__notice { font-size: 0.86rem; } /* 10.3 px */
 }
 
 @media (max-width: 600px) {
@@ -1078,6 +1113,9 @@ body.hotaru-theme {
      when both groups are on the same row.                  */
   .hotaru-tcping__stats { margin-left: 0; width: 100%; }
   .hotaru-tcping__stat  { padding: 0.45em 0.7em; }
+  /* Narrower gutter so the two-line notice doesn't wrap mid-phrase
+     inside the shorter 150 px chart box on phones.                 */
+  .hotaru-tcping__notice { padding: 0 0.6em; }
 }
 
 /* ============================================================

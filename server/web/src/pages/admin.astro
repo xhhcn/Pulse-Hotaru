@@ -226,6 +226,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       return;
     }
 
+    // Set only by an explicit "this token is bad" verdict, so the catch
+    // below can tell a rejected token apart from a failed request.
+    let tokenRejected = false;
     try {
       const res = await fetch(`${apiBase}/api/auth/verify`, {
         method: 'POST',
@@ -236,10 +239,10 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       // limit behind a shared proxy address), a 5xx or a dropped request
       // must not wipe a valid 24 h token; any API call made with a bad
       // token is redirected by the fetch wrapper below anyway.
-      if (res.status === 401) throw new Error('token invalid');
+      if (res.status === 401) { tokenRejected = true; throw new Error('token invalid'); }
       if (res.ok) {
         const data = await res.json();
-        if (data && data.valid === false) throw new Error('token invalid');
+        if (data && data.valid === false) { tokenRejected = true; throw new Error('token invalid'); }
       }
 
       // Show the dashboard, fade the overlay out.
@@ -274,7 +277,14 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         });
       };
     } catch (_) {
-      localStorage.removeItem('admin_auth_token');
+      // Keep the stored token unless the server actually rejected it —
+      // dropping it on a network blip (or on a body that failed to parse)
+      // would force a fresh password login after every transient outage,
+      // which is exactly what the "explicit verdicts only" rule above
+      // exists to prevent. We still redirect (this page can't be shown
+      // without a confirmed session), but the token survives, so a reload
+      // of /admin once the backend answers again restores the session.
+      if (tokenRejected) localStorage.removeItem('admin_auth_token');
       window.location.href = '/login?redirect=/admin';
     }
   })();

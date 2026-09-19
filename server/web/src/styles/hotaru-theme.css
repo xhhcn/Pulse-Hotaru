@@ -1056,7 +1056,9 @@ body.hotaru-theme {
   padding: 0 1.2em;
   text-align: center;
   text-wrap: balance;
-  color: var(--hotaru-muted);
+  /* --hotaru-muted (#919699) on the #f5f5f5 card is only 2.74:1 — below
+     WCAG AA for this 11.5 px text. --hotaru-text (#616366) is 5.53:1. */
+  color: var(--hotaru-text);
   font-size: 0.82rem;
   font-weight: 500;
   line-height: 1.6;

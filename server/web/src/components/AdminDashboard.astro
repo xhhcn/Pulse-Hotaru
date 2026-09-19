@@ -83,7 +83,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Add System Modal -->
-  <div id="add-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="add-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="add-new-system-title" class="text-xl font-semibold text-[#262626]" data-translate="addNewSystem">添加新服务</h2>
@@ -134,7 +134,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Edit System Modal -->
-  <div id="edit-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="edit-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="edit-system-title" class="text-xl font-semibold text-[#262626]" data-translate="editSystem">编辑服务</h2>
@@ -222,7 +222,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Delete Confirmation Modal -->
-  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4">
         <div class="mb-3 flex items-center gap-3">
@@ -259,7 +259,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- TCPing Config Modal -->
-  <div id="tcping-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm overflow-hidden" data-modal>
+  <div id="tcping-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm overflow-hidden" role="dialog" aria-modal="true" data-modal>
     <div class="mx-2 sm:mx-4 w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white shadow-2xl overflow-hidden" data-modal-content>
       <!-- Header - Fixed -->
       <div class="flex items-center justify-between p-4 sm:p-6 pb-0 shrink-0">
@@ -330,7 +330,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Change Password Modal -->
-  <div id="change-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="change-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="change-password-title" class="text-xl font-semibold text-[#262626]" data-translate="changePassword">修改密码</h2>
@@ -399,7 +399,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Navbar Config Modal -->
-  <div id="navbar-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="navbar-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 sm:p-7 shadow-2xl" data-modal-content style="scrollbar-width: none; -ms-overflow-style: none;">
       <div class="mb-5 flex items-center justify-between">
         <h2 id="navbar-config-title" class="text-xl font-semibold text-[#262626]" data-translate="customizationSettings">自定义设置</h2>
@@ -514,7 +514,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Regenerate Secret Confirmation Modal -->
-  <div id="regenerate-secret-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="regenerate-secret-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4">
         <h2 class="text-xl font-semibold text-[#262626]" data-translate="confirmRegenerateTitle">重新生成共享密钥？</h2>
@@ -552,7 +552,7 @@ const customCodePlaceholder = [
   </div>
 
   <!-- Privacy Config Modal -->
-  <div id="privacy-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+  <div id="privacy-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
     <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
       <div class="mb-4 flex items-center justify-between">
         <h2 id="privacy-config-title" class="text-xl font-semibold text-[#262626]" data-translate="privacySettings">隐私设置</h2>
@@ -690,7 +690,52 @@ const customCodePlaceholder = [
   
   // Store original parent for modals (to restore after closing)
   const modalOriginalParents = new Map();
-  
+
+  /* Focus handling for the dialogs (role="dialog" aria-modal="true").
+     ----------------------------------------------------------------
+     Not a full focus trap — Tab can still walk out into the page behind
+     the backdrop. What this does cover is the part that actually strands
+     keyboard and screen-reader users today:
+       * opening a modal moves focus into it, so the next Tab / Enter acts
+         on the dialog instead of the admin list underneath, and assistive
+         tech announces the dialog rather than staying on the trigger;
+       * closing it puts focus back on the control that opened it, so the
+         tab order resumes where the user left it instead of restarting at
+         the top of the document.
+     Disabled / hidden controls are skipped; a modal with nothing focusable
+     falls back to the dialog container itself (tabindex="-1" is set on the
+     fly so .focus() works without adding it to the tab order).          */
+  const MODAL_FOCUSABLE = [
+    'input:not([type="hidden"])', 'select', 'textarea', 'button', 'a[href]',
+    '[tabindex]:not([tabindex="-1"])',
+  ].map((s) => s + ':not([disabled])').join(', ');
+
+  function focusFirstInModal(modal) {
+    const scope = modal.querySelector('[data-modal-content]') || modal;
+    const candidates = Array.from(scope.querySelectorAll(MODAL_FOCUSABLE));
+    const target = candidates.find((el) => {
+      if (el.hidden || el.closest('[hidden]')) return false;
+      // offsetParent is null for display:none subtrees (position:fixed
+      // elements report null too, but none of the modal controls are).
+      return el.offsetParent !== null || el === document.activeElement;
+    });
+    if (target) {
+      try { target.focus({ preventScroll: true }); } catch (_) { target.focus(); }
+      return;
+    }
+    if (!modal.hasAttribute('tabindex')) modal.setAttribute('tabindex', '-1');
+    try { modal.focus({ preventScroll: true }); } catch (_) { modal.focus(); }
+  }
+
+  function restoreFocusAfterModal(modal) {
+    const prev = modal._restoreFocus;
+    modal._restoreFocus = null;
+    if (!prev || typeof prev.focus !== 'function') return;
+    // The opener can be gone (the systems list re-renders on save/delete).
+    if (!prev.isConnected) return;
+    try { prev.focus({ preventScroll: true }); } catch (_) { prev.focus(); }
+  }
+
   // Open modal with animation - moves modal to body to avoid transform issues
   function openModalWithAnimation(modal) {
     if (!modal) return;
@@ -705,6 +750,14 @@ const customCodePlaceholder = [
       });
     }
     
+    // Remember the control that opened this dialog so closing it can hand
+    // focus back. Only recorded when focus is somewhere outside the modal
+    // (reopening while already open must not overwrite the real opener).
+    const opener = document.activeElement;
+    if (opener && opener !== document.body && !modal.contains(opener)) {
+      modal._restoreFocus = opener;
+    }
+
     // A close animation may still be pending from a click ~150 ms ago;
     // cancel it, otherwise its timer hides the freshly opened modal and
     // runs the reset callback over the user's new input.
@@ -725,6 +778,11 @@ const customCodePlaceholder = [
       content.classList.add('modal-content-enter');
     }
     
+    // Move focus into the dialog. Done synchronously (the modal is already
+    // visible at this point) so a keyboard user never gets a frame where
+    // focus still sits on the page behind the backdrop.
+    focusFirstInModal(modal);
+
     // Clean up animation classes after animation completes
     setTimeout(() => {
       modal.classList.remove('modal-backdrop-enter');
@@ -739,13 +797,19 @@ const customCodePlaceholder = [
     if (!modal) return;
     
     const content = modal.querySelector('[data-modal-content]');
-    
+
+    // Hand focus back to the opener before the dialog is hidden: blurring a
+    // control that is about to become display:none would otherwise drop
+    // focus onto <body> and restart the tab order at the top of the page.
+    if (modal.contains(document.activeElement)) restoreFocusAfterModal(modal);
+    else modal._restoreFocus = null;
+
     // Apply exit animations
     modal.classList.add('modal-backdrop-exit');
     if (content) {
       content.classList.add('modal-content-exit');
     }
-    
+
     // Hide modal after animation completes
     modal._closeTimer = setTimeout(() => {
       modal._closeTimer = null;
@@ -1226,6 +1290,23 @@ const customCodePlaceholder = [
       "'": '&#039;'
     };
     return String(text).replace(/[&<>"']/g, m => map[m]);
+  }
+
+  // SECURITY: POSIX shell single-quote. Everything inside '...' is literal
+  // to the shell, so the only character needing care is the quote itself:
+  // close the string, emit an escaped quote, reopen ('\'' → ').
+  // Used for every value interpolated into the copy-to-clipboard install
+  // command, so an id/URL/secret containing ; $ ` & | or spaces is passed
+  // to install.sh as one argument instead of being executed.
+  function shellQuote(value) {
+    return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
+  }
+
+  // SECURITY: PowerShell single-quoted literal. No expansion happens inside
+  // '...' (so $env:, $( ) and ` are inert); a literal quote is written by
+  // doubling it ('').
+  function powershellQuote(value) {
+    return `'${String(value ?? '').replace(/'/g, `''`)}'`;
   }
 
   function renderSystemItem(system, index) {
@@ -2335,9 +2416,9 @@ const customCodePlaceholder = [
         const secret = system.secret || '';
         
         // Build command with secret if available
-        let command = `curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id ${systemId} --server ${serverUrl}`;
+        let command = `curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id ${shellQuote(systemId)} --server ${shellQuote(serverUrl)}`;
         if (secret) {
-          command += ` --secret ${secret}`;
+          command += ` --secret ${shellQuote(secret)}`;
         }
         
         const linuxIcon = newBtn.querySelector('.linux-icon');
@@ -2385,9 +2466,9 @@ const customCodePlaceholder = [
         
         // Build command with secret if available
         // Use backtick to escape $env: so PowerShell doesn't expand it prematurely
-        let command = `powershell -ExecutionPolicy Bypass -Command "& { \`$env:AgentId='${systemId}'; \`$env:ServerBase='${serverUrl}'`;
+        let command = `powershell -ExecutionPolicy Bypass -Command "& { \`$env:AgentId=${powershellQuote(systemId)}; \`$env:ServerBase=${powershellQuote(serverUrl)}`;
         if (secret) {
-          command += `; \`$env:Secret='${secret}'`;
+          command += `; \`$env:Secret=${powershellQuote(secret)}`;
         }
         command += `; irm https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.ps1 | iex }"`;
         

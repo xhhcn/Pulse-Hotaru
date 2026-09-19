@@ -66,11 +66,10 @@
     /* ------------------------------------------------------------------
        Helpers
        ------------------------------------------------------------------ */
-    function escapeHtml(s) {
-      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
-    }
+    /* No escapeHtml() here on purpose: this view builds every cell with
+       document.createElement + textContent, so nothing user- or
+       admin-supplied is ever interpolated into an HTML string. Reintroduce
+       one only alongside an actual innerHTML sink. */
 
     /** Table "服务器位置" — zh 国名；空或 unknown → 英文 Unknown */
     function locationCellText(raw) {
@@ -890,7 +889,10 @@
       const notice = document.createElement('div');
       notice.className = 'hotaru-tcping__notice';
       notice.textContent = TCPING_SKIPPED_NOTICE;
-      notice.title = TCPING_SKIPPED_NOTICE;
+      /* No `title`: the overlay is pointer-events:none (it must not steal
+         hover from the canvas underneath), so the browser would never show
+         a tooltip for it. The full sentence is the element's own text —
+         nothing is truncated and nothing is hidden from screen readers. */
       notice.hidden = true;
       chartBox.appendChild(notice);
 
@@ -1031,7 +1033,15 @@
       const drawNow = async () => {
         if (initialFetch && tcping.target === initialTarget) {
           await initialFetch;
-          if (tcping.target === initialTarget && tcping._cache.has(initialTarget)) {
+          /* The snapshot can flip this target to "cannot probe" while the
+             prefetch is in flight. The samples we just cached are then
+             stale history, and painting them would flash a chart for one
+             tick before the next refresh replaces it with the notice — so
+             re-check the freshest snapshot and fall through to
+             refreshTcpingChart(), which paints the notice directly.      */
+          if (tcping.target === initialTarget
+              && tcping._cache.has(initialTarget)
+              && !tcpingTargetSkipped(id, initialTarget)) {
             applyTcpingDataset(tcping, initialTarget);
             tcping.ts = Date.now();
           } else {
@@ -1538,7 +1548,6 @@
       if (!cachedTcpingConfig) return;
       const target = tcping.target;
       if (!target) return;
-      if (tcping._inflight.has(target)) return;
 
       const item      = tcpingLatestItem(id);
       const targetSig = tcpingTargetSignature(item, target);
@@ -1547,15 +1556,29 @@
          be mis-rendered as "no data yet". Paint the notice instead, and
          drop any cached samples so that when the target later becomes
          measurable this function restarts from a clean cache miss and
-         re-fetches on that very snapshot.                             */
+         re-fetches on that very snapshot.
+
+         Evaluated *before* the in-flight guard below: a target that flips
+         to skipped while its own first fetch is still running would
+         otherwise keep returning early at the guard and leave the panel
+         showing loading dots (then, once the fetch resolves, a chart)
+         until that fetch finished. The in-flight fetch itself is harmless
+         — refreshTcpingChartInner() re-checks `_skipped` before painting,
+         so it only refills the cache.                                  */
       if (tcpingEntrySkipped(item, target)) {
         tcping._cache.delete(target);
         showTcpingSkipped(tcping, target);
         return;
       }
+      /* Recovery (notice → real samples). A fetch that resolved while the
+         notice was up wrote its cache entry but was blocked from painting,
+         so the signature/freshness gate below could otherwise short-circuit
+         the very repaint that takes the notice down. Force it. */
+      const wasSkipped = tcping._skipped === target;
       clearTcpingSkipped(tcping);
+      if (tcping._inflight.has(target)) return;
       const cached    = tcping._cache.get(target);
-      if (!force && cached && cached.sig === targetSig) {
+      if (!force && !wasSkipped && cached && cached.sig === targetSig) {
         const fetchedAt = Number(cached.fetchedAt || 0);
         const freshEnough = Number.isFinite(fetchedAt)
                             && fetchedAt > 0
@@ -1892,11 +1915,6 @@
        If we ever need to roll the 24-h x-axis window forward
        without a new sample, do it in response to `pulse:metrics-tick`
        at a much longer interval (≥ 5 min) — not here.                */
-
-    function cssEscape(s) {
-      if (window.CSS && window.CSS.escape) return window.CSS.escape(s);
-      return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
-    }
 
     /* Helper: a network/traffic cell that can render in two modes:
          online    → "X | Y" (two values separated by hotaru-pipe)

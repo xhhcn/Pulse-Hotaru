@@ -192,17 +192,12 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   <!-- Silent auth check — no UI, just a background privacy gate -->
   <script is:inline>
     (function () {
-      const isZh = () => (document.documentElement.lang || '').toLowerCase().startsWith('zh');
-
-      function applyDocI18n() {
-        document.querySelectorAll('[data-zh][data-en]').forEach((el) => {
-          if (el.children.length === 0) {
-            el.textContent = isZh() ? el.dataset.zh : el.dataset.en;
-          }
-        });
-      }
-      applyDocI18n();
-      document.addEventListener('pulse:language-changed', applyDocI18n);
+      /* No [data-zh][data-en] sweep here: this page renders the Hotaru
+         view, which is zh-only (HotaruServerTable's `t` helper always
+         returns its first argument) and emits no such attributes, so the
+         sweep only ever walked the document for nothing. Components that
+         do care about the language read document.documentElement.lang,
+         which the storage listener below keeps up to date. */
 
       function redirectLogin() {
         window.location.href = '/login?redirect=/';
@@ -245,8 +240,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
         .catch(() => { /* fail open */ });
     })();
 
-    // Translation event — when language toggles elsewhere in the app
-    // (or via storage) we rebroadcast so listeners can repaint.
+    // Language changed in another tab: keep <html lang> in sync (card /
+    // table code reads it) and rebroadcast, so any component that wants to
+    // repaint on a language switch has a single event to listen for.
     window.addEventListener('storage', (e) => {
       if (e.key === 'preferred-language') {
         document.documentElement.lang = e.newValue || 'en';

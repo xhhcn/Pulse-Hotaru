@@ -30,11 +30,9 @@
     const isZh = () => (document.documentElement.lang || '').toLowerCase().startsWith('zh');
     const t = (zh, en) => isZh() ? zh : en;
 
-    function escapeHtml(s) {
-      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
-    }
+    /* No escapeHtml() here on purpose: the cards are assembled with
+       createElement + textContent only, so there is no HTML-string sink
+       for it to guard. Reintroduce one alongside an actual innerHTML use. */
 
     /* Same compact B/K/M/G/T formatter the table uses, so the
        card "Network: 1.4M | 13K" line stays consistent with the

@@ -97,6 +97,7 @@ sudo systemctl daemon-reload
 - **反向代理 / CDN**：服务端只信任本机回环、Cloudflare 官方边缘网段（内置，无需配置）以及 `TRUSTED_PROXIES`（逗号分隔的 IP 或 CIDR）转发的 `X-Forwarded-For`。使用 Cloudflare 时无需额外设置；若前面是其它反代或 CDN，请设置该变量，否则登录限流会按代理 IP 计数，探针的位置也可能被判成代理所在地。镜像内置的 nginx 会保留上游的 `X-Forwarded-For` 链，因此 docker 部署时可把桥接网关（如 `172.17.0.0/16`）加入 `TRUSTED_PROXIES`。不经过 Cloudflare 且希望关闭内置信任时，设置 `TRUSTED_PROXIES=none`（可与其它网段并列）。
 - **会话与令牌**：管理令牌只通过 `Authorization: Bearer` 请求头接受（事件流例外，使用 `admin_token` 参数）；退出登录会在服务端吊销当前会话，修改密码会吊销其它所有会话；分享链接被撤销或过期后，已打开的页面会在 30 秒内断开并重新鉴权。探针上报的字符串会被限长并去除标记字符，`os_icon` 只接受 `set:name` 形式的图标名。
 - **延迟测试与丢包率**：节点对某个目标根本发不起连接（例如没有 IPv6 的机器配了 IPv6 目标，内核直接返回无路由）时，探针 1.3.25 起会上报"不可测"而不是失败：这类样本不进入历史、不计入丢包率，页面上该目标显示"此节点无法访问该目标"。超时、拒绝连接、域名解析失败仍按丢包统计。旧版探针升级后自动生效。
+- **IPv6 部署**：需要容器带 IPv6 时，用仓库内的 `docker-compose.ipv6.yaml`（已包含 45 秒优雅停止与日志大小限制）。
 - **SSE 上限**：匿名实时流默认全局 2000 路、单 IP 200 路，可用 `SSE_MAX_STREAMS` 与 `SSE_MAX_STREAMS_PER_IP` 调整；管理员会话不受限制。单 IP 上限只对公网地址生效，经 docker 桥接或未受信反代到达的内网地址不会被单独限流（全局上限仍然有效）。
 - **Docker**：`docker-compose.yaml` 已设置 45 秒优雅停止，请勿缩短，否则强制退出可能损坏数据库。
 - **外部资源**：页面字体已随服务端自托管；展开行的 TCPing 图表在首次打开时从 `cdn.jsdelivr.net`（备用 `unpkg.com`）加载 Chart.js，访客所在网络需能访问其中之一。

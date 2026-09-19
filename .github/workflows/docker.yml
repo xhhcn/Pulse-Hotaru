@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g., v1.0.21)'
+        description: 'Tag to build (e.g., v1.0.26)'
         required: true
         type: string
 
@@ -92,6 +92,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Create GitHub Release
+        if: steps.check_server_files.outputs.server_files_exist == 'true'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

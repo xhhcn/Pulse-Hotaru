@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g., v1.0.23)'
+        description: 'Tag to build (e.g., v1.0.26)'
         required: true
         type: string
 
@@ -99,5 +99,4 @@ jobs:
           files: |
             server/pulse-server-standalone-linux-amd64
             server/pulse-server-standalone-linux-arm64
-          make_latest: true
         # Note: body is intentionally omitted to avoid overwriting the main release notes from docker.yml

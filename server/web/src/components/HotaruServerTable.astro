@@ -2071,6 +2071,7 @@
       const name = item.name || '–';
       setText(r.name, name);
       setAttr(r.name, 'title', name);
+      if (r.name.parentElement) setAttr(r.name.parentElement, 'title', name);
 
       /* 系统：优先 OS 名称（如 Debian），无则虚拟化类型（如 KVM），与
          Pulse 探针上报顺序一致。                                      */
@@ -2395,7 +2396,7 @@
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data && (data.systems || data.metrics || data.items)) || [];
         const clean = list.filter((s) => s && typeof s === 'object');
-        if (isStaleSnapshot(clean)) return true;
+        if (isStaleSnapshot(clean, false)) return true;
         const shown = visibleSystems(clean);
         render(shown);
         broadcast(shown);
@@ -2482,13 +2483,17 @@
       paintedIdKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
       paintedFreshness = snapshotFreshness(list) || paintedFreshness;
     }
-    function isStaleSnapshot(list) {
+    // strict: a connect-time stream snapshot must be strictly newer than
+    // what is on screen (an equal stamp is the same data built at another
+    // instant and could only flip derived state such as the offline flag).
+    // A REST fetch is dropped only when it is older: with all agents quiet
+    // the stamps do not move, yet an admin edit (name, tags, visibility)
+    // still has to be painted by the watchdog's poll.
+    function isStaleSnapshot(list, strict) {
       const idKey = list.map((s) => (s && s.id) || '').sort().join('\u0000');
       const fresh = snapshotFreshness(list);
-      // Not strictly newer than what is on screen (same systems): skip.
-      // An equal stamp means the same data built at a different instant;
-      // painting it could only flip derived state such as the offline flag.
-      if (idKey === paintedIdKey && fresh && paintedFreshness && fresh <= paintedFreshness) return true;
+      const older = strict ? fresh <= paintedFreshness : fresh < paintedFreshness;
+      if (idKey === paintedIdKey && fresh && paintedFreshness && older) return true;
       noteSnapshot(list);
       return false;
     }
@@ -2525,7 +2530,7 @@
         const policy = streamPrimePolicy;
         streamPrimePolicy = 'if-newer';
         if (policy === 'drop' && paintedIdKey) return;
-        if (isStaleSnapshot(clean)) return;
+        if (isStaleSnapshot(clean, true)) return;
       } else {
         noteSnapshot(clean);
       }

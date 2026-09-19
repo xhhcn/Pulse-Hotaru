@@ -417,7 +417,7 @@ body.hotaru-theme {
 }
 /* Cap the name so one long label cannot widen the table past its
    container (the auto layout would otherwise clip the last columns);
-   the full name is in the cell's title. */
+   the full name is in the title of the span and of the cell. */
 .hotaru-cell-name .hotaru-name {
   display: inline-block;
   max-width: 18em;
@@ -430,7 +430,9 @@ body.hotaru-theme {
   .hotaru-cell-name .hotaru-name { max-width: 12em; }
 }
 @media (max-width: 533px) {
-  .hotaru-cell-name .hotaru-name { max-width: 100%; }
+  /* The phone tier below lets the cell grow to its content, so the cap
+     has to be absolute here too. */
+  .hotaru-cell-name .hotaru-name { max-width: 9em; }
 }
 /* `display: inline-block` above would otherwise beat the `[hidden]`
    reset; setMode() hides both halves for rows that never reported. */

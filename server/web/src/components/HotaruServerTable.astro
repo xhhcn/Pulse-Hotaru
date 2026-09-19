@@ -1831,8 +1831,9 @@
 
       const tdName = document.createElement('td');
       tdName.className = 'hotaru-cell-name';
-      // The text lives in an inline-block so an unusually long name is
-      // ellipsised (max-width in CSS) instead of pushing the last columns
+      // The text lives in its own box so an unusually long name is
+      // ellipsised (CSS: a fixed cap on wide screens, the column's
+      // remaining width on phones) instead of pushing the last columns
       // out of the container; the full name stays in the title.
       const nameText = document.createElement('span');
       nameText.className = 'hotaru-name';

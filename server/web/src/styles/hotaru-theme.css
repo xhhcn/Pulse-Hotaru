@@ -430,9 +430,24 @@ body.hotaru-theme {
   .hotaru-cell-name .hotaru-name { max-width: 12em; }
 }
 @media (max-width: 533px) {
-  /* The phone tier below lets the cell grow to its content, so the cap
-     has to be absolute here too. */
-  .hotaru-cell-name .hotaru-name { max-width: 9em; }
+  /* Phones: instead of a fixed cap, the name column takes every pixel
+     the other columns do not need. `width: 100%` claims the slack of
+     the auto layout; `max-width: 0` keeps the cell's own content from
+     widening the table past its container, so a long name is ellipsised
+     inside the room that is actually available rather than at an
+     arbitrary 9em. The other phone columns are fixed-size boxes (pill,
+     6ch halves, 40px bar), so the resulting width is stable across
+     ticks. */
+  .hotaru-table th:nth-child(2),
+  .hotaru-table td.hotaru-cell-name {
+    width: 100%;
+    max-width: 0;
+    overflow: hidden;
+  }
+  .hotaru-cell-name .hotaru-name {
+    display: block;
+    max-width: none;
+  }
 }
 /* `display: inline-block` above would otherwise beat the `[hidden]`
    reset; setMode() hides both halves for rows that never reported. */
@@ -515,26 +530,20 @@ body.hotaru-theme {
    upstream / never present in Pulse), so the disk column is at
    nth-child(10) here vs (11) in hotaru.
 
-   Project-specific protection: keep long node names intact instead
-   of ellipsizing them, then add extra narrow tiers below that remove
-   lower-priority metric columns progressively. */
+   Project-specific protection: the name column absorbs the slack (see
+   the .hotaru-cell-name phone rule above), and extra narrow tiers below
+   remove lower-priority metric columns progressively. */
 @media (max-width: 533px) {
   .hotaru-table thead th,
   .hotaru-table tbody tr.hotaru-row td {
     padding: 0.6em 0.45em;
   }
 
-  .hotaru-table th:nth-child(2),  .hotaru-table td:nth-child(2)  {
-    min-width: max-content;
-    max-width: none;
-    overflow: visible;
-    text-overflow: clip;
-    white-space: nowrap;
-    word-break: normal;
-  }
   .hotaru-table th:nth-child(10), .hotaru-table td:nth-child(10) { display: none; } /* disk */
-  .hotaru-table th:nth-child(8),  .hotaru-table td:nth-child(8),
-  .hotaru-table th:nth-child(9),  .hotaru-table td:nth-child(9)  { min-width: 20px; max-width: 40px; }
+  /* The CPU / RAM cells size to their content: the 40px bar plus the
+     cell padding. (A former max-width of 40px was narrower than that
+     and let the bar spill into the neighbouring cell once the name
+     column started taking the slack.) */
 }
 
 /* Extra narrow tiers.

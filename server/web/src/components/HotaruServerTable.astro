@@ -150,6 +150,16 @@
        DOM — that's what keeps "open expand rows stay open" honest.
        ------------------------------------------------------------------ */
     function setText(el, text) {
+      /* A cell that holds just one text node gets that node's data
+         changed in place: replacing the child (textContent = …) is a
+         child-list change, and with a hundred rows updating every 3 s
+         that meant re-attaching and re-styling hundreds of text nodes
+         per tick instead of only re-measuring them. */
+      const node = el.firstChild;
+      if (node && node.nodeType === 3 && node === el.lastChild) {
+        if (node.data !== text) node.data = text;
+        return;
+      }
       if (el.textContent !== text) el.textContent = text;
     }
     function setAttr(el, name, value) {
@@ -219,16 +229,19 @@
       if (isPristine) {
         if (refs.wrap.dataset.level !== 'bad')   refs.wrap.dataset.level = 'bad';
         if (refs.fill.style.width   !== '100%')  refs.fill.style.width   = '100%';
-        if (refs.lbl.textContent    !== '维护中') refs.lbl.textContent    = '维护中';
+        setText(refs.lbl, '维护中');
         return;
       }
       const v   = Math.max(0, Math.min(100, Number(pct) || 0));
       const lvl = isOffline ? 'bad' : levelOf(v);
-      const w   = v.toFixed(1) + '%';
+      /* The fill follows the whole percent the label shows. On a 50 px
+         bar a tenth of a percent is 0.05 px — invisible — yet every such
+         change restarted the width transition, a few frames of style and
+         layout work per bar on nearly every tick. */
       const txt = v.toFixed(0) + '%';
       if (refs.wrap.dataset.level !== lvl) refs.wrap.dataset.level = lvl;
-      if (refs.fill.style.width   !== w)   refs.fill.style.width   = w;
-      if (refs.lbl.textContent    !== txt) refs.lbl.textContent    = txt;
+      if (refs.fill.style.width   !== txt) refs.fill.style.width   = txt;
+      setText(refs.lbl, txt);
     }
 
     /* Status bar — same 50×25 shape but always 100% filled, just
@@ -247,7 +260,7 @@
       const lvl = isOffline ? 'bad' : 'ok';
       const txt = isOffline ? '维护中' : '运行中';
       if (refs.wrap.dataset.level !== lvl) refs.wrap.dataset.level = lvl;
-      if (refs.lbl.textContent    !== txt) refs.lbl.textContent    = txt;
+      setText(refs.lbl, txt);
     }
 
     /* iconify SVG cache. Used by card flags (`loadFlagIcons`) and any
@@ -829,7 +842,7 @@
 
          When real numbers land via updateTcpingStats(...), the
          data-state attribute is removed (stops the breathe pulse)
-         and a one-shot data-fresh="1" attribute is set so the
+         and data-fresh is set (flipped between 1 and 2) so the
          CSS replays a 240ms opacity fade on the new value.       */
       const avgVal = document.createElement('span');
       avgVal.className = 'hotaru-tcping__stat hotaru-tcping__stat--avg';
@@ -1286,22 +1299,18 @@
 
     /* Helper: write `text` into a stat pill and trigger the
        240ms fade-in animation. Removing the `data-state` attr
-       stops the breathe pulse; `data-fresh` is removed and
-       re-set on the next frame so the keyframes replay even
-       when the same value is being written (e.g. a refresh
-       that returns identical numbers — we still want a tiny
-       acknowledgement that fresh data arrived).               */
+       stops the breathe pulse. A changed value replays the fade
+       by flipping `data-fresh` between 1 and 2, two identical
+       animations under different names: the new name restarts
+       it. (Removing the attribute and forcing a reflow to re-add
+       it cost a synchronous layout of the whole table per pill.) */
     function setTcpingStatValue(el, text) {
       if (!el) return;
       const sameText = (el.textContent === text) && !el.dataset.state;
-      el.textContent = text;
+      setText(el, text);
       delete el.dataset.state;
       if (sameText) return;
-      el.removeAttribute('data-fresh');
-      // Force reflow so the next attribute set reliably
-      // restarts the keyframes animation.
-      void el.offsetWidth;
-      el.dataset.fresh = '1';
+      el.dataset.fresh = el.dataset.fresh === '1' ? '2' : '1';
     }
 
     /* Switch a pill back into "loading" skeleton state — the
@@ -2077,6 +2086,18 @@
       inner.style.maxHeight = inner.scrollHeight + 'px';
     }
 
+    /* Closed panels leave the layout. A collapsed panel is only clipped to
+       zero height, so its content — detail lines, tag pills, the tcping
+       card — was still laid out, hit-tested and repainted with the rows
+       around it, and its memory line changes on every 3 s update. The
+       body is display:none (hidden) from the end of the close transition
+       until the row opens again; the row's height is the same either way
+       (the td padding keeps the gap, the inner box is 0 px tall). */
+    function setPanelBodyShown(inner, shown) {
+      const body = inner && inner.firstElementChild;
+      if (body && body.hidden === shown) body.hidden = !shown;
+    }
+
     function clearExpandSettle(inner) {
       const st = inner && inner._expandSettle;
       if (!st) return;
@@ -2085,12 +2106,17 @@
       inner._expandSettle = null;
     }
 
+    /* Runs when the open or close transition has finished: an open panel
+       drops its height cap, a closed one hides its body. */
     function armExpandSettle(detail, inner) {
       clearExpandSettle(inner);
       const armedAt = performance.now();
       const settle = () => {
         clearExpandSettle(inner);
-        if (!detail.classList.contains('is-open')) return;
+        if (!detail.classList.contains('is-open')) {
+          setPanelBodyShown(inner, false);
+          return;
+        }
         inner.dataset.expandSettled = '1';
         inner.style.maxHeight = 'none';
       };
@@ -2112,9 +2138,10 @@
       clearExpandSettle(inner);
       delete inner.dataset.expandSettled;
       if (open) {
+        // Back into the layout before measuring what the panel opens to.
+        setPanelBodyShown(inner, true);
         detail.classList.add('is-open');
         inner.style.maxHeight = inner.scrollHeight + 'px';
-        armExpandSettle(detail, inner);
       } else {
         /* From `none` (settled) or a pixel value (still opening): pin the
            current content height, commit it, then animate to 0. */
@@ -2123,6 +2150,7 @@
         detail.classList.remove('is-open');
         inner.style.maxHeight = '0px';
       }
+      armExpandSettle(detail, inner);
     }
 
     function syncOpenExpandHeights() {
@@ -2209,6 +2237,7 @@
       inner.className = 'hotaru-expand-inner';
       const body = document.createElement('div');
       body.className = 'hotaru-expand-body';
+      body.hidden = true; // shown while the row is open (setExpandOpen)
       /* Tags line — admin-defined classification metadata.
          Hidden when item.tags is missing/empty so empty rows
          keep the same compact detail layout as before.

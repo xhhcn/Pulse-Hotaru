@@ -649,6 +649,10 @@ body.hotaru-theme {
   color: var(--hotaru-text);
   line-height: 1.4285em;
 }
+/* A closed panel's body is taken out of the layout once the close
+   transition ends (HotaruServerTable setPanelBodyShown): nothing in it is
+   laid out or repainted while the row stays collapsed.               */
+.hotaru-table tbody tr.hotaru-expand .hotaru-expand-body[hidden] { display: none !important; }
 
 /* Inner detail lines.
 
@@ -923,11 +927,21 @@ body.hotaru-theme {
 }
 /* When new numbers land, fade them in by replaying a tiny
    240ms opacity animation. Removing the `data-state` attr
-   triggers this via the [data-fresh] one-shot below.        */
+   triggers this via the [data-fresh] one-shot below. The script
+   alternates data-fresh between 1 and 2: the two identical
+   keyframes differ only in name, and a new animation-name
+   restarts the animation without forcing a layout.          */
 .hotaru-tcping__stat[data-fresh="1"] {
   animation: hotaru-tcping-stat-fade-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
+.hotaru-tcping__stat[data-fresh="2"] {
+  animation: hotaru-tcping-stat-fade-in-2 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 @keyframes hotaru-tcping-stat-fade-in {
+  from { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+@keyframes hotaru-tcping-stat-fade-in-2 {
   from { opacity: 0.4; }
   to   { opacity: 1; }
 }
@@ -995,7 +1009,7 @@ body.hotaru-theme {
 @media (prefers-reduced-motion: reduce) {
   .hotaru-tcping__chart canvas { transition: none; opacity: 1; }
   .hotaru-tcping__stat[data-state="loading"] { animation: none; }
-  .hotaru-tcping__stat[data-fresh="1"]       { animation: none; }
+  .hotaru-tcping__stat[data-fresh]           { animation: none; }
 }
 
 /* Indeterminate "loading" indicator that overlays the chart area

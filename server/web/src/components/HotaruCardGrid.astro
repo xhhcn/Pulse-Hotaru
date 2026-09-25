@@ -64,6 +64,13 @@
        selected stays selected.
        ---------------------------------------------------------------- */
     function setText(el, text) {
+      // One text node: change its data in place (no child-list change,
+      // so no restyle of the node on every tick). See HotaruServerTable.
+      const node = el.firstChild;
+      if (node && node.nodeType === 3 && node === el.lastChild) {
+        if (node.data !== text) node.data = text;
+        return;
+      }
       if (el.textContent !== text) el.textContent = text;
     }
     function setAttr(el, name, value) {
@@ -201,7 +208,9 @@
                          && !item.disk_info;
       const memPct  = Math.max(0, Math.min(100, Number(item.memory) || 0));
       const memLevel = isOffline ? 'bad' : levelOf(memPct);
-      const fillW   = (isPristine ? 100 : memPct).toFixed(1) + '%';
+      // Whole percents: finer steps are sub-pixel on a card-wide bar but
+      // each one restarts the width transition.
+      const fillW   = (isPristine ? 100 : memPct).toFixed(0) + '%';
       if (r.bar.dataset.level !== memLevel) r.bar.dataset.level = memLevel;
       if (r.fill.style.width !== fillW)     r.fill.style.width   = fillW;
 

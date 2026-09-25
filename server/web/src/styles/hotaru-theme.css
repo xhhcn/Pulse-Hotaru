@@ -923,7 +923,17 @@ body.hotaru-theme {
   from { opacity: 0.4; }
   to   { opacity: 1; }
 }
-.hotaru-tcping__tab {
+/* An empty tab strip (Chart.js or the target list still loading) keeps
+   exactly one tab row of height through an invisible ghost that shares
+   the tab's sizing rules below, so the panel is measured with the row it
+   is about to get instead of growing when the tabs arrive. */
+.hotaru-tcping__tabs:empty::before {
+  content: "\200b";
+  display: inline-block;
+  visibility: hidden;
+}
+.hotaru-tcping__tab,
+.hotaru-tcping__tabs:empty::before {
   padding: 0.35em 0.85em;
   /* 6 px matches .hotaru-bar's corner radius — same "soft chip"
      shape used elsewhere in the theme for chunky, button-style
@@ -1004,6 +1014,16 @@ body.hotaru-theme {
 .hotaru-tcping__loading span:nth-child(2) { animation-delay: 0.15s; }
 .hotaru-tcping__loading span:nth-child(3) { animation-delay: 0.30s; }
 .hotaru-tcping__loading[hidden] { display: none !important; }
+/* Nothing inside a closed expand panel may loop. Every row carries a
+   tcping card, and a looping animation on a hundred collapsed rows
+   keeps the page re-rendering on every frame (it was ~90 % of the main
+   thread on a 114-node dashboard). The script hides these while a card
+   is not loading; this is the backstop for a panel that closes
+   mid-load. */
+.hotaru-table tbody tr.hotaru-expand:not(.is-open) .hotaru-tcping__loading span,
+.hotaru-table tbody tr.hotaru-expand:not(.is-open) .hotaru-tcping__stat[data-state="loading"] {
+  animation: none;
+}
 @keyframes hotaru-tcping-dot {
   0%, 100% { opacity: 0.25; transform: translateY(0); }
   50%      { opacity: 0.85; transform: translateY(-2px); }
@@ -1095,7 +1115,8 @@ body.hotaru-theme {
 @media (max-width: 768px) {
   .hotaru-tag,
   .hotaru-tcping__stat { font-size: 0.92rem; }   /* 11.0 px */
-  .hotaru-tcping__tab  { font-size: 0.86rem; }   /* 10.3 px */
+  .hotaru-tcping__tab,
+  .hotaru-tcping__tabs:empty::before { font-size: 0.86rem; }   /* 10.3 px */
   /* Same floor for the unreachable-target notice, which shares the
      tab's 0.82rem desktop size.                                    */
   .hotaru-tcping__notice { font-size: 0.86rem; } /* 10.3 px */
@@ -1109,7 +1130,8 @@ body.hotaru-theme {
      mobile-floor rule above and intentionally left alone
      here so phone-portrait viewports don't inherit a
      smaller-than-readable size.                            */
-  .hotaru-tcping__tab   { padding: 0.3em 0.7em; }
+  .hotaru-tcping__tab,
+  .hotaru-tcping__tabs:empty::before { padding: 0.3em 0.7em; }
   /* Drop the auto-margin so the stats wrap to a new line
      under the tabs instead of getting visually compressed
      when both groups are on the same row.                  */

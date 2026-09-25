@@ -849,12 +849,15 @@
       const canvas = document.createElement('canvas');
       chartBox.appendChild(canvas);
 
-      /* Three-dot pulse spinner overlaid on the chart area. Visible
-         from the moment the card is built; hidden once the canvas
-         has its first frame. Pure CSS animation (see
-         hotaru-theme.css), so no JS overhead while it spins.       */
+      /* Three-dot pulse spinner overlaid on the chart area. Hidden
+         until the card actually starts loading (ensureTcpingChart, or
+         a tab switch with nothing cached) and hidden again once the
+         canvas has its first frame. Every row carries a card, so a
+         spinner that started visible kept ~100 collapsed rows
+         animating and the whole page re-rendering on every frame.  */
       const loading = document.createElement('div');
       loading.className = 'hotaru-tcping__loading';
+      loading.hidden = true;
       loading.append(
         document.createElement('span'),
         document.createElement('span'),
@@ -943,6 +946,9 @@
         return;
       }
       tcping.initialized = true;
+      /* The card is about to load: bring up the dots (hidden by default,
+         see buildTcpingSection). Every exit path below hides them again. */
+      if (tcping.loading) tcping.loading.hidden = false;
       /* Generation token: a collapse (resetTcpingCard) that happens while
          the awaits below are pending must make this build a no-op, or the
          card would be rebuilt on a closed row and a later open would
@@ -1068,11 +1074,22 @@
            transition never strands us without a chart.              */
         await new Promise((resolve) => {
           let done = false;
-          const finish = () => { if (done) return; done = true; resolve(); };
-          inner.addEventListener('transitionend', (e) => {
-            if (e.propertyName === 'max-height') finish();
-          }, { once: true });
-          setTimeout(finish, 600);
+          let timer = 0;
+          const onEnd = (e) => {
+            if (e.target === inner && e.propertyName === 'max-height') finish();
+          };
+          const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            inner.removeEventListener('transitionend', onEnd);
+            resolve();
+          };
+          /* Not `{ once: true }`: transitionend bubbles, and the first one
+             to arrive is often a child's (tab or canvas fade), which would
+             unregister the listener before the panel's own max-height end. */
+          inner.addEventListener('transitionend', onEnd);
+          timer = setTimeout(finish, 600);
         });
         await drawNow();
       } else {
@@ -1681,6 +1698,7 @@
        deployment has no targets at all. The next expand rebuilds it. */
     function resetTcpingCard(tcping) {
       if (!tcping) return;
+      cancelTcpingTeardown(tcping);
       tcping.gen = (tcping.gen || 0) + 1; // invalidate any in-flight build
       if (tcping.chart) {
         try { tcping.chart.destroy(); } catch (_) {}
@@ -1696,6 +1714,40 @@
       tcping._skipped = null;
       tcping.target = '';
       tcping.initialized = false;
+    }
+
+    /* Collapse → teardown ordering. A collapsed row keeps nothing alive
+       (resetTcpingCard), but only once its panel has finished closing:
+       resetting at click time emptied the card — tabs, stats and chart
+       gone — while the 0.5 s close animation was still showing it, so the
+       chart looked like it vanished before the panel did. Reopening the
+       row before the teardown runs cancels it and keeps the live card. */
+    function cancelTcpingTeardown(tcping) {
+      const td = tcping && tcping._teardown;
+      if (!td) return;
+      clearTimeout(td.timer);
+      if (td.inner) td.inner.removeEventListener('transitionend', td.onEnd);
+      tcping._teardown = null;
+    }
+
+    function scheduleTcpingTeardown(id, tcping, detail) {
+      if (!tcping) return;
+      cancelTcpingTeardown(tcping);
+      const inner = expandInnerFor(detail);
+      const run = () => {
+        cancelTcpingTeardown(tcping);
+        if (detail && detail.classList.contains('is-open')) return;
+        resetTcpingCard(tcping);
+        tcpingState.delete(id);
+      };
+      const onEnd = (e) => {
+        if (e.target === inner && e.propertyName === 'max-height') run();
+      };
+      if (inner) inner.addEventListener('transitionend', onEnd);
+      /* transitionend never fires when nothing animates (reduced motion,
+         a panel already at 0), so a timer backs it up. 650 ms covers the
+         0.5 s max-height transition in hotaru-theme.css.                */
+      tcping._teardown = { inner, onEnd, timer: setTimeout(run, 650) };
     }
 
     async function handleTcpingConfigUpdated() {
@@ -1961,6 +2013,14 @@
       return detail ? detail.querySelector('.hotaru-expand-inner') : null;
     }
 
+    /* Panel height.
+       The max-height transition needs a pixel target while the panel
+       opens, but a pixel cap left on an open panel clips anything that
+       grows afterwards — the tcping tab strip and stats arriving with a
+       late Chart.js, tags wrapping, a font swap, a resize. So an opening
+       panel animates towards its measured height and, once that
+       transition ends, drops the cap (max-height: none); closing pins the
+       current height again first so the close still animates.          */
     function syncExpandHeight(detail) {
       const inner = expandInnerFor(detail);
       if (!inner) return;
@@ -1968,7 +2028,36 @@
         inner.style.maxHeight = '0px';
         return;
       }
+      if (inner.dataset.expandSettled === '1') {
+        if (inner.style.maxHeight !== 'none') inner.style.maxHeight = 'none';
+        return;
+      }
       inner.style.maxHeight = inner.scrollHeight + 'px';
+    }
+
+    function clearExpandSettle(inner) {
+      const st = inner && inner._expandSettle;
+      if (!st) return;
+      inner.removeEventListener('transitionend', st.onEnd);
+      clearTimeout(st.timer);
+      inner._expandSettle = null;
+    }
+
+    function armExpandSettle(detail, inner) {
+      clearExpandSettle(inner);
+      const settle = () => {
+        clearExpandSettle(inner);
+        if (!detail.classList.contains('is-open')) return;
+        inner.dataset.expandSettled = '1';
+        inner.style.maxHeight = 'none';
+      };
+      const onEnd = (e) => {
+        if (e.target === inner && e.propertyName === 'max-height') settle();
+      };
+      inner.addEventListener('transitionend', onEnd);
+      /* No transitionend when the height did not change or motion is
+         reduced; 700 ms is past the 0.5 s transition either way. */
+      inner._expandSettle = { onEnd, timer: setTimeout(settle, 700) };
     }
 
     function setExpandOpen(detail, open) {
@@ -1977,12 +2066,16 @@
         detail.classList.toggle('is-open', open);
         return;
       }
+      clearExpandSettle(inner);
+      delete inner.dataset.expandSettled;
       if (open) {
         detail.classList.add('is-open');
-        syncExpandHeight(detail);
-      } else {
         inner.style.maxHeight = inner.scrollHeight + 'px';
-        // Force the browser to commit the current height before collapse.
+        armExpandSettle(detail, inner);
+      } else {
+        /* From `none` (settled) or a pixel value (still opening): pin the
+           current content height, commit it, then animate to 0. */
+        inner.style.maxHeight = inner.scrollHeight + 'px';
         void inner.offsetHeight;
         detail.classList.remove('is-open');
         inner.style.maxHeight = '0px';
@@ -2105,15 +2198,19 @@
       row.addEventListener('click', () => {
         if (row.classList.contains('is-pristine')) return;
         const opening = !detail.classList.contains('is-open');
-        setExpandOpen(detail, opening);
         if (opening) {
+          /* Reopened while the previous close was still animating: keep
+             the card that is on screen instead of rebuilding it. */
+          cancelTcpingTeardown(tcping);
+          setExpandOpen(detail, true);
           ensureTcpingChart(id, tcping);
         } else {
+          setExpandOpen(detail, false);
           /* Collapsed rows keep nothing alive: a session that has browsed
              many rows would otherwise pin one Chart.js instance and a
-             24 h sample cache per row it ever opened. */
-          resetTcpingCard(tcping);
-          tcpingState.delete(id);
+             24 h sample cache per row it ever opened. The teardown waits
+             for the close animation (see scheduleTcpingTeardown).      */
+          scheduleTcpingTeardown(id, tcping, detail);
         }
       });
 
@@ -2233,7 +2330,10 @@
          lose its identity in the broadcast, and the row demoted
          from .is-offline to .is-pristine) get force-collapsed so
          the empty expand row doesn't linger in the DOM. */
-      if (isPristine && entry.detail.classList.contains('is-open')) setExpandOpen(entry.detail, false);
+      if (isPristine && entry.detail.classList.contains('is-open')) {
+        setExpandOpen(entry.detail, false);
+        if (entry.tcping) scheduleTcpingTeardown(entry.tcping.id, entry.tcping, entry.detail);
+      }
 
       setStatusBar(r.status, isOffline);
 

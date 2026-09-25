@@ -849,6 +849,14 @@ body.hotaru-theme {
   margin-left: auto;
 }
 .hotaru-tcping__stats[hidden] { display: none !important; }
+/* While the card is still being built (tab strip empty) the hidden stats
+   keep their place as well, invisibly: next to the tabs on wide screens
+   (a chip is slightly taller than a tab ≤768 px) and on their own line
+   ≤600 px, so the panel is measured with the head it is about to get. */
+.hotaru-tcping__tabs:empty ~ .hotaru-tcping__stats[hidden] {
+  display: inline-flex !important;
+  visibility: hidden;
+}
 
 /* Frosted-grey summary chip.
 
@@ -1019,10 +1027,12 @@ body.hotaru-theme {
    keeps the page re-rendering on every frame (it was ~90 % of the main
    thread on a 114-node dashboard). The script hides these while a card
    is not loading; this is the backstop for a panel that closes
-   mid-load. */
+   mid-load. Paused rather than removed: a paused animation costs no
+   frames and holds its current opacity through the close instead of
+   jumping to full strength. */
 .hotaru-table tbody tr.hotaru-expand:not(.is-open) .hotaru-tcping__loading span,
 .hotaru-table tbody tr.hotaru-expand:not(.is-open) .hotaru-tcping__stat[data-state="loading"] {
-  animation: none;
+  animation-play-state: paused;
 }
 @keyframes hotaru-tcping-dot {
   0%, 100% { opacity: 0.25; transform: translateY(0); }

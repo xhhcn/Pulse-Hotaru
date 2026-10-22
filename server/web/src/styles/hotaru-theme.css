@@ -1185,11 +1185,9 @@ body.hotaru-theme {
 .hotaru-bar > i {
   position: absolute;
   inset: 0 auto 0 0;
-  /* Semantic UI's `.ui.progress .bar { min-width: 2em }`, which hotaru
-     keeps: a low value still gets a coloured stub (25 px of 50) wide
-     enough for its white label. With no minimum, 3 % was a 1.5 px sliver
-     and the centred label hung off it, cut off or white on grey. */
-  min-width: 2em !important;
+  /* No minimum width: the fill shows the real proportion. (Semantic UI's
+     2em minimum made every value under 50 % the same half-bar.) */
+  min-width: 0 !important;
   width: 0;
   height: 25px;
   background: var(--hotaru-status-ok);
@@ -1330,7 +1328,7 @@ body.hotaru-theme {
 .hotaru-card__bar > i {
   position: absolute;
   inset: 0 auto 0 0;
-  min-width: 2em; /* Semantic UI's bar minimum, as on hotaru's cards */
+  min-width: 0; /* the real proportion, as in the table */
   width: 0;
   height: 100%;
   background: var(--hotaru-status-ok);

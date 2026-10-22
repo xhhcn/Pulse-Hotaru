@@ -49,6 +49,7 @@
 
 <script>
   import { locationToZh } from '../data/countryZh';
+  import { iconSvgUrl, flagIconForCode } from '../utils/icons.ts';
 
   (function () {
     const tbody = document.getElementById('hotaru-tbody');
@@ -263,123 +264,44 @@
       setText(refs.lbl, txt);
     }
 
-    /* iconify SVG cache. Used by card flags (`loadFlagIcons`) and any
-       other iconify spans. "服务器位置" uses `locationToZh` text.     */
+    /* Icon SVG cache. Used by card flags (`loadFlagIcons`) and any other
+       icon spans. "服务器位置" uses `locationToZh` text. Icons come from
+       the copies shipped with the dashboard, or the Iconify API for the
+       few that are not (see utils/icons.ts).                          */
     const iconSvgCache = new Map();
-    /* Icon names must be a plain iconify "prefix:name" pair before they
-       can influence the CDN URL path (today only FLAG_NAMES values reach
-       here; the gate keeps that true for any future caller). */
-    const ICONIFY_NAME_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
     function fetchIconSvg(name, height) {
-      if (!ICONIFY_NAME_RE.test(String(name || ''))) return Promise.resolve(null);
+      const url = iconSvgUrl(name, height);
+      if (!url) return Promise.resolve(null);
       const key = `${name}@${height}`;
       let p = iconSvgCache.get(key);
       if (p) return p;
       p = (async () => {
         try {
-          const url = `https://api.iconify.design/${encodeURI(name)}.svg?height=${height}`;
           const r = await fetch(url);
+          // A missing icon stays missing for the session; anything else
+          // (network, 5xx) is dropped below so the next tick retries.
+          if (r.status === 404) return '';
           if (!r.ok) return null;
           return await r.text();
         } catch (_) {
           return null;
         }
       })();
-      // A failed fetch must not be cached for the whole session (the CDN
-      // is third-party and flaky on some networks): drop it so the next
-      // metrics tick retries.
       p = p.then((svg) => { if (svg == null) iconSvgCache.delete(key); return svg; });
       iconSvgCache.set(key, p);
       return p;
     }
 
-    /* Country → emojione-v1 flag (cards only; same map Pulse uses). */
-    const FLAG_NAMES = {
-      AD: 'andorra', AE: 'united-arab-emirates', AF: 'afghanistan',
-      AG: 'antigua-barbuda', AL: 'albania', AM: 'armenia',
-      AO: 'angola', AR: 'argentina', AT: 'austria',
-      AU: 'australia', AZ: 'azerbaijan',
-      BA: 'bosnia-herzegovina', BB: 'barbados', BD: 'bangladesh',
-      BE: 'belgium', BF: 'burkina-faso', BG: 'bulgaria',
-      BH: 'bahrain', BI: 'burundi', BJ: 'benin',
-      BN: 'brunei', BO: 'bolivia', BR: 'brazil',
-      BS: 'bahamas', BT: 'bhutan', BW: 'botswana',
-      BY: 'belarus', BZ: 'belize',
-      CA: 'canada', CD: 'congo-kinshasa', CG: 'congo-brazzaville',
-      CH: 'switzerland', CI: 'cote-d-ivoire', CL: 'chile',
-      CM: 'cameroon', CN: 'china', CO: 'colombia',
-      CR: 'costa-rica', CU: 'cuba', CV: 'cape-verde',
-      CY: 'cyprus', CZ: 'czech-republic',
-      DE: 'germany', DJ: 'djibouti', DK: 'denmark',
-      DM: 'dominica', DO: 'dominican-republic', DZ: 'algeria',
-      EC: 'ecuador', EE: 'estonia', EG: 'egypt',
-      ER: 'eritrea', ES: 'spain', ET: 'ethiopia',
-      FI: 'finland', FJ: 'fiji', FR: 'france',
-      GA: 'gabon', GB: 'united-kingdom', GD: 'grenada',
-      GE: 'georgia', GH: 'ghana', GM: 'gambia',
-      GN: 'guinea', GR: 'greece', GT: 'guatemala',
-      GW: 'guinea-bissau', GY: 'guyana',
-      HK: 'hong-kong-sar-china', HN: 'honduras', HR: 'croatia',
-      HT: 'haiti', HU: 'hungary',
-      ID: 'indonesia', IE: 'ireland', IL: 'israel',
-      IN: 'india', IQ: 'iraq', IR: 'iran',
-      IS: 'iceland', IT: 'italy',
-      JM: 'jamaica', JO: 'jordan', JP: 'japan',
-      KE: 'kenya', KG: 'kyrgyzstan', KH: 'cambodia',
-      KM: 'comoros', KN: 'st-kitts-nevis', KP: 'north-korea',
-      KR: 'south-korea', KW: 'kuwait', KZ: 'kazakhstan',
-      LA: 'laos', LB: 'lebanon', LC: 'st-lucia',
-      LI: 'liechtenstein', LK: 'sri-lanka', LR: 'liberia',
-      LS: 'lesotho', LT: 'lithuania', LU: 'luxembourg',
-      LV: 'latvia', LY: 'libya',
-      MA: 'morocco', MC: 'monaco', MD: 'moldova',
-      ME: 'montenegro', MG: 'madagascar', MK: 'north-macedonia',
-      ML: 'mali', MM: 'myanmar-burma', MN: 'mongolia',
-      MO: 'macau-sar-china', MR: 'mauritania', MT: 'malta',
-      MU: 'mauritius', MV: 'maldives', MW: 'malawi',
-      MX: 'mexico', MY: 'malaysia', MZ: 'mozambique',
-      NA: 'namibia', NE: 'niger', NG: 'nigeria',
-      NI: 'nicaragua', NL: 'netherlands', NO: 'norway',
-      NP: 'nepal', NZ: 'new-zealand',
-      OM: 'oman',
-      PA: 'panama', PE: 'peru', PG: 'papua-new-guinea',
-      PH: 'philippines', PK: 'pakistan', PL: 'poland',
-      PR: 'puerto-rico', PT: 'portugal', PY: 'paraguay',
-      QA: 'qatar',
-      RO: 'romania', RS: 'serbia', RU: 'russia', RW: 'rwanda',
-      SA: 'saudi-arabia', SB: 'solomon-islands', SC: 'seychelles',
-      SD: 'sudan', SE: 'sweden', SG: 'singapore',
-      SI: 'slovenia', SK: 'slovakia', SL: 'sierra-leone',
-      SM: 'san-marino', SN: 'senegal', SO: 'somalia',
-      SR: 'suriname', SS: 'south-sudan', ST: 'sao-tome-principe',
-      SV: 'el-salvador', SY: 'syria', SZ: 'eswatini',
-      TD: 'chad', TG: 'togo', TH: 'thailand',
-      TJ: 'tajikistan', TL: 'timor-leste', TM: 'turkmenistan',
-      TN: 'tunisia', TO: 'tonga', TR: 'turkey',
-      TT: 'trinidad-tobago', TW: 'taiwan', TZ: 'tanzania',
-      UA: 'ukraine', UG: 'uganda', UK: 'united-kingdom',
-      US: 'united-states', UY: 'uruguay', UZ: 'uzbekistan',
-      VA: 'vatican-city', VC: 'st-vincent-grenadines',
-      VE: 'venezuela', VN: 'vietnam',
-      YE: 'yemen',
-      ZA: 'south-africa', ZM: 'zambia', ZW: 'zimbabwe'
-    };
-
+    /* Country → Emoji One (v1) flag (cards only). The code → icon table is
+       generated from Unicode's flag list (utils/icon-manifest.ts); the
+       hand-written one it replaces had names the set never had. */
     function flagIcon(country) {
       if (!country) return null;
       const v = String(country).trim().toUpperCase();
       if (/^UNKNOWN$/i.test(v)) return null;
-      const m = v.match(/^[A-Z]{2}$/);
-      if (m) {
-        const name = FLAG_NAMES[v];
-        return name ? `emojione-v1:flag-for-${name}` : null;
-      }
+      if (/^[A-Z]{2}$/.test(v)) return flagIconForCode(v);
       const lead = v.match(/[A-Z]{2}/);
-      if (lead) {
-        const name = FLAG_NAMES[lead[0]];
-        if (name) return `emojione-v1:flag-for-${name}`;
-      }
-      return null;
+      return lead ? flagIconForCode(lead[0]) : null;
     }
 
     /* The icon CDN response is third-party markup that lands in innerHTML.

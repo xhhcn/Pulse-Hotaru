@@ -166,8 +166,9 @@
       setText(r.type, sys);
       r.type.style.display = '';
 
-      /* Flag — only rows that pass cardExcluded() reach the grid, so
-         `location` always resolves to an icon here.                 */
+      /* Flag. A location without one (a code Emoji One has no flag for,
+         or garbage) keeps the empty slot, as hotaru's blank <svg> does,
+         so the card's name stays aligned with its neighbours.       */
       const country = item.location || '';
       if (entry.last.country !== country) {
         entry.last.country = country;
@@ -188,7 +189,7 @@
           entry.last.icon = icon;
         } else {
           r.flag.setAttribute('aria-hidden', 'true');
-          r.flag.style.display = 'none';
+          r.flag.style.display = '';
           entry.last.icon = null;
         }
       }

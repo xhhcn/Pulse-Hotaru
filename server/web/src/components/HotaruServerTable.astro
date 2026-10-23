@@ -304,22 +304,26 @@
       return lead ? flagIconForCode(lead[0]) : null;
     }
 
-    /* The icon CDN response is third-party markup that lands in innerHTML.
+    /* The icon response is third-party markup that ends up in the page.
        Accept only a plain <svg> tree: drop scripts, foreignObject, event
-       handler attributes and non-image hrefs. Returns '' when anything
+       handler attributes and non-image hrefs. Returns null when anything
        looks off so the flag is simply not shown. */
-    function sanitizeSvgMarkup(markup) {
-      if (!markup || typeof markup !== 'string') return '';
+    function sanitizedSvgElement(markup) {
+      if (!markup || typeof markup !== 'string') return null;
       let doc;
-      try { doc = new DOMParser().parseFromString(markup, 'image/svg+xml'); } catch (_) { return ''; }
+      try { doc = new DOMParser().parseFromString(markup, 'image/svg+xml'); } catch (_) { return null; }
       const root = doc.documentElement;
-      if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) return '';
+      if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) return null;
       const banned = /^(script|foreignobject|iframe|object|embed|use|style|animate|set|animatetransform|animatemotion)$/i;
-      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      // Every node, not only elements: comments, CDATA sections and processing
+      // instructions are dropped as well.
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ALL);
       const toRemove = [];
       let node = walker.currentNode;
       while (node) {
-        if (banned.test(node.nodeName)) toRemove.push(node);
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          if (node.nodeType !== Node.TEXT_NODE) toRemove.push(node);
+        } else if (banned.test(node.nodeName)) toRemove.push(node);
         else {
           Array.from(node.attributes).forEach((attr) => {
             const n = attr.name.toLowerCase(), v = String(attr.value || '');
@@ -329,7 +333,9 @@
         node = walker.nextNode();
       }
       toRemove.forEach((n) => n.remove());
-      return new XMLSerializer().serializeToString(root);
+      // Handed over as nodes. Serialising and assigning innerHTML re-parsed the
+      // XML as HTML, where a comment or CDATA section could turn into live markup.
+      return document.importNode(root, true);
     }
 
     async function loadFlagIcons(scope) {
@@ -338,9 +344,9 @@
       await Promise.all(Array.from(els).map(async (el) => {
         const name = el.dataset.icon;
         if (!name || el.dataset.iconLoaded === name) return;
-        const svg = sanitizeSvgMarkup(await fetchIconSvg(name, 32));
+        const svg = sanitizedSvgElement(await fetchIconSvg(name, 32));
         if (!svg) return;
-        el.innerHTML = svg;
+        el.replaceChildren(svg);
         el.dataset.iconLoaded = name;
         const svgEl = el.querySelector('svg');
         if (svgEl) {

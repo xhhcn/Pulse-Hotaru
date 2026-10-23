@@ -75,7 +75,7 @@ const customCodePlaceholder = [
       </div>
     </div>
 
-    <div id="systems-list" class="space-y-3 max-h-[600px] overflow-y-auto scrollbar-hide" data-draggable-list>
+    <div id="systems-list" class="space-y-3 overflow-y-auto scrollbar-hide" data-draggable-list>
       <div class="flex items-center justify-center py-12">
         <div id="loading-systems-text" class="text-sm text-[#525252]" data-translate="loadingSystems">加载服务中</div>
       </div>
@@ -668,10 +668,17 @@ const customCodePlaceholder = [
   .scrollbar-hide::-webkit-scrollbar {
     display: none;  /* Chrome, Safari and Opera */
   }
-  /* With the scrollbar hidden, nothing showed that the 600 px list goes
-     on: an edge with more services beyond it fades out
-     (updateListEdgeFades sets the attributes). */
+  /* The list scrolls inside a box as tall as the window allows (it was a
+     fixed 600 px: the lower part of a tall screen stayed empty, and a short
+     one scrolled the page as well as the list). 140 px leaves room for the
+     title row above and the page padding below. dvh follows a phone's
+     collapsing address bar; browsers without it keep the vh line.
+     With the scrollbar hidden, nothing showed that the list goes on: an
+     edge with more services beyond it fades out (updateListEdgeFades sets
+     the attributes and runs again on resize). */
   #systems-list {
+    max-height: max(300px, calc(100vh - 140px));
+    max-height: max(300px, calc(100dvh - 140px));
     --fade-top: 0px;
     --fade-bottom: 0px;
   }
@@ -1387,7 +1394,7 @@ const customCodePlaceholder = [
             <!-- System Info -->
             <div class="flex-1 min-w-0 flex items-center gap-3">
               <!-- Left: Name -->
-              <div class="flex flex-col gap-1 flex-shrink-0" style="flex-shrink: 1; min-width: 0; max-width: 250px;">
+              <div class="system-name-block flex flex-col gap-1 flex-shrink-0" style="flex-shrink: 1; min-width: 0; max-width: 250px;">
                 <span class="system-name text-sm font-semibold text-[#262626]" style="word-break: break-word; overflow-wrap: break-word; display: block;">${escapeHtml(system.name || '')}</span>
                 <!-- Other Info (Virtualization Type, OS) -->
                 <div class="flex flex-wrap gap-2 text-xs text-[#404040] min-h-[16px]">

@@ -1459,27 +1459,62 @@ body.hotaru-theme .glass-inner {
   box-shadow: none !important;
 }
 
-/* Admin systems-list rows — hotaru's `tableRow` background of
-   rgba(249, 249, 249, .8) (TableItem.vue), rounded so individual
-   rows read as soft chips on the white card surface.              */
-body.hotaru-theme .system-row {
+/* Admin systems-list rows — hotaru's `tableRow` (TableItem.vue):
+   rgba(249, 249, 249, .8), no border, rounded like hotaru's cards.
+   Hover darkens slightly, as Semantic UI's selectable rows do. (This
+   used to target a `.system-row` class the rows never carried.) The
+   border stays in the box model but transparent, so drag-to-reorder
+   can still draw its blue insertion edge on the target row.        */
+body.hotaru-theme #systems-list .draggable-item {
   background: rgba(249, 249, 249, 0.8) !important;
-  margin: 6px 8px !important;
+  border-color: transparent !important;
   border-radius: 0.5rem !important;
-  border: none !important;
-  box-shadow: none !important;
 }
-body.hotaru-theme .system-row:hover {
-  background: rgba(255, 255, 255, 0.95) !important;
-  box-shadow: none !important;
+body.hotaru-theme #systems-list .draggable-item:hover {
+  background: #f2f2f2 !important;
+}
+body.hotaru-theme #systems-list .draggable-item.border-t-2 {
+  border-top-color: #60a5fa !important;
+}
+body.hotaru-theme #systems-list .draggable-item.border-b-2 {
+  border-bottom-color: #60a5fa !important;
 }
 
-/* Modals — same hotaru card vocabulary as .glass-card: same
-   translucent white, same 5/5/25 drop shadow, same .5rem radius.
+/* CPU-brand logo behind each row: a quiet watermark, not a figure. */
+body.hotaru-theme #systems-list .draggable-item > .absolute {
+  opacity: 0.09;
+}
+
+/* From 1024 px the name and address columns have fixed widths, so the
+   address and traffic columns start at the same x on every row, the way
+   hotaru's table columns line up. The name keeps up to 17rem (it wraps
+   below that); 11rem fits any IPv4 line, and only the longer IPv6
+   addresses push the traffic column further. The aligned columns would
+   run into the centred logo, so the logo moves into the free space left
+   of the row's buttons. Narrower screens keep the natural flow.       */
+@media (min-width: 1024px) {
+  body.hotaru-theme #systems-list .system-name-block {
+    width: 17rem;
+    max-width: 17rem !important;
+  }
+  body.hotaru-theme #systems-list .ip-info-container {
+    min-width: 11rem;
+  }
+  body.hotaru-theme #systems-list .draggable-item > .absolute {
+    left: auto;
+    right: 11.5rem;
+    --tw-translate-x: 0;
+  }
+}
+
+/* Modals — hotaru card vocabulary (5/5/25 drop shadow, .5rem
+   radius) on an opaque white panel, as Semantic UI's own modals are.
+   The cards' translucency suits hotaru's tiled background; over the
+   services list it let the text and logos behind show through the form.
    The `[data-modal-content]` selector targets only the inner
    white panel of each modal (not the dark backdrop overlay).     */
 body.hotaru-theme [data-modal-content] {
-  background: rgba(255, 255, 255, 0.92) !important;
+  background: #ffffff !important;
   border: none !important;
   box-shadow: 5px 5px 25px 0 rgba(46, 61, 73, 0.2) !important;
   border-radius: 0.5rem !important;
@@ -1563,19 +1598,31 @@ body.hotaru-theme .system-row a:focus-visible {
 
 /* Modal controls.
    Reused Tailwind markup still contains many saturated action colours
-   (emerald/orange/blue/amber). On hotaru pages, make ordinary modal
-   actions use the default Semantic UI gray button. Destructive and
-   status text can still use red/green where the message itself needs it,
-   but the chrome stays quiet.                                      */
+   (emerald/orange/blue/amber). On hotaru pages the chrome stays quiet:
+   a dialog's main action (its submit button) is hotaru's own text grey
+   with white text, so it reads as the primary choice — in Semantic UI's
+   default grey it looked disabled. Secondary actions such as
+   "regenerate" keep the default Semantic UI grey button. Destructive
+   and status text can still use red/green where the message itself
+   needs it.                                                        */
 body.hotaru-theme [data-modal] button[type="submit"],
 body.hotaru-theme [data-modal] #regenerate-shared-secret-btn {
-  background: #e0e1e2 !important;
-  color: rgba(0, 0, 0, 0.6) !important;
   border: none !important;
   border-radius: 0.28571429rem !important;
   box-shadow: 0 0 0 1px transparent inset, 0 0 0 0 rgba(34, 36, 38, 0.15) inset !important;
 }
-body.hotaru-theme [data-modal] button[type="submit"]:hover,
+body.hotaru-theme [data-modal] button[type="submit"] {
+  background: #616366 !important;
+  color: #ffffff !important;
+}
+body.hotaru-theme [data-modal] button[type="submit"]:hover {
+  background: #4d4f52 !important;
+  color: #ffffff !important;
+}
+body.hotaru-theme [data-modal] #regenerate-shared-secret-btn {
+  background: #e0e1e2 !important;
+  color: rgba(0, 0, 0, 0.6) !important;
+}
 body.hotaru-theme [data-modal] #regenerate-shared-secret-btn:hover {
   background: #cacbcd !important;
   color: rgba(0, 0, 0, 0.8) !important;

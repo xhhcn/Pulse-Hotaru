@@ -427,7 +427,9 @@ const customCodePlaceholder = [
             type="text"
             name="logo"
             id="navbar-logo-input"
-            placeholder="https://example.com/logo.svg or SVG code"
+            placeholder="https://example.com/logo.svg 或 SVG 代码"
+            data-placeholder-en="https://example.com/logo.svg or SVG code"
+            data-placeholder-zh="https://example.com/logo.svg 或 SVG 代码"
             class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa]"
           />
           <p class="mt-1 text-xs text-[#525252]" data-translate="navbarLogoHint">浏览器标签栏 favicon 的 URL 或 SVG 代码（留空使用默认图标）</p>
@@ -479,7 +481,7 @@ const customCodePlaceholder = [
 
         <!-- Custom CSS & JavaScript -->
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="customCode">Custom CSS & JavaScript</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="customCode">自定义 CSS 和 JavaScript</span></label>
           <textarea
             id="navbar-custom-code-input"
             rows="10"
@@ -3481,7 +3483,9 @@ const customCodePlaceholder = [
       <button
         type="button"
         class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-red-400 hover:text-red-600 shrink-0"
-        title="Remove target"
+        title="${adminTranslations.removeTarget[adminLang()]}"
+        data-title-en="Remove target"
+        data-title-zh="移除目标"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
           <path d="M18 6L6 18M6 6l12 12"/>
@@ -3495,15 +3499,6 @@ const customCodePlaceholder = [
     removeBtn.addEventListener('click', () => {
       div.remove();
     });
-    
-    // Update placeholders based on language
-    const nameInput = div.querySelector('.target-name-input');
-    const addressInput = div.querySelector('.target-address-input');
-    const lang = document.documentElement.lang || 'en';
-    if (nameInput) {
-      const placeholder = nameInput.getAttribute(lang === 'zh' ? 'data-placeholder-zh' : 'data-placeholder-en');
-      if (placeholder) nameInput.setAttribute('placeholder', placeholder);
-    }
     
     return div;
   }
@@ -3707,7 +3702,7 @@ const customCodePlaceholder = [
   // Function to perform client-side secret regeneration (no API call)
   function performSecretRegeneration() {
     const sharedSecretInput = document.getElementById('navbar-shared-secret-input');
-    const currentLang = localStorage.getItem('preferred-language') || 'en';
+    const currentLang = adminLang();
     
     // Close confirmation modal
     closeModalWithAnimation(regenerateSecretConfirmModal);
@@ -4746,6 +4741,7 @@ const customCodePlaceholder = [
     'thisActionCannotBeUndone': { en: 'This action cannot be undone.', zh: '此操作无法撤销。' },
     'delete': { en: 'Delete', zh: '删除' },
     'remove': { en: 'Remove', zh: '移除' },
+    'removeTarget': { en: 'Remove target', zh: '移除目标' },
     'note': { en: 'Note:', zh: '注意:' },
     'noteContent': { en: 'IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.', zh: 'IP 地址、位置、操作系统和指标由代理自动更新，无法手动编辑。' },
     'changePassword': { en: 'Change Password', zh: '修改密码' },
@@ -4779,12 +4775,18 @@ const customCodePlaceholder = [
     'generateShareLink': { en: 'Generate Share Link', zh: '生成分享链接' },
     'revokeShareLink': { en: 'Revoke Share Link', zh: '立即停止分享链接' },
     'copy': { en: 'Copy', zh: '复制' },
+    'customCode': { en: 'Custom CSS & JavaScript', zh: '自定义 CSS 和 JavaScript' },
     'customCodeHint': { en: 'Custom CSS and JavaScript will be applied to all pages. Use <style> for CSS or <script> for JS', zh: '自定义 CSS 和 JavaScript 将应用于所有页面。使用 <style> 标签添加 CSS，使用 <script> 标签添加 JS' },
     'customCodeSecurityWarning': { en: '⚠️ Security Warning: Custom code is publicly accessible and runs on pages. Do NOT include sensitive information (API keys, passwords, tokens).', zh: '⚠️ 安全提示：自定义代码会公开访问并在页面执行，请勿包含敏感信息（API密钥、密码、令牌等）' },
   };
 
+  // Hotaru's admin is Chinese only.
+  function adminLang() {
+    return 'zh';
+  }
+
   function updateAdminTranslations() {
-    const lang = 'zh';
+    const lang = adminLang();
     
     // Update all elements with data-translate attribute
     document.querySelectorAll('[data-translate]').forEach(el => {

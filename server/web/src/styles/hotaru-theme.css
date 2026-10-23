@@ -1299,6 +1299,11 @@ body.hotaru-theme {
 .hotaru-card__name {
   font-size: 1.25rem;
   font-weight: 400;
+  /* Semantic UI's body `line-height: 1.4285em` is inherited as pixels
+     (20px, 17px under 768px), less than this font on phones: a name that
+     wraps drew its lines on top of each other. 1.15 is the same 20px on
+     desktop. */
+  line-height: 1.15;
   vertical-align: middle;
   flex: 1;
   min-width: 0;

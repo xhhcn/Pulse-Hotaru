@@ -100,7 +100,7 @@ sudo systemctl daemon-reload
 - **IPv6 部署**：需要容器带 IPv6 时，用仓库内的 `docker-compose.ipv6.yaml`（已包含 45 秒优雅停止与日志大小限制）。
 - **SSE 上限**：匿名实时流默认全局 2000 路、单 IP 200 路，可用 `SSE_MAX_STREAMS` 与 `SSE_MAX_STREAMS_PER_IP` 调整；管理员会话不受限制。单 IP 上限只对公网地址生效，经 docker 桥接或未受信反代到达的内网地址不会被单独限流（全局上限仍然有效）。
 - **Docker**：`docker-compose.yaml` 已设置 45 秒优雅停止，请勿缩短，否则强制退出可能损坏数据库。
-- **外部资源**：页面字体已随服务端自托管；展开行的 TCPing 图表在首次打开时从 `cdn.jsdelivr.net`（备用 `unpkg.com`）加载 Chart.js，访客所在网络需能访问其中之一。
+- **外部资源**：页面字体和 TCPing 图表所用的 Chart.js 都随服务端提供（来源与校验值见 `server/web/vendor/README.md`），访客无需访问任何公共 CDN。
 
 ## 发布页
 

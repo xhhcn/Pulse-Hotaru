@@ -50,6 +50,10 @@
 <script>
   import { locationToZh } from '../data/countryZh';
   import { iconSvgUrl, flagIconForCode } from '../utils/icons.ts';
+  /* The chart libraries ship with the site (see vendor/README.md), under
+     content-hashed /_astro/ names, so no visitor depends on a public CDN. */
+  import chartJsUrl from '../../vendor/chart.js/chart.umd.js?url';
+  import chartJsAdapterUrl from '../../vendor/chartjs-adapter-date-fns/chartjs-adapter-date-fns.bundle.min.js?url';
 
   (function () {
     const tbody = document.getElementById('hotaru-tbody');
@@ -556,7 +560,7 @@
             }
           }
           const a = document.createElement('script');
-          a.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          a.src = chartJsAdapterUrl;
           a.integrity = 'sha384-cVMg8E3QFwTvGCDuK+ET4PD341jF3W8nO1auiXfuZNQkzbUUiBGLsIQUE+b1mxws';
           a.async = true;
           a.crossOrigin = 'anonymous';
@@ -601,8 +605,8 @@
           }
         }
         const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
-        s.integrity = 'sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g';
+        s.src = chartJsUrl;
+        s.integrity = 'sha384-FcQlsUOd0TJjROrBxhJdUhXTUgNJQxTMcxZe6nHbaEfFL1zjQ+bq/uRoBQxb0KMo';
         s.async = true;
         s.crossOrigin = 'anonymous';
         s.setAttribute('data-chartjs', 'true');
@@ -610,25 +614,11 @@
           s.dataset.loaded = 'true';
           loadAdapter();
         };
+        /* A failed load resolves false; the next row opened tries again
+           (chartJsPromise is cleared below). */
         s.onerror = () => {
           s.dataset.failed = 'true';
-          /* unpkg ships the file as `chart.umd.js` (no .min) — using
-             the jsdelivr filename here returns 404 silently. */
-          const fb = document.createElement('script');
-          fb.src = 'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.js';
-          fb.integrity = 'sha384-FcQlsUOd0TJjROrBxhJdUhXTUgNJQxTMcxZe6nHbaEfFL1zjQ+bq/uRoBQxb0KMo';
-          fb.async = true;
-          fb.crossOrigin = 'anonymous';
-          fb.setAttribute('data-chartjs', 'true');
-          fb.onload  = () => {
-            fb.dataset.loaded = 'true';
-            loadAdapter();
-          };
-          fb.onerror = () => {
-            fb.dataset.failed = 'true';
-            resolve(false);
-          };
-          document.head.appendChild(fb);
+          resolve(false);
         };
         document.head.appendChild(s);
       });
@@ -672,8 +662,56 @@
        single-line chart is the only thing on screen at any moment,
        so this is the only data we ever need. The backend briefly
        caches this exact client+target response, and `_cache` on the
-       tcping entry keeps tab switch-back instant in the browser.   */
+       tcping entry keeps tab switch-back instant in the browser.
+
+       A row's first target can be requested before the row opens (a
+       mouse press or a short hover, see buildRowEntry); the open then
+       takes over that request instead of starting its own, unless a
+       newer sample has been announced since it was sent.             */
+    const TCPING_PREFETCH_TTL_MS = 10000;
+    const tcpingPrefetch = new Map(); // "id|target" -> { at, sig, settled, promise }
+    function prefetchTcpingHistory(clientID, target) {
+      if (!clientID || !target || usablePrefetch(clientID, target)) return;
+      const key = clientID + '|' + target;
+      const entry = {
+        at: Date.now(),
+        sig: tcpingTargetSignature(tcpingLatestItem(clientID), target),
+        settled: false,
+        promise: null,
+      };
+      entry.promise = fetchTcpingHistory(clientID, target).then((data) => {
+        entry.settled = true;
+        return data;
+      });
+      tcpingPrefetch.set(key, entry);
+      // Rows that are only hovered must not keep their samples around.
+      setTimeout(() => {
+        if (tcpingPrefetch.get(key) === entry) tcpingPrefetch.delete(key);
+      }, TCPING_PREFETCH_TTL_MS);
+    }
+    function usablePrefetch(clientID, target) {
+      const hit = tcpingPrefetch.get(clientID + '|' + target);
+      return hit && Date.now() - hit.at < TCPING_PREFETCH_TTL_MS
+        && hit.sig === tcpingTargetSignature(tcpingLatestItem(clientID), target) ? hit : null;
+    }
+    function tcpingPrefetchSettled(clientID, target) {
+      const hit = usablePrefetch(clientID, target);
+      return !!(hit && hit.settled);
+    }
+    /* -> { data, fetchedAt }: a taken-over request counts from when it was
+       sent, so the interval refresh (which picks up loss samples the
+       signature does not show) is not put off by the time it waited.   */
     async function loadTcpingHistory(clientID, target) {
+      const hit = target ? usablePrefetch(clientID, target) : null;
+      tcpingPrefetch.delete(clientID + '|' + (target || ''));
+      if (hit) {
+        const data = await hit.promise;
+        if (data) return { data, fetchedAt: hit.at };
+      }
+      const data = await fetchTcpingHistory(clientID, target);
+      return { data, fetchedAt: Date.now() };
+    }
+    async function fetchTcpingHistory(clientID, target) {
       try {
         const { url, headers } = tcpingApiUrl('/api/tcping/history', {
           client_id: clientID,
@@ -866,11 +904,17 @@
       };
     }
 
+    /* How long the last chart creation took on this device, see
+       applyTcpingDataset. Only a device that builds a chart within a
+       frame or two may draw one while a row is still sliding open.    */
+    let tcpingLastBuildMs = null;
+    let tcpingBuildCount = 0;
+
     /* First-open path. Starts Chart.js and the global config probe
        together, then fetches the first target's history while the
-       expand animation is still running. The chart paint itself
-       still waits for the panel to settle so Chart.js measures the
-       real canvas size on its first layout pass.                  */
+       expand animation is still running. The chart is usually drawn
+       once the panel has settled, so the slide keeps the main thread
+       to itself (see drawNow below).                              */
     async function ensureTcpingChart(id, tcping) {
       if (tcping.hiddenByAdmin) return;
       if (tcping.initialized) {
@@ -945,6 +989,12 @@
       if (detail) syncExpandHeight(detail);
 
       const initialTarget = tcping.target;
+      /* Samples already fetched before the row opened (a mouse press or
+         a short hover, see buildRowEntry), on a device that builds
+         a chart in a frame or two: the chart is drawn right away and
+         slides open with the panel instead of following it.            */
+      const initialReady = !!(initialTarget && tcpingPrefetchSettled(id, initialTarget)
+        && tcpingLastBuildMs !== null && tcpingLastBuildMs <= 30);
       let initialFetch = null;
       /* A target this node cannot probe has no history to prefetch —
          the response would always be empty. Leave initialFetch null so
@@ -962,21 +1012,13 @@
 
       /* The expand panel follows upstream Hotaru's max-height
          transition (cf. .hotaru-expand-inner in hotaru-theme.css).
-         Until that 500 ms animation ends, the canvas's container
-         has zero height, and Chart.js will sample those zero
-         dimensions and auto-skip every x-axis tick — making the
-         time labels disappear even though the data is correct.
-
-         Two-pronged fix:
-         1. Defer the *initial* paint until after the animation
-            completes (`transitionend` on max-height), so
-            Chart.js measures the real container size on its first
-            layout pass.
-         2. Belt-and-braces: schedule a forced .resize() one frame
-            after the rebuild, which makes Chart.js re-evaluate
-            tick spacing if step 1 happens to fire while the panel
-            is still 0px tall (e.g. when the row was reopened
-            before the previous collapse animation finished).      */
+         A chart built while it is still sliding open takes the chart
+         box size measured when it started to open (see setExpandOpen
+         and applyTcpingDataset), so its axes come out right either way.
+         Building one takes the main thread for tens of ms, though, so
+         unless the samples were already here on a fast device
+         (initialReady), the first paint waits for the 0.5 s slide to
+         end (`transitionend` on max-height) and the slide stays smooth. */
       const drawNow = async () => {
         if (tcping.gen !== gen) return;
         if (initialFetch && tcping.target === initialTarget) {
@@ -999,19 +1041,20 @@
         } else {
           await refreshTcpingChart(id, tcping);
         }
-        if (tcping.chart) {
-          requestAnimationFrame(() => { try { tcping.chart.resize(); } catch (_) {} });
-        }
         /* applyTcpingDataset() owns the final loading→chart handoff.
            It keeps the dots visible until the canvas is actually
-           being revealed, avoiding a blank frame between the two. */
-        if (detail) syncExpandHeight(detail);
+           being revealed, avoiding a blank frame between the two.
+           The chart box has a fixed height, so the card keeps its size;
+           re-measuring a panel that is still sliding open would only
+           force a layout of the whole table mid-slide (the settle step
+           lifts the height cap when the slide ends anyway).          */
+        if (detail && (!inner || inner.dataset.expandSettled === '1')) syncExpandHeight(detail);
       };
       if (inner && detail && !detail.classList.contains('is-open')) {
         /* Row hasn't opened yet (rare: race with a fast double-click).
            Wait for the next is-open tick.                             */
         await drawNow();
-      } else if (inner && inner.dataset.expandSettled !== '1') {
+      } else if (inner && inner.dataset.expandSettled !== '1' && !initialReady) {
         /* A panel that has already finished opening (Chart.js or the
            config arrived late) has its full height: draw right away. */
         const armedAt = performance.now();
@@ -1405,7 +1448,6 @@
       };
 
       const chartBox = tcping.canvas && tcping.canvas.parentElement;
-      const wasFresh = !tcping.chart;
       if (!tcping.chart) {
         /* First creation. Make sure the canvas starts at
            opacity:0 — even if a previous instance lifted
@@ -1413,20 +1455,69 @@
            re-binds the canvas, so toggling is-ready off here
            guarantees the next commit fades up cleanly.       */
         if (chartBox) chartBox.classList.remove('is-ready');
-        tcping.chart = new window.Chart(tcping.canvas, tcpingChartConfig([dataset]));
-      } else {
-        /* Skip the chart.update() entirely when the freshly-built
-           dataset is visually identical to what's already on
-           canvas (same target, same point count, same last x/y).
-           Catches signature jitter where the backend re-stamps
-           timestamps without changing latency.                    */
-        const cur = tcping.chart.data.datasets[0];
-        if (cur && tcpingDatasetEqual(cur, dataset)) {
-          revealTcpingChart(tcping, chartBox, /*wasFresh=*/false);
-          return;
+        const config = tcpingChartConfig([dataset]);
+        if (cached && cached.range) {
+          config.options.scales.x.min = cached.range.min;
+          config.options.scales.x.max = cached.range.max;
         }
-        tcping.chart.data.datasets = [dataset];
+        /* While the row is still sliding open, the chart takes the box
+           size measured when it started to open (setExpandOpen) instead
+           of measuring the box itself, which would force a layout of the
+           whole table mid-slide. Size changes after that are Chart.js's
+           own, as before.                                              */
+        const inner = tcping.canvas.closest('.hotaru-expand-inner');
+        let presize = inner && inner.dataset.expandSettled !== '1'
+          && inner._chartBoxSize && inner._chartBoxSize.width > 0 ? inner._chartBoxSize : null;
+        if (presize) {
+          // With a size set, Chart.js does not read the canvas's either.
+          tcping.canvas.width = Math.floor(presize.width);
+          tcping.canvas.height = Math.floor(presize.height);
+          config.platform = class extends window.Chart.DomPlatform {
+            getMaximumSize(canvas, width, height, aspectRatio) {
+              if (presize && width === undefined && height === undefined) {
+                return super.getMaximumSize(canvas, presize.width, presize.height, aspectRatio);
+              }
+              return super.getMaximumSize(canvas, width, height, aspectRatio);
+            }
+          };
+        }
+        /* Built with animations off: otherwise Chart.js resolves an
+           animation set for each of the ~1440 points on the first render
+           (tens of ms) even at duration 0. They are back right after, so
+           the tooltip keeps its fade-in.                               */
+        const animation = config.options.animation;
+        config.options.animation = false;
+        const builtAt = performance.now();
+        tcping.chart = new window.Chart(tcping.canvas, config);
+        presize = null;
+        tcping.chart.options.animation = animation;
+        /* The page's first chart runs Chart.js cold (not yet optimised by
+           the JS engine) and takes about three times as long as later ones. */
+        const buildMs = performance.now() - builtAt;
+        tcpingLastBuildMs = tcpingBuildCount++ === 0 ? buildMs / 3 : buildMs;
+        /* Smooth fade-in for the first commit. We chain two
+           animation frames before adding `is-ready`:
+             rAF #1 — the chart has just been drawn; let the
+                      browser commit that frame.
+             rAF #2 — surface is now fully painted; flip the
+                      opacity transition so the fade rides on
+                      top of an already-laid-out canvas (cheap
+                      GPU op, no layout cost).                  */
+        revealTcpingChart(tcping, chartBox, /*wasFresh=*/true);
+        return;
       }
+
+      /* Skip the chart.update() entirely when the freshly-built
+         dataset is visually identical to what's already on
+         canvas (same target, same point count, same last x/y).
+         Catches signature jitter where the backend re-stamps
+         timestamps without changing latency.                    */
+      const cur = tcping.chart.data.datasets[0];
+      if (cur && tcpingDatasetEqual(cur, dataset)) {
+        revealTcpingChart(tcping, chartBox, /*wasFresh=*/false);
+        return;
+      }
+      tcping.chart.data.datasets = [dataset];
 
       const x = tcping.chart.options.scales.x;
       if (cached && cached.range) {
@@ -1437,18 +1528,9 @@
         delete x.max;
       }
       tcping.chart.update('none');
-
-      /* Smooth fade-in for the first commit. We chain two
-         animation frames before adding `is-ready`:
-           rAF #1 — Chart.js's update('none') has just queued
-                    a paint; let the browser commit it.
-           rAF #2 — surface is now fully painted; flip the
-                    opacity transition so the fade rides on
-                    top of an already-laid-out canvas (cheap
-                    GPU op, no layout cost).
-         For subsequent updates (same chart, new dataset) we
-         skip the rAF dance — the chart was already opacity:1.  */
-      revealTcpingChart(tcping, chartBox, wasFresh);
+      /* Same chart, new dataset: it is already at opacity 1, so
+         there is no rAF dance.                                   */
+      revealTcpingChart(tcping, chartBox, /*wasFresh=*/false);
     }
 
     /* Lookup helper: target address → display label from the
@@ -1576,7 +1658,7 @@
        currently selected.                                        */
     async function refreshTcpingChartInner(id, tcping, target, sig, options) {
       const shouldPaint = !(options && options.paint === false);
-      const resp = await loadTcpingHistory(id, target);
+      const { data: resp, fetchedAt } = await loadTcpingHistory(id, target);
       if (!resp) {
         /* Network or 4xx/5xx. If this fetch was the one keeping the
            pulse-dots overlay on screen (cache miss + active tab),
@@ -1626,7 +1708,7 @@
         points,
         range: (min !== null) ? { min, max } : null,
         sig,
-        fetchedAt: Date.now(),
+        fetchedAt,
       });
 
       /* `_skipped !== target` covers the race where the snapshot flipped
@@ -2069,7 +2151,13 @@
         // Back into the layout before measuring what the panel opens to.
         setPanelBodyShown(inner, true);
         detail.classList.add('is-open');
-        inner.style.maxHeight = inner.scrollHeight + 'px';
+        const openHeight = inner.scrollHeight;
+        /* Same layout pass: a chart created while the panel is sliding
+           open takes this size, so it never has to measure (and re-lay
+           out the whole table) mid-slide, see applyTcpingDataset.      */
+        const chartBox = inner.querySelector('.hotaru-tcping__chart');
+        inner._chartBoxSize = chartBox ? chartBox.getBoundingClientRect() : null;
+        inner.style.maxHeight = openHeight + 'px';
       } else {
         /* From `none` (settled) or a pixel value (still opening): pin the
            current content height, commit it, then animate to 0. */
@@ -2195,10 +2283,35 @@
       //    show their frozen detail snapshot, preserving the existing
       //    Pulse behavior.
       //  * Online rows expand + run the lazy chart init as before.
+      //
+      // A collapsed row's first-target history is requested before the
+      // click: when the mouse is pressed on it, or once the mouse has
+      // rested on the row for a moment. A pointer that only passes over
+      // rows requests nothing, and neither does a finger (it may be
+      // starting to scroll); a tap requests it when the row opens.
+      const prefetchFirstTarget = () => {
+        if (row.classList.contains('is-pristine') || detail.classList.contains('is-open')
+            || tcping.hiddenByAdmin) return;
+        const cfg = cachedTcpingConfig;
+        if (!cfg || !Array.isArray(cfg.targets) || cfg.targets.length === 0) return;
+        const target = cfg.targets[0].address;
+        if (!tcpingTargetSkipped(id, target)) prefetchTcpingHistory(id, target);
+      };
+      let hoverTimer = 0;
+      row.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse') prefetchFirstTarget();
+      }, { passive: true });
+      row.addEventListener('pointerenter', (e) => {
+        if (e.pointerType !== 'mouse') return;
+        clearTimeout(hoverTimer);
+        hoverTimer = setTimeout(prefetchFirstTarget, 150);
+      }, { passive: true });
+      row.addEventListener('pointerleave', () => clearTimeout(hoverTimer), { passive: true });
       row.addEventListener('click', () => {
         if (row.classList.contains('is-pristine')) return;
         const opening = !detail.classList.contains('is-open');
         if (opening) {
+          prefetchFirstTarget();
           /* Reopened while the previous close was still animating: keep
              the card that is on screen instead of rebuilding it. */
           cancelTcpingTeardown(tcping);

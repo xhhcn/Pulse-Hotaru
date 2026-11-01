@@ -1505,22 +1505,21 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
 /* From 1024 px the name and address columns have fixed widths, so the
    address and traffic columns start at the same x on every row, the way
    hotaru's table columns line up. The name keeps up to 17rem (it wraps
-   below that); 22rem fits a full IPv6 address. Narrower screens keep
-   the natural flow.                                                   */
+   below that); 352 px fits a full IPv6 address in the 12 px admin text
+   (below), as on Pulse. Narrower screens keep the natural flow.       */
 @media (min-width: 1024px) {
   body.hotaru-theme #systems-list .system-name-block {
     width: 17rem;
     max-width: 17rem !important;
   }
   body.hotaru-theme #systems-list .ip-info-container {
-    min-width: 22rem;
+    min-width: 352px;
   }
 }
 /* The logo needs the free space left of the row's buttons, which only
    exists from 1280 px; it moves there, as the aligned columns would
-   cover the centre. Where the address column shows on narrower screens
-   (640–1279 px), the address and traffic text would run into it, so it
-   is not shown; phones, without the address column, keep it centred. */
+   cover the centre. On narrower screens the text would run into it (on
+   phones, longer names), so it is not shown there. */
 @media (min-width: 1280px) {
   body.hotaru-theme #systems-list .draggable-item > .absolute {
     left: auto;
@@ -1528,10 +1527,24 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
     --tw-translate-x: 0;
   }
 }
-@media (min-width: 640px) and (max-width: 1279.98px) {
+@media (max-width: 1279.98px) {
   body.hotaru-theme #systems-list .draggable-item > .absolute {
     display: none;
   }
+}
+
+/* Admin list and dialogs: the reused markup sizes its text in rem, which
+   hotaru's 12-14 px root (sized for the public table) shrank to 9-10.5 px.
+   Fixed 12 / 14 px, as on Pulse. */
+body.hotaru-theme .hotaru-admin-section .text-xs,
+body.hotaru-theme [data-modal-content] .text-xs {
+  font-size: 12px;
+  line-height: 16px;
+}
+body.hotaru-theme .hotaru-admin-section .text-sm,
+body.hotaru-theme [data-modal-content] .text-sm {
+  font-size: 14px;
+  line-height: 20px;
 }
 
 /* Modals — hotaru card vocabulary (5/5/25 drop shadow, .5rem

@@ -400,7 +400,7 @@ const customCodePlaceholder = [
 
   <!-- Navbar Config Modal -->
   <div id="navbar-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" data-modal>
-    <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 sm:p-7 shadow-2xl" data-modal-content style="scrollbar-width: none; -ms-overflow-style: none;">
+    <div class="mx-4 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#1c1c1c] bg-white p-6 sm:p-7 pb-0 sm:pb-0 shadow-2xl" data-modal-content>
       <div class="mb-5 flex items-center justify-between">
         <h2 id="navbar-config-title" class="text-xl font-semibold text-[#262626]" data-translate="customizationSettings">自定义设置</h2>
         <button id="close-navbar-config-modal-btn" class="rounded-lg p-1 text-[#525252] transition-colors hover:bg-[#282828] hover:bg-[#f0f0f0] hover:text-[#262626]" title="关闭" aria-label="关闭" data-title-en="Close" data-title-zh="关闭">
@@ -496,7 +496,11 @@ const customCodePlaceholder = [
 
         <div id="navbar-config-message" class="hidden text-sm"></div>
 
-        <div class="flex gap-3">
+        <!-- The dialog scrolls; its buttons stay on screen at the bottom edge.
+             The bar carries the dialog's bottom padding (the dialog has none):
+             a sticky box keeps clear of its scroll container's padding, which
+             left a strip of the scrolled text showing below the buttons. -->
+        <div class="modal-actions sticky bottom-0 z-10 -mx-6 sm:-mx-7 flex gap-3 border-t border-[#d4d4d4]/50 bg-white px-6 sm:px-7 pt-4 pb-6 sm:pb-7">
           <button
             type="button"
             id="cancel-navbar-config-btn"
@@ -1456,12 +1460,12 @@ const customCodePlaceholder = [
               <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
                 ${system.total_net_in_bytes ? `
                 <div class="traffic-row-in flex items-center min-h-[22px]">
-                  <span class="system-total-net-in text-[#525252]">In: ${formatBytes(system.total_net_in_bytes)}</span>
+                  <span class="system-total-net-in text-[#525252]">${adminT('trafficIn')} ${formatBytes(system.total_net_in_bytes)}</span>
                 </div>
                 ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
                 ${system.total_net_out_bytes ? `
                 <div class="traffic-row-out flex items-center min-h-[22px]">
-                  <span class="system-total-net-out text-[#525252]">Out: ${formatBytes(system.total_net_out_bytes)}</span>
+                  <span class="system-total-net-out text-[#525252]">${adminT('trafficOut')} ${formatBytes(system.total_net_out_bytes)}</span>
                 </div>
                 ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
               </div>
@@ -1996,12 +2000,12 @@ const customCodePlaceholder = [
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="traffic-row-in flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252]">${adminT('trafficIn')} ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="traffic-row-out flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252]">${adminT('trafficOut')} ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
           </div>
@@ -2022,12 +2026,12 @@ const customCodePlaceholder = [
           const formattedIn = typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B';
           let netInSpan = inRow?.querySelector('.system-total-net-in');
           if (netInSpan) {
-            netInSpan.textContent = `In: ${formattedIn}`;
+            netInSpan.textContent = `${adminT('trafficIn')} ${formattedIn}`;
           } else if (inRow) {
             // Create the span if it doesn't exist
             netInSpan = document.createElement('span');
             netInSpan.className = 'system-total-net-in text-[#525252]';
-            netInSpan.textContent = `In: ${formattedIn}`;
+            netInSpan.textContent = `${adminT('trafficIn')} ${formattedIn}`;
             inRow.appendChild(netInSpan);
           }
         } else {
@@ -2056,12 +2060,12 @@ const customCodePlaceholder = [
           <div class="traffic-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[48px] flex-shrink-0 justify-center" style="font-variant-numeric: tabular-nums; min-width: 110px;">
             ${item.total_net_in_bytes ? `
             <div class="traffic-row-in flex items-center min-h-[22px]">
-              <span class="system-total-net-in text-[#525252]">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
+              <span class="system-total-net-in text-[#525252]">${adminT('trafficIn')} ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="traffic-row-in flex items-center min-h-[22px]"></div>'}
             ${item.total_net_out_bytes ? `
             <div class="traffic-row-out flex items-center min-h-[22px]">
-              <span class="system-total-net-out text-[#525252]">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              <span class="system-total-net-out text-[#525252]">${adminT('trafficOut')} ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
             </div>
             ` : '<div class="traffic-row-out flex items-center min-h-[22px]"></div>'}
           </div>
@@ -2082,12 +2086,12 @@ const customCodePlaceholder = [
           const formattedOut = typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B';
           let netOutSpan = outRow?.querySelector('.system-total-net-out');
           if (netOutSpan) {
-            netOutSpan.textContent = `Out: ${formattedOut}`;
+            netOutSpan.textContent = `${adminT('trafficOut')} ${formattedOut}`;
           } else if (outRow) {
             // Create the span if it doesn't exist
             netOutSpan = document.createElement('span');
             netOutSpan.className = 'system-total-net-out text-[#525252]';
-            netOutSpan.textContent = `Out: ${formattedOut}`;
+            netOutSpan.textContent = `${adminT('trafficOut')} ${formattedOut}`;
             outRow.appendChild(netOutSpan);
           }
         } else {
@@ -4812,6 +4816,8 @@ const customCodePlaceholder = [
     'loadingSystems': { en: 'Loading services', zh: '加载服务中' },
     'addNewSystem': { en: 'Add New Service', zh: '添加新服务' },
     'editSystem': { en: 'Edit Service', zh: '编辑服务' },
+    'trafficIn': { en: 'In:', zh: '入站:' },
+    'trafficOut': { en: 'Out:', zh: '出站:' },
     'deleteSystem': { en: 'Delete Service', zh: '删除服务' },
     'systemName': { en: 'Service Name', zh: '服务名称' },
     'displayNameForThisSystem': { en: 'Display name for this system', zh: '此服务的显示名称' },
@@ -4899,6 +4905,11 @@ const customCodePlaceholder = [
 
   function updateAdminTranslations() {
     const lang = adminLang();
+
+    document.querySelectorAll('.system-total-net-in, .system-total-net-out').forEach((el) => {
+      const key = el.classList.contains('system-total-net-in') ? 'trafficIn' : 'trafficOut';
+      el.textContent = el.textContent.replace(/^\S+:/, adminT(key));
+    });
     
     // Update all elements with data-translate attribute
     document.querySelectorAll('[data-translate]').forEach(el => {

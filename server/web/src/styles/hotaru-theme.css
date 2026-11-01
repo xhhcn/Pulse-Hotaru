@@ -1505,31 +1505,32 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
 /* From 1024 px the name and address columns have fixed widths, so the
    address and traffic columns start at the same x on every row, the way
    hotaru's table columns line up. The name keeps up to 17rem (it wraps
-   below that); 11rem fits any IPv4 line, and below 1280 px the longer
-   IPv6 addresses push the traffic column further (from 1280 px the
-   address column fits a full IPv6 address, see the next block). The aligned columns would
-   run into the centred logo, so the logo moves into the free space left
-   of the row's buttons. Narrower screens keep the natural flow.       */
+   below that); 22rem fits a full IPv6 address. Narrower screens keep
+   the natural flow.                                                   */
 @media (min-width: 1024px) {
   body.hotaru-theme #systems-list .system-name-block {
     width: 17rem;
     max-width: 17rem !important;
   }
   body.hotaru-theme #systems-list .ip-info-container {
-    min-width: 11rem;
+    min-width: 22rem;
   }
+}
+/* The logo needs the free space left of the row's buttons, which only
+   exists from 1280 px; it moves there, as the aligned columns would
+   cover the centre. Where the address column shows on narrower screens
+   (640–1279 px), the address and traffic text would run into it, so it
+   is not shown; phones, without the address column, keep it centred. */
+@media (min-width: 1280px) {
   body.hotaru-theme #systems-list .draggable-item > .absolute {
     left: auto;
     right: 11.5rem;
     --tw-translate-x: 0;
   }
 }
-/* From 1280 px there is room for a full IPv6 address in the address
-   column, so the traffic column lines up on every row; narrower screens
-   would push it into the logo. */
-@media (min-width: 1280px) {
-  body.hotaru-theme #systems-list .ip-info-container {
-    min-width: 22rem;
+@media (min-width: 640px) and (max-width: 1279.98px) {
+  body.hotaru-theme #systems-list .draggable-item > .absolute {
+    display: none;
   }
 }
 
@@ -1594,7 +1595,8 @@ body.hotaru-theme #language-btn { display: none !important; }
    (green / orange / purple / blue / red). Hotaru's public surface is
    much quieter: neutral gray controls, with semantic colour reserved
    for status bars and explicit feedback. Keep the icons familiar, but
-   make their hover/focus language monochrome.                     */
+   make their hover/focus language monochrome (keyboard focus adds the
+   green ring the dashboard rows use, below).                       */
 body.hotaru-theme .hotaru-admin-section a[aria-label],
 body.hotaru-theme .hotaru-admin-section button[aria-label] {
   border-radius: 0.28571429rem !important;
@@ -1607,6 +1609,28 @@ body.hotaru-theme .hotaru-admin-section button[aria-label]:focus-visible {
   background: #f0f0f0 !important;
   color: #262626 !important;
   outline: none !important;
+}
+/* Keyboard focus also gets the green ring of the dashboard rows; the
+   grey fill alone was hard to see. Mouse use looks unchanged. */
+body.hotaru-theme .hotaru-admin-section a[aria-label]:focus-visible,
+body.hotaru-theme .hotaru-admin-section button[aria-label]:focus-visible {
+  box-shadow: 0 0 0 2px rgba(33, 186, 69, 0.55) !important;
+}
+/* Phones: 32 px tap targets for the toolbar buttons, the icons keep
+   their size. In px: the root font is 12-13 px on phones, so rem
+   padding would come out smaller. Below 360 px the nine buttons need
+   28 px each to stay on one line. */
+@media (max-width: 639px) {
+  body.hotaru-theme .hotaru-admin-toolbar > a,
+  body.hotaru-theme .hotaru-admin-toolbar > button {
+    padding: 10px !important;
+  }
+}
+@media (max-width: 359.98px) {
+  body.hotaru-theme .hotaru-admin-toolbar > a,
+  body.hotaru-theme .hotaru-admin-toolbar > button {
+    padding: 8px !important;
+  }
 }
 body.hotaru-theme .system-row button,
 body.hotaru-theme .system-row a {
@@ -1731,6 +1755,8 @@ body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
 .hotaru-login-shell {
   min-height: 100vh;
   display: flex;
+  /* The card and the "返回首页" link under it, centred as one group. */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 2rem 1rem;
@@ -1906,6 +1932,28 @@ body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
   cursor: not-allowed;
   opacity: 0.45;
 }
+
+/* "返回首页" under the card: a quiet text link in the dashboard's text
+   grey, darker on hover like Semantic UI links. Hidden until the page
+   knows the dashboard is public. */
+.hotaru-login-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  margin-top: 1rem;
+  /* px: the root font is 12-13 px on phones, em padding would leave the
+     target under 24 px there. */
+  padding: 6px 8px;
+  border-radius: 0.28571429rem;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  color: var(--hotaru-text);
+  text-decoration: none;
+  transition: color 0.1s ease;
+}
+.hotaru-login-home:hover { color: rgba(0, 0, 0, 0.87); }
+.hotaru-login-home[hidden] { display: none !important; }
+.hotaru-login-home svg { width: 14px; height: 14px; flex-shrink: 0; }
 
 @media (max-width: 480px) {
   .hotaru-login-shell {

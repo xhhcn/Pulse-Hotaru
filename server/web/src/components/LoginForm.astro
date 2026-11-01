@@ -45,6 +45,17 @@
       <button type="submit" id="login-submit" class="hotaru-login-button">登录</button>
     </form>
   </div>
+
+  <!-- The login page has no navbar: a way back to the dashboard. Shown only
+       when the dashboard is public (with privacy mode on it would just send
+       the visitor back here). -->
+  <a id="login-home" class="hotaru-login-home" href="/" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+    <span>返回首页</span>
+  </a>
 </div>
 
 <script>
@@ -57,6 +68,15 @@
   }
 
   const apiBase = getApiBase();
+
+  /* "返回首页" only while the dashboard is public; an unreadable privacy
+     setting shows it, as the dashboard's own privacy check fails open. */
+  fetch(`${apiBase}/api/privacy/config`, { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .catch(() => null)
+    .then((privacy) => {
+      if (!privacy || !privacy.enabled) document.getElementById('login-home')?.removeAttribute('hidden');
+    });
 
   /* All login copy is hardcoded zh-CN — no language switch on this page. */
   const T = {

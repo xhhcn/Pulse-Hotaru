@@ -26,6 +26,7 @@
   (function () {
     const grid = document.getElementById('hotaru-cards-grid');
     if (!grid) return;
+    const section = grid.closest('.hotaru-cards-section');
 
     const isZh = () => (document.documentElement.lang || '').toLowerCase().startsWith('zh');
     const t = (zh, en) => isZh() ? zh : en;
@@ -256,6 +257,9 @@
     function render(list) {
       if (!Array.isArray(list)) return;
       grid.removeAttribute('aria-busy');
+      /* With no servers at all the table above already says so ("暂无服务器…");
+         a "暂无数据" card here would only repeat it, so the section steps aside. */
+      if (section) section.hidden = list.length === 0;
 
       // Returning from an empty placeholder — drop the placeholder
       // before diffing so we don't try to insertBefore against it.

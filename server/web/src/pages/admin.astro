@@ -28,7 +28,9 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#fafafa" />
+    <!-- The phone's address bar matches the white hotaru body (as on the
+         dashboard), not the default theme's #fafafa. -->
+    <meta name="theme-color" content="#ffffff" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="mask-icon" href="/favicon.svg" color="#24292f" />

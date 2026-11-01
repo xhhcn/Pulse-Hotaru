@@ -431,13 +431,42 @@
        rebuild: hotaru-pink (#ff779a) primary, soft pastel secondary
        palette, no chart border, hairline grid, 0.85rem labels.
        ================================================================== */
-    /* Body font stack — mirrored from `body.hotaru-theme` in
-       hotaru-theme.css. Hoisted up here (above loadChartJs) so we
-       can install it as Chart.defaults.font.family the moment
-       Chart.js itself finishes loading, which means *every* piece
-       of default Chart.js text — not just the axis ticks and
-       tooltip we explicitly style — inherits the theme font.       */
-    const HOTARU_FONT = '"Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+    /* Body font stack — the one `body.hotaru-theme` uses in
+       hotaru-theme.css, which is upstream hotaru's: Semantic UI's
+       Lato, 'Helvetica Neue', Arial, Helvetica, sans-serif (Chinese
+       falls through to the system font). The chart used to name
+       Inter first, which the site never loads, so its numbers came
+       out in PingFang / YaHei next to the table's Lato. Hoisted up
+       here (above loadChartJs) so we can install it as
+       Chart.defaults.font.family the moment Chart.js itself finishes
+       loading, which means *every* piece of default Chart.js text —
+       not just the axis ticks and tooltip we explicitly style —
+       inherits the theme font.                                     */
+    const HOTARU_FONT = "Lato, 'Helvetica Neue', Arial, Helvetica, sans-serif";
+
+    /* Time-axis ticks on round steps (5 min … 12 h, counted from
+       local midnight), as many as the axis width holds, at most 6.
+       Chart.js's own pick thins its unit ticks by the factors of
+       their count: 295 minute ticks gave a label every 59 minutes
+       (17:47, 18:46…), 25 hourly ticks one every 5 hours. Spans too
+       short for two round ticks keep Chart.js's ticks.            */
+    const TIME_TICK_STEPS_MIN = [5, 10, 15, 30, 60, 120, 180, 240, 360, 480, 720];
+    function roundTimeTicks(scale) {
+      const { min, max } = scale;
+      if (!(max > min)) return;
+      const fit = Math.max(2, Math.min(6, Math.floor(scale.width / 64)));
+      const spanMin = (max - min) / 60000;
+      const step = TIME_TICK_STEPS_MIN.find((s) => Math.floor(spanMin / s) + 1 <= fit);
+      if (!step) return;
+      const first = new Date(min);
+      first.setSeconds(0, 0);
+      const past = (first.getHours() * 60 + first.getMinutes()) % step;
+      let t = first.getTime() + (past ? (step - past) * 60000 : 0);
+      if (t < min) t += step * 60000;
+      const ticks = [];
+      for (; t <= max; t += step * 60000) ticks.push({ value: t });
+      if (ticks.length >= 2) scale.ticks = ticks;
+    }
 
     /* Anything slower than this we treat as a packet drop (the chart
        leaves a gap rather than spiking the line up to 5000 ms).     */
@@ -519,6 +548,9 @@
       window.Chart.defaults.font = window.Chart.defaults.font || {};
       window.Chart.defaults.font.family = HOTARU_FONT;
       window.Chart.defaults.color       = '#9da2a6';
+      /* A canvas draws with whatever face is loaded at that moment.
+         The table loads Lato regular; the tooltip title is bold.   */
+      if (document.fonts && document.fonts.load) document.fonts.load("bold 11px Lato").catch(() => {});
     }
 
     function loadChartJs() {
@@ -2003,6 +2035,7 @@
                  first sample of the active target — no leading
                  whitespace.                                      */
               bounds: 'data',
+              afterBuildTicks: roundTimeTicks,
               ticks:  {
                 /* 11 px / weight 500 / --hotaru-muted reads as
                    crisply as the row text without tipping over

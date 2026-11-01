@@ -1516,6 +1516,32 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
     min-width: 352px;
   }
 }
+/* 640–1023 px: the name takes 30 % of the row, the traffic totals
+   112 px and the address the rest, so the columns line up here too
+   (they followed each row's own address length). A long IPv6 address
+   ends in "…"; its tooltip and copy button keep all of it.            */
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  body.hotaru-theme #systems-list .system-name-block {
+    flex: 0 0 30% !important;
+    max-width: none !important;
+  }
+  body.hotaru-theme #systems-list .ip-info-container {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  body.hotaru-theme #systems-list .ip-info-container > div {
+    min-width: 0;
+  }
+  body.hotaru-theme #systems-list :is(.system-ipv4, .system-ipv6) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  body.hotaru-theme #systems-list .traffic-info-container {
+    flex: 0 0 112px;
+  }
+}
 /* The logo needs the free space left of the row's buttons, which only
    exists from 1280 px; it moves there, as the aligned columns would
    cover the centre. On narrower screens the text would run into it (on

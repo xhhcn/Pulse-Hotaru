@@ -627,6 +627,23 @@ body.hotaru-theme {
   transition: max-height 0.5s ease;
   max-height: 0;
 }
+/* A row reached with Tab (Enter/Space opens it) shows a ring in the
+   status green inside its own edges; mouse and touch never show it. */
+.hotaru-table tbody tr.hotaru-row:focus-visible {
+  outline: 2px solid rgba(33, 186, 69, 0.55);
+  outline-offset: -2px;
+}
+.hotaru-table tbody tr.hotaru-row:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Visitors who asked the system for reduced motion get the panel at its
+   final height at once (the script settles it straight away as well). */
+@media (prefers-reduced-motion: reduce) {
+  .hotaru-table tbody tr.hotaru-expand .hotaru-expand-inner {
+    transition: none;
+  }
+}
 .hotaru-table tbody tr.hotaru-expand.is-open .hotaru-expand-inner {
   max-height: 5.715em;
 }
@@ -1488,8 +1505,9 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
 /* From 1024 px the name and address columns have fixed widths, so the
    address and traffic columns start at the same x on every row, the way
    hotaru's table columns line up. The name keeps up to 17rem (it wraps
-   below that); 11rem fits any IPv4 line, and only the longer IPv6
-   addresses push the traffic column further. The aligned columns would
+   below that); 11rem fits any IPv4 line, and below 1280 px the longer
+   IPv6 addresses push the traffic column further (from 1280 px the
+   address column fits a full IPv6 address, see the next block). The aligned columns would
    run into the centred logo, so the logo moves into the free space left
    of the row's buttons. Narrower screens keep the natural flow.       */
 @media (min-width: 1024px) {
@@ -1504,6 +1522,14 @@ body.hotaru-theme #systems-list .draggable-item > .absolute {
     left: auto;
     right: 11.5rem;
     --tw-translate-x: 0;
+  }
+}
+/* From 1280 px there is room for a full IPv6 address in the address
+   column, so the traffic column lines up on every row; narrower screens
+   would push it into the logo. */
+@media (min-width: 1280px) {
+  body.hotaru-theme #systems-list .ip-info-container {
+    min-width: 22rem;
   }
 }
 

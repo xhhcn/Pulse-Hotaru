@@ -1054,7 +1054,7 @@
         /* Row hasn't opened yet (rare: race with a fast double-click).
            Wait for the next is-open tick.                             */
         await drawNow();
-      } else if (inner && inner.dataset.expandSettled !== '1' && !initialReady) {
+      } else if (inner && inner.dataset.expandSettled !== '1' && !initialReady && !prefersReducedMotion()) {
         /* A panel that has already finished opening (Chart.js or the
            config arrived late) has its full height: draw right away. */
         const armedAt = performance.now();
@@ -2135,11 +2135,20 @@
       };
       inner.addEventListener('transitionend', onEnd);
       /* No transitionend when the height did not change (nothing to
-         animate); 700 ms is past the 0.5 s transition either way. */
-      inner._expandSettle = { onEnd, timer: setTimeout(settle, 700) };
+         animate); 700 ms is past the 0.5 s transition either way. With
+         reduced motion there is no transition at all: settle right away. */
+      inner._expandSettle = { onEnd, timer: setTimeout(settle, prefersReducedMotion() ? 0 : 700) };
+    }
+
+    /* The visitor asked the system for reduced motion: the expand panel
+       does not slide (hotaru-theme.css), so no transitionend will come. */
+    function prefersReducedMotion() {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     }
 
     function setExpandOpen(detail, open) {
+      const row = detail.previousElementSibling;
+      if (row && row.classList.contains('hotaru-row')) row.setAttribute('aria-expanded', String(open));
       const inner = expandInnerFor(detail);
       if (!inner) {
         detail.classList.toggle('is-open', open);
@@ -2182,6 +2191,10 @@
       const row = document.createElement('tr');
       row.className = 'hotaru-row';
       row.dataset.rowId = String(id);
+      // Reachable with Tab and opened with Enter/Space (see the keydown
+      // handler below); the focus ring is in hotaru-theme.css.
+      row.tabIndex = 0;
+      row.setAttribute('aria-expanded', 'false');
 
       const tdStatus = document.createElement('td');
       const status   = buildStatusBarEl();
@@ -2327,6 +2340,18 @@
           cancelTcpingBuild(tcping);
           scheduleTcpingTeardown(id, tcping, detail);
         }
+      });
+      // Enter opens and closes a focused row, and so does Space when the
+      // row was reached by keyboard: after a mouse click or a tap Space
+      // still scrolls the page (:focus-visible cannot tell, any key press
+      // sets it).
+      row.addEventListener('pointerdown', () => { row._pointerFocus = true; });
+      row.addEventListener('blur', () => { row._pointerFocus = false; });
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+        if (e.key === ' ' && row._pointerFocus) return;
+        e.preventDefault();
+        row.click();
       });
 
       return {

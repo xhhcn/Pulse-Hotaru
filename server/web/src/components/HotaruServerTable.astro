@@ -1393,6 +1393,27 @@
        x-axis to the cached per-target range prevents the leading
        whitespace that used to appear when other targets had a
        different start time.                                       */
+    /* A stretch with no samples at all (the agent was offline) is left as
+       a gap instead of a straight line across it: the piece of line, and
+       its fill, between two neighbouring samples more than 2.5 sampling
+       intervals apart (the median spacing) is not drawn. Lost samples are
+       points with y=null and stay bridged by spanGaps, as before. (A
+       numeric spanGaps would break the line at every lost sample too.) */
+    function tcpingGapSegment(points) {
+      const d = [];
+      for (let i = 1; i < points.length; i++) {
+        const v = points[i].x - points[i - 1].x;
+        if (v > 0) d.push(v);
+      }
+      if (d.length === 0) return undefined;
+      d.sort((a, b) => a - b);
+      const limit = d[d.length >> 1] * 2.5;
+      // Without such a stretch: no per-piece styling, which costs ~20 ms per chart.
+      if (d[d.length - 1] <= limit) return undefined;
+      const hide = (ctx) => (ctx.p1.parsed.x - ctx.p0.parsed.x > limit ? 'transparent' : undefined);
+      return { borderColor: hide, backgroundColor: hide };
+    }
+
     function applyTcpingDataset(tcping, target) {
       /* Real samples supersede the unreachable-target notice — e.g. a
          probe finally succeeded while a fetch was in flight. If the
@@ -1444,6 +1465,7 @@
         pointHoverRadius: 0,
         pointHitRadius:  10,
         spanGaps:        true,
+        segment:         tcpingGapSegment(points),
         fill:            'origin',
       };
 
@@ -1682,9 +1704,9 @@
            clock here: a viewer whose local clock is fast would otherwise
            lose valid points near the left edge of the 24h range.
          * latency null/undefined or > TCPING_LOSS_THRESHOLD_MS
-           records y=null; combined with `spanGaps: true` this
-           draws a continuous line through single-sample dropouts
-           but leaves a visible gap on prolonged outages.
+           records y=null; the line is drawn through such dropouts,
+           while a stretch without any samples leaves a visible gap
+           (tcpingGapSegment).
          * x is numeric epoch milliseconds, so Chart.js can skip
            per-point Date object handling without losing samples. */
       const points = [];

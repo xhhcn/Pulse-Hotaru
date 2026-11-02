@@ -192,6 +192,27 @@
     return true;
   }
 
+  /* A stored session the server still accepts. The admin page sends the
+     visitor here when it could not reach the server to check the session;
+     asking for the password again then was needless. */
+  async function storedSessionValid() {
+    let token = null;
+    try { token = localStorage.getItem('admin_auth_token'); } catch (_) {}
+    if (!token) return false;
+    try {
+      const res = await fetch(`${apiBase}/api/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return !!(data && data.valid === true);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function showAlert(kind, message) {
     const errEl = document.getElementById('login-error');
     const errTxt = document.getElementById('login-error-text');
@@ -219,6 +240,12 @@
     let heldSubmit = false;
     const holdSubmit = (e) => { e.preventDefault(); heldSubmit = true; };
     heldForm.addEventListener('submit', holdSubmit);
+
+    if (await storedSessionValid()) {
+      const params = new URLSearchParams(window.location.search);
+      window.location.replace(validateRedirect(params.get('redirect') || '/admin'));
+      return;
+    }
 
     const status = await checkPasswordStatus();
     let isSetupMode = (status === false);

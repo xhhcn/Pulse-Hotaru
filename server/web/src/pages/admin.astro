@@ -35,6 +35,27 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="mask-icon" href="/favicon.svg" color="#24292f" />
     <title>管理 · Pulse Monitor</title>
+    <!-- Site data blocked by the browser: reading localStorage throws, and
+         that stopped every script on the page. An in-memory stand-in keeps
+         the page working; choices then last until a reload. -->
+    <script is:inline>
+      (function () {
+        try { window.localStorage.getItem('_'); return; } catch (_) {}
+        // The login form says so: a session kept here would not reach the next page.
+        window.__pulseStorageBlocked = true;
+        var mem = {};
+        try {
+          Object.defineProperty(window, 'localStorage', { configurable: true, value: {
+            getItem: function (k) { return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+            setItem: function (k, v) { mem[k] = String(v); },
+            removeItem: function (k) { delete mem[k]; },
+            clear: function () { mem = {}; },
+            key: function (i) { return Object.keys(mem)[i] || null; },
+            get length() { return Object.keys(mem).length; }
+          } });
+        } catch (_) {}
+      })();
+    </script>
     <script is:inline>
       (function () {
         // Light-mode + zh-CN locked at the source. Forced regardless of

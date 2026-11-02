@@ -1438,6 +1438,8 @@ body.hotaru-theme {
 .hotaru-admin-shell {
   padding: 1.6rem 1rem 2rem;
   min-height: 100vh;
+  /* the viewport as shown, with the phone browser's bars (100vh scrolled) */
+  min-height: 100dvh;
 }
 @media (min-width: 768px) {
   .hotaru-admin-shell { padding: 2rem 1.25rem 2.5rem; }
@@ -1793,6 +1795,9 @@ body.hotaru-theme #systems-list > div.flex.items-center.justify-center.py-12 p {
    ============================================================ */
 .hotaru-login-shell {
   min-height: 100vh;
+  /* the viewport as shown, with the phone browser's bars: with 100vh the
+     page scrolled and the card sat below the middle of the screen */
+  min-height: 100dvh;
   display: flex;
   /* The card and the "返回首页" link under it, centred as one group. */
   flex-direction: column;

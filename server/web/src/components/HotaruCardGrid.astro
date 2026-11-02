@@ -254,6 +254,10 @@
       inEmptyState = true;
     }
 
+    // When render() last asked for the flags, so a failed one is retried
+    // without asking on every tick.
+    let lastFlagRetryAt = 0;
+
     function render(list) {
       if (!Array.isArray(list)) return;
       grid.removeAttribute('aria-busy');
@@ -308,6 +312,13 @@
           updateCardEl(entry, item);
           const newIcon = entry.refs.flag.dataset.icon || null;
           if (newIcon && newIcon !== prevIcon) needFlagLoad = true;
+          // A flag whose download failed is tried again, at most every 30 s
+          // (it used to stay blank for the rest of the visit).
+          else if (newIcon && entry.refs.flag.dataset.iconLoaded !== newIcon
+                   && Date.now() - lastFlagRetryAt > 30_000) {
+            needFlagLoad = true;
+            lastFlagRetryAt = Date.now();
+          }
           const expected = prevNode ? prevNode.nextSibling : grid.firstChild;
           if (entry.article !== expected) {
             grid.insertBefore(entry.article, expected);
@@ -323,6 +334,7 @@
         }
       }
 
+      if (needFlagLoad) lastFlagRetryAt = Date.now();
       if (needFlagLoad
           && window.__hotaruFlag
           && typeof window.__hotaruFlag.loadFlagIcons === 'function') {

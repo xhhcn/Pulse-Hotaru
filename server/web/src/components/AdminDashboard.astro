@@ -94,8 +94,8 @@ const customCodePlaceholder = [
 
       <form id="add-system-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
-          <input
+          <label for="add-system-name-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
+          <input id="add-system-name-input"
             type="text"
             name="name"
             required
@@ -147,8 +147,8 @@ const customCodePlaceholder = [
         <input type="hidden" name="original-id" value="" />
         
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
-          <input
+          <label for="edit-system-name-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="systemName">服务名称</span> <span class="text-red-500">*</span></label>
+          <input id="edit-system-name-input"
             type="text"
             name="name"
             required
@@ -159,7 +159,7 @@ const customCodePlaceholder = [
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="tags">标签</span> <span class="text-xs text-[#737373]" data-translate="tagsCommaSeparated">（逗号分隔）</span></label>
+          <label for="edit-tags-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="tags">标签</span> <span class="text-xs text-[#737373]" data-translate="tagsCommaSeparated">（逗号分隔）</span></label>
           <input
             type="text"
             name="tags"
@@ -273,7 +273,7 @@ const customCodePlaceholder = [
       <div class="dialog-scroll flex-1 overflow-y-auto overflow-x-hidden p-4 pt-4 sm:p-6 sm:pt-4 pb-0 sm:pb-0">
         <form id="tcping-config-form" class="space-y-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252]">
+            <label for="tcping-interval" class="mb-1 block text-sm font-medium text-[#525252]">
               <span data-translate="pollingInterval">轮询间隔</span> <span class="text-red-500">*</span>
             </label>
             <div class="flex items-center gap-2">
@@ -282,6 +282,7 @@ const customCodePlaceholder = [
                 id="tcping-interval"
                 name="interval"
                 min="1"
+                max="86400"
                 required
                 class="w-full rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
@@ -345,8 +346,8 @@ const customCodePlaceholder = [
 
       <form id="change-password-form" class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="currentPassword">当前密码</span> <span class="text-red-500">*</span></label>
-          <input
+          <label for="current-password-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="currentPassword">当前密码</span> <span class="text-red-500">*</span></label>
+          <input id="current-password-input"
             type="password"
             name="currentPassword"
             required
@@ -357,8 +358,8 @@ const customCodePlaceholder = [
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="newPassword">新密码</span> <span class="text-red-500">*</span></label>
-          <input
+          <label for="new-password-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="newPassword">新密码</span> <span class="text-red-500">*</span></label>
+          <input id="new-password-input"
             type="password"
             name="newPassword"
             required
@@ -370,8 +371,8 @@ const customCodePlaceholder = [
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="confirmNewPassword">确认新密码</span> <span class="text-red-500">*</span></label>
-          <input
+          <label for="confirm-new-password-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="confirmNewPassword">确认新密码</span> <span class="text-red-500">*</span></label>
+          <input id="confirm-new-password-input"
             type="password"
             name="confirmNewPassword"
             required
@@ -414,7 +415,7 @@ const customCodePlaceholder = [
 
       <form id="navbar-config-form" class="space-y-5">
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarText">标签栏文字</span></label>
+          <label for="navbar-text-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarText">标签栏文字</span></label>
           <input
             type="text"
             name="text"
@@ -426,7 +427,7 @@ const customCodePlaceholder = [
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarLogo">标签栏图标</span></label>
+          <label for="navbar-logo-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="navbarLogo">标签栏图标</span></label>
           <input
             type="text"
             name="logo"
@@ -442,7 +443,7 @@ const customCodePlaceholder = [
         <!-- Show Tags Toggle (homepage expand panel) -->
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
           <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="showTagsLabel">显示首页标签</label>
+            <label for="show-tags-toggle" class="block text-sm font-medium text-[#262626] mb-1" data-translate="showTagsLabel">显示首页标签</label>
             <p class="text-xs text-[#525252]" data-translate="showTagsDesc">在首页展开行中显示每个服务器的标签。关闭后标签行将不再展示。</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
@@ -454,7 +455,7 @@ const customCodePlaceholder = [
         <!-- Show Cards Toggle (homepage card grid) -->
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
           <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="showCardsLabel">显示首页卡片</label>
+            <label for="show-cards-toggle" class="block text-sm font-medium text-[#262626] mb-1" data-translate="showCardsLabel">显示首页卡片</label>
             <p class="text-xs text-[#525252]" data-translate="showCardsDesc">在首页底部以卡片形式展示所有服务器。关闭后卡片网格将不再展示。</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
@@ -464,7 +465,7 @@ const customCodePlaceholder = [
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="sharedSecret">共享密钥</span></label>
+          <label for="navbar-shared-secret-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="sharedSecret">共享密钥</span></label>
           <div class="flex items-center gap-2">
             <input
               type="text"
@@ -485,7 +486,7 @@ const customCodePlaceholder = [
 
         <!-- Custom CSS & JavaScript -->
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="customCode">自定义 CSS 和 JavaScript</span></label>
+          <label for="navbar-custom-code-input" class="mb-1 block text-sm font-medium text-[#525252]"><span data-translate="customCode">自定义 CSS 和 JavaScript</span></label>
           <textarea
             id="navbar-custom-code-input"
             rows="10"
@@ -575,7 +576,7 @@ const customCodePlaceholder = [
         <!-- Privacy Mode Toggle -->
         <div class="flex items-center justify-between rounded-lg border border-[#404040]/50 border-[#d4d4d4]/50 bg-[#222] bg-white p-4">
           <div class="flex-1">
-            <label class="block text-sm font-medium text-[#262626] mb-1" data-translate="enablePrivacyMode">启用隐私模式</label>
+            <label for="privacy-enabled" class="block text-sm font-medium text-[#262626] mb-1" data-translate="enablePrivacyMode">启用隐私模式</label>
             <p class="text-xs text-[#525252]" data-translate="privacyModeDesc">启用后，登录页将出现在首页之前。管理页面无需登录。</p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
@@ -593,7 +594,7 @@ const customCodePlaceholder = [
 
           <!-- Current Share Link -->
           <div id="current-share-link-container" class="hidden">
-            <label class="mb-1 block text-xs font-medium text-[#525252]" data-translate="currentShareLink">当前分享链接</label>
+            <label for="current-share-link" class="mb-1 block text-xs font-medium text-[#525252]" data-translate="currentShareLink">当前分享链接</label>
             <div class="flex items-center gap-2">
               <input
                 type="text"
@@ -612,7 +613,7 @@ const customCodePlaceholder = [
 
           <!-- Generate New Share Link -->
           <div>
-            <label class="mb-1 block text-sm font-medium text-[#525252]" data-translate="expirationHours">有效期（小时）</label>
+            <label for="token-expires-hours" class="mb-1 block text-sm font-medium text-[#525252]" data-translate="expirationHours">有效期（小时）</label>
             <input
               type="number"
               id="token-expires-hours"
@@ -724,6 +725,12 @@ const customCodePlaceholder = [
 </style>
 
 <script is:inline>
+  // Everything here runs in its own scope. This is a classic script, and so
+  // is the site's custom code (run in <head>): a top-level `const root` in
+  // the custom code and the declarations below used to collide, and the
+  // whole dashboard failed to start ("Identifier 'root' has already been
+  // declared"), the dialog where the custom code is edited included.
+  (() => {
   const root = document.getElementById('admin-root');
   
   const getApiBase = () => {
@@ -3608,6 +3615,7 @@ const customCodePlaceholder = [
       const res = await fetch(`${apiBase}/api/tcping/config`);
       if (res.ok) {
         const config = await res.json();
+        if (!config || typeof config !== 'object') return false;
         
         // Set interval (default: 60 seconds)
         const intervalInput = document.getElementById('tcping-interval');
@@ -3635,17 +3643,39 @@ const customCodePlaceholder = [
             targetsContainer.appendChild(createTargetInput());
           }
         }
+        return true;
       }
     } catch (err) {
-      // Config load failed silently
+      // Reported by guardSettingsDialog
     }
+    return false;
   }
 
   function openTCPingConfigModal() {
     if (tcpingConfigModal) {
-      loadTCPingConfig();
+      guardSettingsDialog(tcpingConfigForm, 'tcping-config-message', loadTCPingConfig());
       openModalWithAnimation(tcpingConfigModal);
     }
+  }
+
+  // A settings dialog saves everything its form holds, so it must not be
+  // saved before the current settings are in it. Save waits for the load; a
+  // failed load says so and keeps Save off (a blank form erased the TCPing
+  // targets, the custom code and the shared secret, or the privacy link).
+  function guardSettingsDialog(form, messageId, loading) {
+    const submitBtn = form && form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    loading.then((ok) => {
+      if (ok) {
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
+      const messageEl = document.getElementById(messageId);
+      if (messageEl) {
+        messageEl.textContent = adminT('settingsLoadFailed');
+        messageEl.className = 'text-sm text-red-500';
+      }
+    });
   }
 
   function closeTCPingConfigModal() {
@@ -3693,7 +3723,8 @@ const customCodePlaceholder = [
       const res = await fetch(`${apiBase}/api/navbar/config`);
       if (res.ok) {
         const config = await res.json();
-        lastLoadedNavbarConfig = config || {};
+        if (!config || typeof config !== 'object') return false;
+        lastLoadedNavbarConfig = config;
         
         const textInput = document.getElementById('navbar-text-input');
         const logoInput = document.getElementById('navbar-logo-input');
@@ -3747,15 +3778,17 @@ const customCodePlaceholder = [
         if (showCardsToggle) {
           showCardsToggle.checked = config.hide_cards !== true;
         }
+        return true;
       }
     } catch (err) {
-      // Config load failed silently
+      // Reported by guardSettingsDialog
     }
+    return false;
   }
 
   function openNavbarConfigModal() {
     if (navbarConfigModal) {
-      loadNavbarConfig();
+      guardSettingsDialog(navbarConfigForm, 'navbar-config-message', loadNavbarConfig());
       openModalWithAnimation(navbarConfigModal);
     }
   }
@@ -3928,11 +3961,13 @@ const customCodePlaceholder = [
       const res = await fetch(`${apiBase}/api/privacy/config`);
       if (res.ok) {
         const config = await res.json();
+        if (!config || typeof config !== 'object') return false;
         
         // Update privacy enabled checkbox
         if (privacyEnabledCheckbox) {
           privacyEnabledCheckbox.checked = config.enabled || false;
         }
+        lastLoadedPrivacyEnabled = config.enabled === true;
         
         // Update expiration hours input with saved value (convert seconds to hours)
         if (tokenExpiresHoursInput) {
@@ -3993,15 +4028,17 @@ const customCodePlaceholder = [
             currentShareLinkContainer.classList.add('hidden');
           }
         }
+        return true;
       }
     } catch (err) {
-      // Config load failed silently
+      // Reported by guardSettingsDialog
     }
+    return false;
   }
 
   function openPrivacyConfigModal() {
     if (privacyConfigModal) {
-      loadPrivacyConfig();
+      guardSettingsDialog(privacyConfigForm, 'privacy-config-message', loadPrivacyConfig());
       openModalWithAnimation(privacyConfigModal);
     }
   }
@@ -4107,8 +4144,36 @@ const customCodePlaceholder = [
     }
   });
 
-  // Revoke share link (just clears UI, requires save to take effect)
-  revokeShareLinkBtn?.addEventListener('click', () => {
+  // The stored privacy switch, so revoking the link does not also save an
+  // unsaved change of the switch.
+  let lastLoadedPrivacyEnabled = false;
+
+  // Revoke the share link at once, as the button says. It used to clear the
+  // form only: unless the admin also pressed Save, a leaked link stayed
+  // valid until it expired.
+  revokeShareLinkBtn?.addEventListener('click', async () => {
+    const messageEl = document.getElementById('privacy-config-message');
+    revokeShareLinkBtn.disabled = true;
+    try {
+      const res = await fetch(`${apiBase}/api/privacy/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: lastLoadedPrivacyEnabled, share_token: '', expires_in_seconds: 0 }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      if (messageEl) {
+        messageEl.textContent = adminT('shareLinkRevokeFailed');
+        messageEl.className = 'text-sm text-red-500';
+      }
+      revokeShareLinkBtn.disabled = false;
+      return;
+    }
+    revokeShareLinkBtn.disabled = false;
+    if (messageEl) {
+      messageEl.textContent = adminT('shareLinkRevoked');
+      messageEl.className = 'text-sm text-emerald-600';
+    }
     // Hide share link container
     if (currentShareLinkContainer) {
       currentShareLinkContainer.classList.add('hidden');
@@ -4186,6 +4251,7 @@ const customCodePlaceholder = [
       });
 
       if (res.ok) {
+        lastLoadedPrivacyEnabled = data.enabled;
         // Get the saved config from response to update UI with server-calculated expiration
         const responseData = await res.json();
         if (responseData.config && responseData.config.share_token && responseData.config.token_expires) {
@@ -4855,6 +4921,7 @@ const customCodePlaceholder = [
     'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro). Prefix with spr:/spy:/spb: for a red/amber/blue gradient badge.', zh: '输入标签，用逗号分隔（例如：Python, traffic:in, speed:in, spr:VIP, spy:staff, spb:pro）。前缀 spr:/spy:/spb: 分别表示红色 / 金色 / 蓝色起始的渐变彩色徽章。' },
     'cancel': { en: 'Cancel', zh: '取消' },
     'updateSystem': { en: '更新服务', zh: '更新服务' },
+    'settingsLoadFailed': { en: '无法读取当前设置。请关闭窗口后重试，现在保存会覆盖原有设置。', zh: '无法读取当前设置。请关闭窗口后重试，现在保存会覆盖原有设置。' },
     'areYouSureYouWantToDelete': { en: 'Are you sure you want to delete', zh: '您确定要删除' },
     'thisActionCannotBeUndone': { en: 'This action cannot be undone.', zh: '此操作无法撤销。' },
     'delete': { en: 'Delete', zh: '删除' },
@@ -4910,6 +4977,8 @@ const customCodePlaceholder = [
     'expirationHours': { en: 'Expiration (Hours)', zh: '有效期（小时）' },
     'expirationHoursHint': { en: 'Number of hours until the share link expires (1-720, max 30 days)', zh: '分享链接过期前的小时数（1-720，最多 30 天）' },
     'generateShareLink': { en: 'Generate Share Link', zh: '生成分享链接' },
+    'shareLinkRevoked': { en: 'The share link has been stopped; it no longer opens the dashboard.', zh: '分享链接已停止，原链接无法再打开面板。' },
+    'shareLinkRevokeFailed': { en: 'Could not stop the share link. Please try again.', zh: '停止分享链接失败，请重试。' },
     'revokeShareLink': { en: 'Revoke Share Link', zh: '立即停止分享链接' },
     'copy': { en: 'Copy', zh: '复制' },
     'customCode': { en: 'Custom CSS & JavaScript', zh: '自定义 CSS 和 JavaScript' },
@@ -4985,4 +5054,5 @@ const customCodePlaceholder = [
   } else {
     updateAdminTranslations();
   }
+  })();
 </script>

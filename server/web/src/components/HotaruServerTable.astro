@@ -375,10 +375,56 @@
       }
       return window.location.origin;
     }
+    /* The admin session goes along only when the dashboard is private
+       (privacy mode). The server answers it with the admin view: every
+       server's addresses and secret, never compressed (about six times the
+       bytes of the public stream), and the session token in every stream
+       URL; this page shows none of it. A refused request (401) switches
+       it on. */
+    let sessionNeeded = false;
+    function storedAdminToken() {
+      try { return localStorage.getItem('admin_auth_token'); } catch (_) { return null; }
+    }
+    function urlShareToken() {
+      return new URL(window.location.href).searchParams.get('token');
+    }
+    /* A signed-in admin first learns whether the dashboard is private, so
+       no request goes out without the session only to be refused (a 401 in
+       the console and a round trip lost). One /api/privacy/config request
+       per page, shared with the page's access check (index.astro). */
+    function privacyConfigOnce() {
+      window.__pulsePrivacyConfig = window.__pulsePrivacyConfig
+        || fetch(getApiBase() + '/api/privacy/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      return window.__pulsePrivacyConfig;
+    }
+    const sessionDecision = (!urlShareToken() && storedAdminToken())
+      ? privacyConfigOnce().then((cfg) => { if (cfg && cfg.enabled) sessionNeeded = true; })
+      : Promise.resolve();
+
+    /* fetch with the share link's token, or with the admin session when
+       privacy mode asks for it: a 401 to a request without the session
+       sends it again with the session (privacy switched on while the page
+       is open). build() returns { url, init } for the credentials of the
+       moment; sentSession says whether the answer is to a request that
+       carried the session (a parallel request may have switched it on). */
+    async function authedFetch(build) {
+      await sessionDecision;
+      const attempt = async () => {
+        const { url, init } = build();
+        const res = await fetch(url, init);
+        return { res, sentSession: !!(init.headers && init.headers['Authorization']) || /[?&]admin_token=/.test(url) };
+      };
+      let answer = await attempt();
+      if (answer.res.status === 401 && !answer.sentSession && !urlShareToken() && storedAdminToken()) {
+        sessionNeeded = true;
+        answer = await attempt();
+      }
+      return answer;
+    }
+
     function authParts() {
-      const url = new URL(window.location.href);
-      const shareToken = url.searchParams.get('token');
-      const adminToken = localStorage.getItem('admin_auth_token');
+      const shareToken = urlShareToken();
+      const adminToken = sessionNeeded ? storedAdminToken() : null;
       const headers = { 'Cache-Control': 'no-store' };
       let qs = '';
       /* EventSource cannot send headers, so the admin session has to
@@ -527,9 +573,8 @@
 
     function tcpingApiUrl(path, query) {
       const url = new URL(getApiBase() + path, window.location.origin);
-      const tokenURL = new URL(window.location.href);
-      const shareToken = tokenURL.searchParams.get('token');
-      const adminToken = localStorage.getItem('admin_auth_token');
+      const shareToken = urlShareToken();
+      const adminToken = sessionNeeded ? storedAdminToken() : null;
       const headers = { 'Cache-Control': 'no-store' };
       if (query) for (const [k, v] of Object.entries(query)) {
         if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
@@ -666,8 +711,10 @@
       if (tcpingConfigPromise && !force) return tcpingConfigPromise;
       tcpingConfigPromise = (async () => {
         try {
-          const { url, headers } = tcpingApiUrl('/api/tcping/config');
-          const r = await fetch(url, { headers, cache: 'no-store' });
+          const { res: r } = await authedFetch(() => {
+            const { url, headers } = tcpingApiUrl('/api/tcping/config');
+            return { url, init: { headers, cache: 'no-store' } };
+          });
           if (!r.ok) return null;
           const cfg = await r.json();
           if (cfg && Array.isArray(cfg.targets)) {
@@ -745,11 +792,13 @@
     }
     async function fetchTcpingHistory(clientID, target) {
       try {
-        const { url, headers } = tcpingApiUrl('/api/tcping/history', {
-          client_id: clientID,
-          target:    target || '',
+        const { res: r } = await authedFetch(() => {
+          const { url, headers } = tcpingApiUrl('/api/tcping/history', {
+            client_id: clientID,
+            target:    target || '',
+          });
+          return { url, init: { headers, cache: 'no-store' } };
         });
-        const r = await fetch(url, { headers, cache: 'no-store' });
         if (!r.ok) return null;
         return await r.json();
       } catch (_) {
@@ -1142,8 +1191,9 @@
         const firstAddr = cfg.targets[0].address;
         tcping.target = firstAddr;
         Array.from(tcping.tabs.children).forEach((b) => {
-          b.classList.toggle('hotaru-tcping__tab--active',
-                             (b.dataset.target || null) === firstAddr);
+          const on = (b.dataset.target || null) === firstAddr;
+          b.classList.toggle('hotaru-tcping__tab--active', on);
+          b.setAttribute('aria-pressed', String(on));  // the selected target, not by colour only
         });
       }
     }
@@ -1167,6 +1217,7 @@
       Array.from(tcping.tabs.children).forEach((b) => {
         const matches = (b.dataset.target || null) === target;
         b.classList.toggle('hotaru-tcping__tab--active', matches);
+        b.setAttribute('aria-pressed', String(matches));
       });
       /* 0. The node can't probe this target at all. Paint the notice
             straight away: no loading dots (nothing is loading) and no
@@ -2614,9 +2665,20 @@
       setText(r.memInfo,  '内存信息: ' + (item.memory_info || '–'));
       setText(r.swapInfo, '交换分区: ' + (item.swap_info   || '–'));
       setText(r.diskInfo, '硬盘信息: ' + (item.disk_info   || '–'));
-      if (entry.detail.classList.contains('is-open')) {
-        requestAnimationFrame(() => syncExpandHeight(entry.detail));
-      }
+      if (entry.detail.classList.contains('is-open')) queueExpandSync(entry.detail);
+    }
+
+    /* One pending frame per open row. Hidden tabs run no frames, and a
+       callback queued on every tick piled up (about 1,200 an hour per open
+       row), all of them running in one frame when the tab came back. */
+    const expandSyncQueued = new WeakSet();
+    function queueExpandSync(detail) {
+      if (expandSyncQueued.has(detail)) return;
+      expandSyncQueued.add(detail);
+      requestAnimationFrame(() => {
+        expandSyncQueued.delete(detail);
+        syncExpandHeight(detail);
+      });
     }
 
     /* Wipe the diff state — call before painting a placeholder
@@ -2857,16 +2919,25 @@
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 12_000);
       try {
-        const { qs, headers } = authParts();
-        const res = await fetch(getApiBase() + '/api/metrics' + qs, {
-          headers,
-          cache: 'no-store',
-          signal: controller.signal,
+        const { res, sentSession } = await authedFetch(() => {
+          const { qs, headers } = authParts();
+          return { url: getApiBase() + '/api/metrics' + qs, init: { headers, cache: 'no-store', signal: controller.signal } };
         });
         if (res.status === 401) {
-          // The stored admin token is rejected: forget it so the login
-          // page does not bounce straight back here with the same token.
-          try { localStorage.removeItem('admin_auth_token'); } catch (_) {}
+          if (urlShareToken() && storedAdminToken()) {
+            // The share link has ended, but this browser holds an admin
+            // session: open the dashboard without the link instead of
+            // logging the admin out.
+            const url = new URL(window.location.href);
+            url.searchParams.delete('token');
+            window.location.replace(url.toString());
+            return false;
+          }
+          // The stored admin token is rejected (this request sent it): forget
+          // it so the login page does not bounce straight back here with it.
+          if (sentSession) {
+            try { localStorage.removeItem('admin_auth_token'); } catch (_) {}
+          }
           window.location.href = '/login?redirect=/';
           return false;
         }
@@ -2905,6 +2976,19 @@
     let reconnectId   = null;
     let lastEventAt   = Date.now();
 
+    /* The network came back, or a tab whose stream went quiet is shown
+       again: reconnect now instead of when the 45 s watchdog or the
+       backoff next fires (that took up to half a minute). */
+    function reconnectIfQuiet(force) {
+      if (!force && evtSource && Date.now() - lastEventAt < 10_000) return;
+      backoffMs = BACKOFF_MIN_MS;
+      connectSSE();
+    }
+    window.addEventListener('online', () => reconnectIfQuiet(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reconnectIfQuiet(false);
+    });
+
     function armWatchdog() {
       clearTimeout(watchdogId);
       watchdogId = setTimeout(async () => {
@@ -2920,7 +3004,9 @@
           evtSource = null;
           await fetchOnce();
           lastEventAt = Date.now();
-          scheduleReconnect();
+          // A backoff timer may have opened a new stream during the fetch
+          // (up to 12 s); a second one would never be closed.
+          if (!evtSource) scheduleReconnect();
         }
         armWatchdog();
       }, STALE_MS);
@@ -3022,10 +3108,16 @@
     }
 
     function connectSSE() {
+      // One stream at a time: a stream opened while another was still
+      // alive stayed open for the rest of the visit (every tick rendered
+      // twice), and a pending reconnect would open yet another.
+      if (reconnectId) { clearTimeout(reconnectId); reconnectId = null; }
+      if (evtSource) { try { evtSource.close(); } catch (_) {} evtSource = null; }
+      let es;
       try {
         const { sseQs } = authParts();
         streamPrimePending = true;
-        evtSource = new EventSource(getApiBase() + SSE_PATH + sseQs);
+        es = evtSource = new EventSource(getApiBase() + SSE_PATH + sseQs);
       } catch (_) {
         scheduleReconnect();
         return;
@@ -3044,10 +3136,36 @@
       evtSource.onmessage = onMsg;
 
       evtSource.onerror = () => {
-        try { evtSource.close(); } catch (_) {}
+        // Close the stream that failed, which may no longer be the current
+        // one; only the current one's failure reconnects.
+        try { es.close(); } catch (_) {}
+        if (evtSource !== es) return;
         evtSource = null;
         scheduleReconnect();
+        checkAccessAfterStreamError();
       };
+    }
+
+    /* EventSource reports a refused stream (401: the session or share link
+       has ended, or privacy mode needs the session) only as an error, and
+       used to retry forever behind a table that no longer changed. A plain
+       request tells: fetchOnce sends a refusal to the login page, switches
+       the session on when privacy mode asks for it, and otherwise repaints. */
+    let lastStreamAccessCheck = 0;
+    function checkAccessAfterStreamError() {
+      const now = Date.now();
+      if (now - lastStreamAccessCheck < 15_000) return;
+      lastStreamAccessCheck = now;
+      const hadSession = sessionNeeded;
+      fetchOnce().then(() => {
+        // The stream needs the session now: reconnect with it at once
+        // rather than after the backoff.
+        if (!hadSession && sessionNeeded && reconnectId) {
+          clearTimeout(reconnectId);
+          reconnectId = null;
+          connectSSE();
+        }
+      });
     }
 
     function scheduleReconnect() {

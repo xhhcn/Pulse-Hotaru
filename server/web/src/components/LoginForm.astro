@@ -18,7 +18,10 @@
       <p id="login-success-text"></p>
     </div>
 
-    <form id="login-form" class="hotaru-login-form" novalidate>
+    <!-- method="post": a submit before the script is ready (slow link,
+         script blocked) reloads this page instead of putting the password
+         into the address bar, history and access logs. -->
+    <form id="login-form" method="post" class="hotaru-login-form" novalidate>
       <div class="hotaru-login-field">
         <label for="password">密码</label>
         <input
@@ -93,6 +96,8 @@
     loginSuccess:      '登录成功，正在跳转…',
     networkError:      '网络错误，请重试',
     genericError:      '操作失败，请重试',
+    serverUnreachable: '无法连接服务器，请稍后再试',
+    storageBlocked:    '浏览器禁止了本站存储数据，无法保持登录。请允许本站使用 Cookie 和网站数据。',
   };
 
   /* SECURITY: only allow a relative path (no protocol-relative, no
@@ -158,24 +163,33 @@
     }
   }
 
+  /* Returns true, or the message to show: only a 4xx answer means a wrong
+     password (the server answers a lockout the same way); a dropped request
+     or a 5xx from the server or a CDN does not. */
   async function login(password) {
+    let res;
     try {
-      const res = await fetch(`${apiBase}/api/auth/login`, {
+      res = await fetch(`${apiBase}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          localStorage.setItem('admin_auth_token', data.token);
-          return true;
-        }
-      }
-      return false;
     } catch (_) {
-      return false;
+      return T.serverUnreachable;
     }
+    if (!res.ok) return res.status >= 400 && res.status < 500 ? T.invalidPassword : T.serverUnreachable;
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* not the API */ }
+    if (!data || !data.success) return T.serverUnreachable;
+    /* Site data blocked: the session could not reach the admin page, which
+       would send the visitor straight back here without a word. */
+    if (window.__pulseStorageBlocked) return T.storageBlocked;
+    try {
+      localStorage.setItem('admin_auth_token', data.token);
+    } catch (_) {
+      return T.storageBlocked;
+    }
+    return true;
   }
 
   function showAlert(kind, message) {
@@ -198,6 +212,14 @@
   }
 
   (async () => {
+    /* The real submit handler is attached once /api/auth/status has
+       answered; a submit (Enter after autofill) before that is held here
+       and replayed, instead of being sent natively. */
+    const heldForm = document.getElementById('login-form');
+    let heldSubmit = false;
+    const holdSubmit = (e) => { e.preventDefault(); heldSubmit = true; };
+    heldForm.addEventListener('submit', holdSubmit);
+
     const status = await checkPasswordStatus();
     let isSetupMode = (status === false);
 
@@ -258,12 +280,12 @@
           const setup = await setupPassword(password);
           if (setup && setup.success) {
             const ok = await login(password);
-            if (!ok) {
+            if (ok !== true) {
               // Password is stored; only the follow-up login failed. Say so
               // instead of bouncing the user off /admin without explanation.
               isSetupMode = false;
               applyMode();
-              showAlert('error', T.invalidPassword);
+              showAlert('error', ok);
               return;
             }
             showAlert('ok', T.setupSuccess);
@@ -277,12 +299,12 @@
               isSetupMode = false;
               applyMode();
               const ok = await login(password);
-              if (ok) {
+              if (ok === true) {
                 showAlert('ok', T.loginSuccess);
                 const params = new URLSearchParams(window.location.search);
                 window.location.href = validateRedirect(params.get('redirect') || '/admin');
               } else {
-                showAlert('error', T.invalidPassword);
+                showAlert('error', ok);
               }
             } else {
               showAlert('error', msg);
@@ -290,12 +312,12 @@
           }
         } else {
           const ok = await login(password);
-          if (ok) {
+          if (ok === true) {
             showAlert('ok', T.loginSuccess);
             const params = new URLSearchParams(window.location.search);
             window.location.href = validateRedirect(params.get('redirect') || '/admin');
           } else {
-            showAlert('error', T.invalidPassword);
+            showAlert('error', ok);
           }
         }
       } finally {
@@ -304,5 +326,10 @@
         submitBtn.classList.remove('is-loading');
       }
     });
+    heldForm.removeEventListener('submit', holdSubmit);
+    if (heldSubmit) {
+      if (form.requestSubmit) form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', { cancelable: true }));
+    }
   })();
 </script>

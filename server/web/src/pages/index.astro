@@ -31,6 +31,27 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
   <link rel="preload" href="/fonts/lato/lato-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <title>Server Status</title>
 
+  <!-- Site data blocked by the browser: reading localStorage throws, and
+       that stopped every script on the page. An in-memory stand-in keeps
+       the page working; choices then last until a reload. -->
+  <script is:inline>
+    (function () {
+      try { window.localStorage.getItem('_'); return; } catch (_) {}
+      // The login form says so: a session kept here would not reach the next page.
+      window.__pulseStorageBlocked = true;
+      var mem = {};
+      try {
+        Object.defineProperty(window, 'localStorage', { configurable: true, value: {
+          getItem: function (k) { return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+          setItem: function (k, v) { mem[k] = String(v); },
+          removeItem: function (k) { delete mem[k]; },
+          clear: function () { mem = {}; },
+          key: function (i) { return Object.keys(mem)[i] || null; },
+          get length() { return Object.keys(mem).length; }
+        } });
+      } catch (_) {}
+    })();
+  </script>
   <!-- Force light mode: clear any leftover .dark from previous
        Pulse builds before the body paints, so the hotaru palette
        renders on a pristine surface. Also load the navbar config
@@ -217,8 +238,10 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
       // Background privacy check — fails open so a broken backend
       // doesn't brick the dashboard. The page is already rendered;
       // we only redirect if privacy is on AND we have no valid auth.
-      fetch('/api/privacy/config', { cache: 'no-store' })
-        .then((r) => r.ok ? r.json() : null)
+      // Shared with the table (HotaruServerTable), which needs the same answer.
+      window.__pulsePrivacyConfig = window.__pulsePrivacyConfig
+        || fetch('/api/privacy/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      window.__pulsePrivacyConfig
         .then((cfg) => {
           if (!cfg || !cfg.enabled) return;
           if (!shareToken && !adminToken) { redirectLogin(); return; }

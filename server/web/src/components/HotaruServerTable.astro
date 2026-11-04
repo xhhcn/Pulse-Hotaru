@@ -1476,24 +1476,56 @@
        x-axis to the cached per-target range prevents the leading
        whitespace that used to appear when other targets had a
        different start time.                                       */
-    /* A stretch with no samples at all (the agent was offline) is left as
-       a gap instead of a straight line across it: the piece of line, and
-       its fill, between two neighbouring samples more than 2.5 sampling
-       intervals apart (the median spacing) is not drawn. Lost samples are
-       points with y=null and stay bridged by spanGaps, as before. (A
-       numeric spanGaps would break the line at every lost sample too.) */
+    /* A stretch without answers is left as a gap instead of a straight
+       line (and fill) across it: one with no samples at all (the agent was
+       offline: a step of more than 2.5 sampling intervals, the median
+       spacing), or two or more lost probes in a row (points with y=null).
+       A single lost probe stays bridged by spanGaps, so the line does not
+       break at every one (a numeric spanGaps would). Chart.js draws a
+       bridged piece from the sample with a value before to the one after,
+       so that whole piece is judged: judging only neighbouring samples drew
+       a straight line across every run of lost probes, and across a stretch
+       without samples whose first probe after it was lost (Chart.js drops a
+       hidden piece that ends on a lost sample). As in Pulse v1.3.56.     */
     function tcpingGapSegment(points) {
+      const n = points.length;
       const d = [];
-      for (let i = 1; i < points.length; i++) {
+      for (let i = 1; i < n; i++) {
         const v = points[i].x - points[i - 1].x;
         if (v > 0) d.push(v);
       }
       if (d.length === 0) return undefined;
       d.sort((a, b) => a - b);
       const limit = d[d.length >> 1] * 2.5;
+      // long[i] / lost[i]: long steps / lost samples up to sample i; prev[i] /
+      // next[i]: the nearest sample with a value at or before / at or after i.
+      const long = new Int32Array(n);
+      const lost = new Int32Array(n);
+      const prev = new Int32Array(n);
+      const next = new Int32Array(n);
+      let run = false;
+      for (let i = 0, last = -1; i < n; i++) {
+        const isLost = points[i].y === null;
+        long[i] = i === 0 ? 0 : long[i - 1] + (points[i].x - points[i - 1].x > limit ? 1 : 0);
+        lost[i] = (i === 0 ? 0 : lost[i - 1]) + (isLost ? 1 : 0);
+        if (isLost && i > 0 && points[i - 1].y === null) run = true;
+        if (!isLost) last = i;
+        prev[i] = last < 0 ? i : last;
+      }
       // Without such a stretch: no per-piece styling, which costs ~20 ms per chart.
-      if (d[d.length - 1] <= limit) return undefined;
-      const hide = (ctx) => (ctx.p1.parsed.x - ctx.p0.parsed.x > limit ? 'transparent' : undefined);
+      if (long[n - 1] === 0 && !run) return undefined;
+      for (let i = n - 1, first = -1; i >= 0; i--) {
+        if (points[i].y !== null) first = i;
+        next[i] = first < 0 ? i : first;
+      }
+      const hide = (ctx) => {
+        const a = ctx.p0DataIndex;
+        const b = ctx.p1DataIndex;
+        if (!(a >= 0 && b > a && b < n)) return ctx.p1.parsed.x - ctx.p0.parsed.x > limit ? 'transparent' : undefined;
+        const from = prev[a];
+        const to = next[b];
+        return long[to] > long[from] || lost[to] - lost[from] >= 2 ? 'transparent' : undefined;
+      };
       return { borderColor: hide, backgroundColor: hide };
     }
 
@@ -1787,9 +1819,9 @@
            clock here: a viewer whose local clock is fast would otherwise
            lose valid points near the left edge of the 24h range.
          * latency null/undefined or > TCPING_LOSS_THRESHOLD_MS
-           records y=null; the line is drawn through such dropouts,
-           while a stretch without any samples leaves a visible gap
-           (tcpingGapSegment).
+           records y=null; the line is drawn through a single dropout,
+           while two or more in a row, or a stretch without any samples,
+           leave a visible gap (tcpingGapSegment).
          * x is numeric epoch milliseconds, so Chart.js can skip
            per-point Date object handling without losing samples. */
       const points = [];
